@@ -60,7 +60,7 @@ REGISTER_FILE = "harness"
 
 # address -> (column in `bist all`, what it is meant to change)
 AXES = {
-    "readclksel": ("sel", "DQSBUFM capture phase"),
+    "readclksel": ("sel", "reaches no PHY"),
     "device_cr0": ("drive / lat / mode", "CR0 write to the part"),
     "device_cr1": ("clk", "CR1[6] write to the part"),
 }
@@ -110,7 +110,7 @@ def reads_outside(fragment, skip, path="top", found=None):
     return found
 
 
-def prepare(dqs, sync_mhz):
+def prepare(sync_mhz):
     """One build's prepared fragment, its parameters and its results.
 
     Results are spied too: a test that wants "what drives the register the
@@ -135,7 +135,7 @@ def prepare(dqs, sync_mhz):
     harness_module.BISTHarness.add_register = spy
     harness_module.BISTHarness.add_read_only_register = spy_ro
     try:
-        design = HyperRAMCeiling(sync_mhz=sync_mhz, dqs=dqs)
+        design = HyperRAMCeiling(sync_mhz=sync_mhz)
         # `prepare` lowers `ClockSignal`/`ResetSignal` to the domain's own
         # signals; without it the walk below meets one and cannot resolve it.
         prepared = Fragment.get(design, CynthionPlatformRev1D4()).prepare()
@@ -145,17 +145,17 @@ def prepare(dqs, sync_mhz):
     return prepared.fragment, captured, results
 
 
-def elaborate(dqs, sync_mhz):
+def elaborate(sync_mhz):
     """Elaborate one build, returning its parameters and the signals read."""
-    fragment, captured, _results = prepare(dqs, sync_mhz)
+    fragment, captured, _results = prepare(sync_mhz)
     return captured, reads_outside(fragment, {REGISTER_FILE})
 
 
-def report(log, dqs, sync_mhz):
-    captured, read = elaborate(dqs, sync_mhz)
+def report(log, sync_mhz):
+    captured, read = elaborate(sync_mhz)
     live = {}
     log.info("")
-    log.info("%s PHY, sync %g MHz", "DQS" if dqs else "non-DQS", sync_mhz)
+    log.info("sync %g MHz", sync_mhz)
     for _address, signal in sorted(captured, key=lambda pair: pair[1].name):
         if signal.name not in AXES:
             continue
@@ -185,17 +185,18 @@ def main():
     log = logging.getLogger("axis-wiring")
 
     log.info("Which `bist` parameters reach the design. See #343.")
-    dqs_live = report(log, dqs=True, sync_mhz=60.0)
-    sdr_live = report(log, dqs=False, sync_mhz=80.0)
+    live = report(log, sync_mhz=80.0)
 
     log.info("")
-    if not dqs_live.get("readclksel"):
-        log.error("CONTROL FAILED: readclksel is dead on the DQS build too, so "
-                  "this instrument is broken rather than the non-DQS build.")
+    # The control: the CR0 register must read as live, or this instrument
+    # reports everything dead and the check below proves nothing.
+    if not live.get("device_cr0"):
+        log.error("CONTROL FAILED: device_cr0 is dead, so this instrument is "
+                  "broken rather than the build.")
         return 2
-    dead = sorted(name for name, ok in sdr_live.items() if not ok)
+    dead = sorted(name for name, ok in live.items() if not ok)
     if dead:
-        log.info("non-DQS dead axes: %s", ", ".join(dead))
+        log.info("dead axes: %s", ", ".join(dead))
     log.info("transcript -> %s", LOG.relative_to(ROOT))
     return 0
 

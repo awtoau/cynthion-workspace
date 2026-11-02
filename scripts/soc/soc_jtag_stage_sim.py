@@ -293,9 +293,8 @@ class Run:
     def memory(self):
         """The HyperRAM contents the writes produced, as {word address: value}.
 
-        The sink now presents a 32-bit PAIR per request, because the DQS
-        controller has no narrower granule, so each write lands in TWO 16-bit
-        word slots -- low word first, matching the wire order HyperBus uses.
+        The sink presents a 32-bit PAIR per request, so each write lands in
+        TWO 16-bit word slots -- low word first, matching the wire order HyperBus uses.
         The link itself is still 16-bit; the pairing happens in the sink.
         """
         words = {}

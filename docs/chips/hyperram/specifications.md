@@ -92,7 +92,7 @@ in-band read of which tCSM applies — untested on the board, and the model does
 say whether silicon changes it at temperature. [`config-ac.md`](config-ac.md).
 
 **Every CS# cap in this design is derived from the 4 µs figure alone** —
-`T_CSM_NS` in [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py)
+`T_CSM_NS` in `hyperram_dqs_controller.py`
 and [`hyperram_controller.py`](../../../gateware/soc/peripherals/hyperram_controller.py),
 `HYPERRAM_TCSM_NS` in [`bootram.py`](../../../gateware/soc/bootram.py). Above 85 °C
 they are 4× too loose, and a sustained matrix sweep is the workload that heats the

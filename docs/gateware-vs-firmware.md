@@ -21,7 +21,7 @@ Scope, as built: **23 peripheral modules** (24 files, one is `__init__.py`),
 [`top.py`](../gateware/soc/top.py)**, plus [`bootram.py`](../gateware/soc/bootram.py),
 [`hyperram_share.py`](../gateware/soc/hyperram_share.py),
 [`clocks.py`](../gateware/soc/clocks.py) and [`cpu/`](../gateware/soc/cpu/).
-Default variant `ck80-dqs0-sync60`.
+Default variant `ck80-sync60`.
 
 ## Seven reasons to stay in gateware
 
@@ -67,7 +67,7 @@ Rebuild cost: **~90 s synthesis per bitstream**
 |---|---|---|---|
 | **1** | The HyperRAM controller's seven timing levers exist and **nothing in any bitstream drives them** | every tCSHI, watchdog and latency sweep is still one bitstream per point, with the ports already built | [`hyperram_controller.py:338-381`](../gateware/soc/peripherals/hyperram_controller.py); `recovery_cycles`, `burst_cycles`, `burst_beats`, `min_latency_clocks` are **not in `HyperRAMPort.CONTROL`** ([`hyperram_share.py:64-66`](../gateware/soc/hyperram_share.py)), so no master can reach them at all |
 | **2** | `recovery_cycles` is **1 bit wide** at CK 80 | the lever cannot be moved even once wired: `_max_recovery_cycles = max(1, ceil(7.5 × 80 / 1000)) = 1`, so the CPU could write 0 or 1 | [`hyperram_controller.py:276`](../gateware/soc/peripherals/hyperram_controller.py), width at `:365`. Widening it is a rebuild — which is the axis [#341](https://github.com/awtoau/cynthion-workspace/issues/341) exists to remove |
-| **3** | DQS `latency_clocks` is **3 bits** | any sweep past L=7 truncates silently; `hyperram_share.py:118-120` passes no `max_latency_clocks` | [`hyperram_dqs_controller.py:214-215`](../gateware/soc/peripherals/hyperram_dqs_controller.py) |
+| **3** | DQS `latency_clocks` is **3 bits** | any sweep past L=7 truncates silently; `hyperram_share.py:118-120` passes no `max_latency_clocks` | `hyperram_dqs_controller.py:214-215` |
 | **4** | `hr sweep` prints an `rd-stall` column that **varies nothing** | `sel[5:4]` reaches `BootRAM.read_stall_cycles`, which nothing drives; the sweep runs 64 points to move 16 | [`shell/hr.rs:183-198`](../firmware/cynthion-soc/src/shell/hr.rs), [`bootram.py:673`](../gateware/soc/bootram.py) |
 | **5** | `hr cross` prints `ck-stalled {} cycles` where the number **can only be 0** | `clock_stop=False` → `want_stall` is `C(0)` → `probe_stall` is 0 → the `stalls` counter cannot increment | [`bootram.py:773-775`](../gateware/soc/bootram.py), [`:962`](../gateware/soc/bootram.py), [`hyperram_probe.py:130`](../gateware/soc/peripherals/hyperram_probe.py), [`bench.rs:499`](../firmware/cynthion-soc/src/bench.rs) |
 | **6** | The Apollo console's baud is **elaboration-frozen through a port built to be a register** | `SerialLine.divisor` is an `In` port with `init=divisor`; `top.py` drives only the streams | [`serial_line.py:171-177`](../gateware/soc/peripherals/serial_line.py) vs [`top.py:1632-1634`](../gateware/soc/top.py) |
@@ -95,11 +95,11 @@ shape: a number that cannot move, presented as a measurement.
 | …`latency_clocks`, `low_latency_clocks`, `fixed_latency` | reset value only | **yes — already ports** | in `HyperRAMPort.CONTROL`, muxed at `hyperram_share.py:191-193`, and **neither face drives them**. Only the ceiling probe does ([`hyperram_ceiling_top.py:664-702`](../gateware/probes/hyperram/hyperram_ceiling_top.py)) |
 | …`recovery_cycles`, `burst_cycles`, `burst_beats`, `min_latency_clocks` | reset value only | **yes — already ports** | absent from `CONTROL`; undriven in every build. Rank 1 above |
 | …every signal **width** | `_max_latency_clocks`, `_max_recovery_cycles`, `_burst_cycles` | no | sized from constructor arithmetic. A width is a rebuild whatever the value does — ranks 2 and 3 |
-| …`FITTED_GRADE`, `T_CSM_NS`, `T_CSM_MARGIN`, `PHY_ROUND_TRIP_CYCLES` | datasheet AC figures | **param** | `:103-139`. `PHY_ROUND_TRIP_CYCLES = 1` on the DQS twin is documented as the *simulation's* number, not the hardware's ([`hyperram_dqs_controller.py:77-80`](../gateware/soc/peripherals/hyperram_dqs_controller.py)) |
+| …`FITTED_GRADE`, `T_CSM_NS`, `T_CSM_MARGIN`, `PHY_ROUND_TRIP_CYCLES` | datasheet AC figures | **param** | `:103-139`. `PHY_ROUND_TRIP_CYCLES = 1` on the DQS twin is documented as the *simulation's* number, not the hardware's (`hyperram_dqs_controller.py:77-80`) |
 | …`state`, `timed_out`, `extra_latency`, `latency_below_trwr`, `register_active` | — | **yes, read-only** | driven, and `HyperRAMPort.STATUS` is only `(idle, read_ready, write_ready, read_data)` (`hyperram_share.py:70`), so a watchdog-terminated transaction is invisible to firmware |
 | …`register_space` | tied to 0 on the staging path | **yes** | [`bootram.py:930`](../gateware/soc/bootram.py). **Not "driven by nothing"** — the BIST engine drives it live (`hyperram_ceiling_top.py:820`), so register access exists in BIST mode and not from the CPU's memory window |
 | …`single_page` | tied to 0 by **every** synthesizable caller | no, but say so | `bootram.py:922`, `hyperram_share.py:384`, and four probes. CA[45] folds to a constant; only [`soc_hyperram_sim.py:786`](../scripts/soc/soc_hyperram_sim.py) ever sets it |
-| [`hyperram_dqs_phy.py`](../gateware/soc/peripherals/hyperram_dqs_phy.py) 4:1 gearing | ODDRX2DQA / IDDRX2DQA / TSHX2DQA | no | **R1** — no clock enable on any of them; 32 bits move per `sync` cycle unconditionally |
+| `hyperram_dqs_phy.py` 4:1 gearing | ODDRX2DQA / IDDRX2DQA / TSHX2DQA | no | **R1** — no clock enable on any of them; 32 bits move per `sync` cycle unconditionally |
 | …DDRDLL settle FSM `:277-300` | 5 states, three 8-cycle holds | no | **R2** — must complete before any transaction. But `with m.If(lock)` at `:280` has **no timeout and no retry**, so a DLL that never locks hangs `dll_ready` for the life of the bitstream |
 | …`ReadClkSelWindow` `:162-193` | PAUSE 4T either side of a tap change | no | **R1** — a CSR write is asynchronous to `hr` and cannot bracket itself; `tap.idle` is a HyperBus-cycle-accurate condition. The tap *value* is already a CSR |
 | …`DEL_MODE` strings, `DDRDLL_SETTLE_CYCLES`, `READCLKSEL_PAUSE_CYCLES` | delay-line mode and hold widths | **param** | `:73`, `:84`, `:98`. The DQ delay is `DELAYG` — a *fixed* delay with no move/load ports, so a runtime delay axis needs a different primitive, not a wire |
@@ -191,7 +191,7 @@ fourth copy of `clocks.USB_PHY_MHZ` rather than an import, against the rule
 | …performance counters | count only | note | the plugin arrives with `--with-rdtime` regardless, so dropping the flag generates a **byte-identical** core; the count is the only free variable |
 | …two unconnected core outputs | `ndmreset`, `debug_stoptime` | **bug** | an openocd `ndmreset` reaches nothing, and `mtime` keeps advancing while the hart is halted, so `mtimecmp` deadlines pile up across a breakpoint and the tick storms on resume |
 | [`cpu/clint.py`](../gateware/soc/cpu/clint.py) | `mtime` compare | no | RISC-V standard; nothing dead |
-| [`variant.py`](../gateware/soc/variant.py) | 3 env axes | — | `CYNTHION_HYPERRAM_CK_MHZ`, `CYNTHION_HYPERRAM_DQS`, `CYNTHION_SYNC_MHZ`, each hashed into the slug |
+| [`variant.py`](../gateware/soc/variant.py) | 2 env axes | — | `CYNTHION_HYPERRAM_CK_MHZ`, `CYNTHION_SYNC_MHZ`, each hashed into the slug |
 | …`VEXII_ROOT` | the core's source checkout | **bug** | **not hashed.** [`build_helpers.py:41-66`](../gateware/build_helpers.py) digests `gateware/**/*.py` plus `variant.settings()`, so a submodule bump produces a different core with an identical slug — the "served the previous bitstream as freshly built" failure of [#294](https://github.com/awtoau/cynthion-workspace/issues/294) |
 
 ## Ports that exist and reach nothing
@@ -253,8 +253,8 @@ between two masters that nothing declares.
 
 **The sharpest one is not a port at all.** The DQS PHY never drives
 `phy.rwds.i`: its only RWDS input path is `BB → rwds_in → DQSBUFM.i_DQSI`
-([`hyperram_dqs_phy.py:307-309`](../gateware/soc/peripherals/hyperram_dqs_phy.py),
-`:388`). [`hyperram_dqs_controller.py:359-360`](../gateware/soc/peripherals/hyperram_dqs_controller.py)
+(`hyperram_dqs_phy.py:307-309`,
+`:388`). `hyperram_dqs_controller.py:359-360`
 reads it. So on hardware `rwds_asks` is structurally 0, `extra_latency` can
 never set, and the variable-latency election is exercisable only against the
 behavioural PHY in `dqs_config_tb.sv`. The non-DQS path is fine — luna's

@@ -195,7 +195,7 @@ worth more than reducing the mean.**
 ## Constraints that are not negotiable
 
 - `clk` (CPU) at 60 MHz, `usb` at 60 MHz from the oscillator — ULPI requires it.
-- The BIST variant adds `hr`/`hr_fast` off a second PLL, deliberately unrelated
+- The BIST variant adds `hr` off a second PLL, deliberately unrelated
   to `clk`.
 - 56 EBR and 24,288 LUT4 available; the design currently sits at 52 BRAM, so
   block RAM is the tighter of the two.

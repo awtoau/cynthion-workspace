@@ -47,9 +47,7 @@ not the CPU's number and never was.
 ## What this does NOT do
 
 It does not give the HyperRAM its own clock. `fast` here is still a second output
-of the SAME PLL as `sync`: the flash PHY runs its logic in that domain, the DQS
-PHY takes it as an EDGE clock, and the DQS 4:1 gearing requires it to be exactly
-twice its fabric domain.
+of the SAME PLL as `sync`: the flash PHY runs its logic in that domain.
 
 `fast` is CLKOS and not CLKOS2, which is not interchangeable -- see `elaborate`.
 
@@ -189,11 +187,10 @@ class SocClocks(Elaboratable):
     sync_mhz : float
         The CPU clock. Free -- not tied to the PHY's 60 MHz.
     with_fast : bool
-        Build the `fast` edge-clock domain. Needed by the flash PHY and by the
-        HyperRAM DQS PHY; nothing else reads it.
+        Build the `fast` domain. Needed by the flash PHY; nothing else reads it.
     fast_ratio : int
         `fast = fast_ratio * sync`, and it must be an integer because both come
-        from one VCO. The DQS PHY's 4:1 gearing requires exactly 2.
+        from one VCO.
     swd_mhz : float or None
         Build the `swd` domain on CLKOS2, for `peripherals/sbu.py`. It divides
         the VCO that `sync` and `fast` already placed and never moves it, so a
@@ -366,7 +363,7 @@ class SocClocks(Elaboratable):
             # clock pads and two fabric taps; CLKOS2/CLKOS3 are primary-network
             # only, so an ECLK from CLKOS2 arrives through the fabric tap with
             # skew nobody bounded, announced as `log_info` and not a warning.
-            # `HyperRAMDQSPHY` reads `fast` as its ECLK. #314
+            # #314
             **({"p_CLKOS_ENABLE": "ENABLED",
                 "p_CLKOS_DIV": self.clkos_div,
                 "p_CLKOS_CPHASE": self.clkos_div - 1,

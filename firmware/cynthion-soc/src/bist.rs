@@ -10,8 +10,7 @@
 //! This is the rig for that. The engine is a CSR peripheral, not a memory
 //! window, so the measurement path has no `JTAGRegisterInterface` in it (#204)
 //! and no decoder, cache, arbiter or `RegisteredResponse` bubble between the
-//! engine and the part. The unfinished SoC DQS write path is therefore not in
-//! the way.
+//! engine and the part.
 //!
 //! # The rule this module enforces
 //!
@@ -85,7 +84,7 @@ pub mod reg {
     pub const FSM_STATE: usize = 28;
     /// The READ PATH's state: the controller handshake in bits 0..3 -- `idle`,
     /// `recovery elapsed`, `start`, `stalled` (sticky) -- and the readback trust
-    /// rules in bits 8..10, see [`pure::trust`].
+    /// rules in bits 8..9, see [`pure::trust`].
     ///
     /// Not an FSM state: in the engine the controller's state number was
     /// declared and never bound, so it read zero and looked like "state 0". Bits
@@ -133,7 +132,7 @@ pub const APPLET_ID: u32 = 0x4852_4331;
 /// derived from it, so the two must agree.
 const BURST_WORDS: u32 = 128;
 
-/// Values the `sel` axis walks. Live only on a DQS build -- see [`Bist::distinct`].
+/// Values the `sel` axis walks. It reaches no PHY -- see [`Bist::distinct`].
 const SEL_VALUES: u32 = 8;
 
 
@@ -260,19 +259,14 @@ impl Bist {
         self.read(reg::ID) == APPLET_ID
     }
 
-    /// Which PHY this bitstream carries. `REG_CONFIG` bit 0 in the engine.
-    pub fn dqs(&self) -> bool {
-        self.read(reg::CONFIG) & 1 != 0
-    }
-
     /// How many of `cells` are DISTINCT configurations, and the repeat count.
     ///
-    /// `readclksel` reaches the PHY only on a DQS build; on a non-DQS one the
-    /// register is written and read by nothing, so eight consecutive cells are
-    /// one configuration measured eight times (#343). Proven from the elaborated
-    /// design by `scripts/hyperram/hyperram_axis_wiring.py`, not from a flat result set.
+    /// `readclksel` is written and read by nothing, so eight consecutive cells
+    /// are one configuration measured eight times (#343). Proven from the
+    /// elaborated design by `scripts/hyperram/hyperram_axis_wiring.py`, not from
+    /// a flat result set.
     pub fn distinct(&self, cells: u32) -> (u32, u32) {
-        if self.dqs() { (cells, 1) } else { (cells / SEL_VALUES, SEL_VALUES) }
+        (cells / SEL_VALUES, SEL_VALUES)
     }
 
     /// The line every sweep prints when its cell count overstates what it varied.
@@ -281,7 +275,7 @@ impl Bist {
         if repeats > 1 {
             let _ = writeln!(
                 uart, "  {} DISTINCT configurations x {} repeats: `sel` reaches \
-                       nothing without the DQS PHY (#343)", distinct, repeats);
+                       nothing (#343)", distinct, repeats);
         }
     }
 
@@ -408,10 +402,9 @@ impl Bist {
     pub fn describe(&self, uart: &mut Uart) {
         let _ = writeln!(uart, "  id      {:#010x} {}", self.read(reg::ID),
                          if self.present() { "HRC1" } else { "NOT THE ENGINE" });
-        let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}  {}",
-                         self.read(reg::CLOCK), self.read(reg::CONFIG),
-                         if self.dqs() { "DQS PHY" }
-                         else { "non-DQS PHY -- `sel` reaches nothing (#343)" });
+        let _ = writeln!(uart, "  clock   {} kHz as built  config {:#x}  \
+                                `sel` reaches nothing (#343)",
+                         self.read(reg::CLOCK), self.read(reg::CONFIG));
         self.describe_status(uart, "at rest", self.read(reg::STATUS));
 
         // NOTHING IS LATCHED UNTIL A CELL HAS RUN.
@@ -720,14 +713,12 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    // FOUR CELLS THAT DIFFER. The capture phase reaches nothing without the DQS
-    // PHY (#343), so there the four cells walk the latency code instead: 2 and 6
-    // pass on this part, 0 and 15 are legal and fail. Four repeats can only meet
-    // this test's criterion by being marginal, which made it unfalsifiable.
-    let dqs = bist.dqs();
-    let values: [u8; 4] = if dqs { [0, 1, 2, 3] } else { [2, 6, 0, 15] };
-    let _ = writeln!(uart, "  four cells, one drive, four {}.",
-                     if dqs { "capture phases" } else { "latency codes" });
+    // FOUR CELLS THAT DIFFER. The capture phase reaches nothing (#343), so the
+    // four cells walk the latency code instead: 2 and 6 pass on this part, 0 and
+    // 15 are legal and fail. Four repeats can only meet this test's criterion by
+    // being marginal, which made it unfalsifiable.
+    let values: [u8; 4] = [2, 6, 0, 15];
+    let _ = writeln!(uart, "  four cells, one drive, four latency codes.");
     let _ = writeln!(uart, "  wanted: at least one PASS *and* at least one fail.");
     let _ = writeln!(uart, "  four passes means the rig cannot see a fault.");
     preamble(uart, bist);
@@ -736,8 +727,8 @@ pub fn smoke(uart: &mut Uart, bist: &Bist, passes: u32) {
     for value in values {
         let axes = Axes {
             drive: 3, single_ended_clock: false, fixed_latency: true,
-            readclksel: if dqs { value } else { 0 },
-            latency: if dqs { 2 } else { value },
+            readclksel: 0,
+            latency: value,
         };
         bist.configure(&axes);
         let measured = bist.measured(axes, passes, None);
@@ -820,22 +811,20 @@ pub fn all(uart: &mut Uart, bist: &Bist, passes: u32) {
 /// phases and reported at the one that did best, with a census line under it
 /// naming what else was tried.
 ///
-/// On a non-DQS build `sel` reaches nothing (#343), so there is one phase to
-/// walk and the sweep says so rather than measuring the same cell eight times.
+/// `sel` reaches nothing (#343), so there is one phase to walk and the sweep
+/// says so rather than measuring the same cell eight times.
 pub fn latency(uart: &mut Uart, bist: &Bist, passes: u32) {
     if !gate(uart, bist) {
         return;
     }
-    let walked = if bist.dqs() { SEL_VALUES as u8 } else { 1 };
+    let walked = 1u8;
     let _ = writeln!(uart, "  {} cells: CR0[7:4] latency code x fix/var \
                             x {} capture phase(s), at drive 3",
                      32 * walked as u32, walked);
     let _ = writeln!(uart, "  one row per code at its best phase; `sel` ON it \
                             says what else was tried");
-    if walked == 1 {
-        let _ = writeln!(uart, "  `sel` reaches nothing without the DQS PHY \
-                                (#343), so the phase is not an axis here");
-    }
+    let _ = writeln!(uart, "  `sel` reaches nothing (#343), so the phase is \
+                            not an axis here");
     preamble(uart, bist);
 
     // ONE control for the sweep, not one per cell. It proves the comparator

@@ -103,34 +103,13 @@ class HyperRAMProbe(wiring.Component):
                                     access="r")
         self._cyc = csr.Register({"count": csr.Field(csr.action.R, 32)},
                                  access="r")
-        # The DQS read path's own verdict on itself. Without these a wrong
-        # READCLKSEL, an unlocked DLL and a byte-order fault all present the same
-        # way -- data that reads back wrong -- and there is nothing to tell them
-        # apart from outside.
-        #
-        #   dll_locked   DDRDLLA asserted LOCK. Clear means the ECLK or the fast
-        #                domain is wrong, and every delay code is meaningless.
-        #   dll_ready    the settle sequence finished and PAUSE was released.
-        #   burstdet     DQSBUFM saw a real strobe inside its window. THIS is
-        #                what separates a working DQS read from a fixed-latency
-        #                count that happened to land right -- a read that
-        #                verifies with burstdet clear has demonstrated nothing.
-        #   rwds_ask     the extra-latency sample found RWDS asserted during
-        #                CA. Sticky, like `burstdet`, and for the same reason:
-        #                it is one cycle per transaction. Clear with a variable
-        #                CR0[3] and this staying 0 means the sample is at the
-        #                wrong cycle or never fires -- which were the same
-        #                observation until this bit existed. (#540)
+        # rwds_ask: the extra-latency sample found RWDS asserted during CA.
+        # Sticky, since it is one cycle per transaction. Clear with a variable
+        # CR0[3] and this staying 0 means the sample is at the wrong cycle or
+        # never fires. (#540)
         self._status = csr.Register({
-            "dll_locked": csr.Field(csr.action.R, 1),
-            "dll_ready": csr.Field(csr.action.R, 1),
-            "burstdet": csr.Field(csr.action.R, 1),
             "rwds_ask": csr.Field(csr.action.R, 1),
         }, access="r")
-        # Sticky and counted, because BURSTDET is a pulse per burst: sampling the
-        # live signal from the CPU would miss every one of them.
-        self._bursts = csr.Register({"count": csr.Field(csr.action.R, 16)},
-                                    access="r")
         # Cycles the Active Clock Stop gate held CK off (#185). Without this
         # there is no way to tell "the stall is misaligned" from "the stall
         # never fires", and those want opposite fixes.
@@ -138,20 +117,6 @@ class HyperRAMProbe(wiring.Component):
                                     access="r")
         self._clear = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
                                    access="w")
-        # DQSBUFM's read clock tap, settable at RUN TIME. It is a property of
-        # the board and of CK, so the alternative is eight bitstreams; this way
-        # one bitstream sweeps all eight in a few milliseconds. See #148.
-        # Bits 2:0 the DQSBUFM tap, bit 3 the read window's half-cycle phase,
-        # bits 5:4 the Active Clock Stop read delay (#185). One register because
-        # they are swept together, and a sweep that needs a rebuild per point is
-        # a sweep nobody runs.
-        # 2:0 DQSBUFM tap, 3 read-window phase, 5:4 clock-stop read delay,
-        # 6 REGISTER SPACE for the staging port -- reading a known constant
-        # (ID0 = 0x0c86) is the only absolute reference this SoC has for the
-        # read path, since every window experiment moves reads and writes
-        # together. #186.
-        self._sel = csr.Register({"tap": csr.Field(csr.action.W, 7)},
-                                 access="w")
         # WHICH cycle the controller reads the extra-latency request on, at run
         # time. `rwds_sample_cycle` derives it from `PHY_ROUND_TRIP_CYCLES`,
         # which is the behavioural PHY's number and not the board's (#186,
@@ -171,12 +136,8 @@ class HyperRAMProbe(wiring.Component):
         builder.add("arming", self._arming)
         builder.add("cyc", self._cyc)
         builder.add("status", self._status)
-        builder.add("bursts", self._bursts)
         builder.add("stalls", self._stalls)
         builder.add("clear", self._clear)
-        builder.add("sel", self._sel)
-        # LAST, so every offset above it keeps the address the firmware
-        # already hardcodes.
         builder.add("rwds_at", self._rwds_at)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
@@ -191,12 +152,8 @@ class HyperRAMProbe(wiring.Component):
             "want": In(unsigned(1)),
             "arming": In(unsigned(1)),
             "cyc": In(unsigned(1)),
-            "dll_locked": In(unsigned(1)),
-            "dll_ready": In(unsigned(1)),
-            "burstdet": In(unsigned(1)),
             "rwds_ask": In(unsigned(1)),
             "stall": In(unsigned(1)),
-            "sel": Out(unsigned(7)),
             "rwds_at": Out(unsigned(4)),
         })
         self.bus.memory_map = self._bridge.bus.memory_map
@@ -216,17 +173,8 @@ class HyperRAMProbe(wiring.Component):
         want = Signal(32)
         arming = Signal(32)
         cyc = Signal(32)
-        bursts = Signal(16)
-        burstdet_seen = Signal()
         rwds_ask_seen = Signal()
         stalls = Signal(32)
-
-        # Upstream's default until firmware says otherwise, so a build that
-        # never writes it behaves exactly as before.
-        sel = Signal(7, init=0b010)
-        with m.If(self._sel.f.tap.w_stb):
-            m.d.sync += sel.eq(self._sel.f.tap.w_data)
-        m.d.comb += self.sel.eq(sel)
 
         # 0 until firmware writes one, which the controller reads as "keep the
         # build-time cycle" -- so a build that never writes it is unchanged.
@@ -253,7 +201,6 @@ class HyperRAMProbe(wiring.Component):
             m.d.sync += [starts.eq(0), beats.eq(0), burst_beats.eq(0),
                          max_run.eq(0), run.eq(0), words.eq(0), busy.eq(0),
                          want.eq(0), arming.eq(0), cyc.eq(0),
-                         bursts.eq(0), burstdet_seen.eq(0),
                          rwds_ask_seen.eq(0), stalls.eq(0)]
         with m.Else():
             with m.If(start_edge):
@@ -282,8 +229,6 @@ class HyperRAMProbe(wiring.Component):
                 m.d.sync += cyc.eq(cyc + 1)
             with m.If(self.stall):
                 m.d.sync += stalls.eq(stalls + 1)
-            with m.If(self.burstdet):
-                m.d.sync += [bursts.eq(bursts + 1), burstdet_seen.eq(1)]
             with m.If(self.rwds_ask):
                 m.d.sync += rwds_ask_seen.eq(1)
             with m.If(self.beat):
@@ -306,11 +251,7 @@ class HyperRAMProbe(wiring.Component):
             self._want.f.count.r_data.eq(want),
             self._arming.f.count.r_data.eq(arming),
             self._cyc.f.count.r_data.eq(cyc),
-            self._bursts.f.count.r_data.eq(bursts),
             self._stalls.f.count.r_data.eq(stalls),
-            self._status.f.dll_locked.r_data.eq(self.dll_locked),
-            self._status.f.dll_ready.r_data.eq(self.dll_ready),
-            self._status.f.burstdet.r_data.eq(burstdet_seen),
             self._status.f.rwds_ask.r_data.eq(rwds_ask_seen),
         ]
         return m

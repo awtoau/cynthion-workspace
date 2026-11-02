@@ -9,11 +9,10 @@ One design now, and the part is a boot-time mode: PHY, controller and BIST
 engine live in `hr`, BootRAM stays in `sync`, and `HyperRAMHandover` carries one
 32-bit pair per transaction between them.
 
-What is checked here, on both controller widths:
+What is checked here, on the 16-bit controller:
 
   * a Wishbone write then a read returns what was written, through the
-    handover's collect/deliver halves -- the 16-bit path assembles two device
-    words per beat and the 32-bit one does not;
+    handover's collect/deliver halves -- two device words per beat;
   * a JTAG staging write lands at the address it was given;
   * a transaction asked for while the engine owns the part is REFUSED and
     completes, rather than hanging a poll for ever.
@@ -26,7 +25,6 @@ deliberately unequal so a same-domain assumption cannot pass.
 import sys
 from pathlib import Path
 
-import pytest
 from amaranth import Elaboratable, Module, Signal
 from amaranth.sim import Simulator
 
@@ -130,12 +128,12 @@ class ControllerPortShape:
 class Fixture(Elaboratable):
     """BootRAM in `sync`, the model in `hr`, the handover between them."""
 
-    def __init__(self, *, dqs):
-        width = 32 if dqs else 16
+    def __init__(self):
+        width = 16
         self.granted = Signal(init=1)
         self.port = HyperRAMPort(ControllerPortShape(width=width), name="stage")
         self.handover = HyperRAMHandover(port=self.port, width=width)
-        self.bootram = BootRAM(dqs=dqs, interface=self.handover.interface)
+        self.bootram = BootRAM(interface=self.handover.interface)
         self.model = ControllerModel(self.port, width=width)
 
     def elaborate(self, platform):
@@ -147,8 +145,8 @@ class Fixture(Elaboratable):
         return m
 
 
-def _build(dqs):
-    fixture = Fixture(dqs=dqs)
+def _build():
+    fixture = Fixture()
     sim = Simulator(fixture)
     sim.add_clock(1 / SYNC_HZ, domain="sync")
     sim.add_clock(1 / HR_HZ, domain="hr")
@@ -183,9 +181,8 @@ async def _wishbone(ctx, bus, adr, *, data=None):
         f"at {adr:#x} -- the handover did not complete a transaction")
 
 
-@pytest.mark.parametrize("dqs", [False, True], ids=["16bit", "32bit"])
-def test_a_window_beat_crosses_and_comes_back(dqs):
-    fixture, sim = _build(dqs)
+def test_a_window_beat_crosses_and_comes_back():
+    fixture, sim = _build()
 
     async def bench(ctx):
         bus = fixture.bootram.mmap.bus
@@ -201,9 +198,8 @@ def test_a_window_beat_crosses_and_comes_back(dqs):
     sim.run()
 
 
-@pytest.mark.parametrize("dqs", [False, True], ids=["16bit", "32bit"])
-def test_a_jtag_pair_lands_where_it_was_addressed(dqs):
-    fixture, sim = _build(dqs)
+def test_a_jtag_pair_lands_where_it_was_addressed():
+    fixture, sim = _build()
 
     async def bench(ctx):
         bootram = fixture.bootram
@@ -233,7 +229,7 @@ def test_a_refused_transaction_completes_rather_than_hanging():
     pair -- the beat is posted, and its ordering against the next transaction
     is what the single-transaction crossing guarantees.
     """
-    fixture, sim = _build(False)
+    fixture, sim = _build()
 
     async def bench(ctx):
         ctx.set(fixture.granted, 0)

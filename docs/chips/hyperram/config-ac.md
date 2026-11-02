@@ -230,7 +230,7 @@ column above, bolded. `T200` is the `5I` the schematic allows as a substitution;
 - **`tCSHI` is 6 ns at T166, not 10 — FIXED.** `T_CSHI_NS` was the **T100** figure
   applied to a 166 MHz part in both
   [`hyperram_controller.py`](../../../gateware/soc/peripherals/hyperram_controller.py)
-  and [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py).
+  and `hyperram_dqs_controller.py`.
   Now 6.0, from `GRADE_AC_NS` with `FITTED_GRADE = "T166"`, and the RESET value of
   a `recovery_cycles` input. Measured at sync 166: the CS#-high gap goes 3 cycles
   to 2, 18.07 ns to 12.05, against a 6 ns requirement. At sync 192 both round to 2

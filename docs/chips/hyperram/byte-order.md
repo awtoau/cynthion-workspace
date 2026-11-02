@@ -49,9 +49,9 @@ through unchanged, so a RISC-V `sw` of value `V` lands as:
   16-bit word first, and the CA is most-significant-byte-first too. The PHY's
   `i_D0 = dq.o[31:24]` makes the CA a plain contiguous slice
   (`phy.dq.o.eq(ca[16:48])` in
-  [`hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py)).
+  `hyperram_dqs_controller.py`).
 - **Gate cost is zero either way** — the phase-to-bit map in
-  [`hyperram_dqs_phy.py`](../../../gateware/soc/peripherals/hyperram_dqs_phy.py)
+  `hyperram_dqs_phy.py`
   is wiring. What the current order buys is that **no byte reversal is needed
   anywhere on the CA path**; any other order needs one built into `ca`.
 - **Word order is the unusual part, relative to the rest of the SoC.** The
@@ -65,7 +65,7 @@ through unchanged, so a RISC-V `sw` of value `V` lands as:
 
     scripts/hyperram/hyperram_dqs_model_sim.py --stage order
 
-[`dqs_order_tb.sv`](../../../gateware/probes/hyperram/dqs_order_tb.sv), three
+`dqs_order_tb.sv`, three
 tests, none of which compares a path against itself. Log:
 `tmp/logs/hyperram_dqs_model_sim.log`.
 
@@ -102,7 +102,7 @@ tests, none of which compares a path against itself. Log:
   seen names exactly one order. The runner **checks** this rather than asserting
   it, and fails a pattern that repeats a byte.
 - A ramp in WORDS (`0x1000 + k`, which
-  [`dqs_model_tb.sv`](../../../gateware/probes/hyperram/dqs_model_tb.sv) uses for
+  `dqs_model_tb.sv` uses for
   its own question) does NOT discriminate byte order: its high byte is `0x10` in
   every word.
 
@@ -118,7 +118,7 @@ the fault it names has measured nothing.
 
 - **ODDRX2DQA's own `D0..D3` to wire order.** No open model of the primitive
   exists; the behavioural PHY in the testbench IS
-  [`hyperram_dqs_phy.py`](../../../gateware/soc/peripherals/hyperram_dqs_phy.py)'s
+  `hyperram_dqs_phy.py`'s
   mapping restated. The CA test is what constrains it — the CA and the data
   share the mapping, and only one orientation decodes an address — but it
   constrains the pair, not the primitive alone.
@@ -141,6 +141,6 @@ the fault it names has measured nothing.
 ## The check that keeps it
 
 `ORDER_WRITE` and `ORDER_READ` in
-[`scripts/hyperram/hyperram_dqs_model_sim.py`](../../../scripts/hyperram/hyperram_dqs_model_sim.py).
+`scripts/hyperram/hyperram_dqs_model_sim.py`.
 A change to either is a change to the wire format: the run fails and names this
 file, rather than reporting a new convention quietly.

@@ -22,7 +22,7 @@ pub struct Axes {
     pub drive: u8,
     /// `CR1[6]`: false selects the differential clock the board is wired for.
     pub single_ended_clock: bool,
-    /// `READCLKSEL` 0..=7, which shifts the DQSBUFM read pulse by T/4 a step.
+    /// `READCLKSEL` 0..=7. Reaches no PHY (#343).
     pub readclksel: u8,
     /// `CR0[7:4]`, the part's initial latency code, and `CR0[3]` fixed/variable.
     ///
@@ -198,7 +198,7 @@ impl core::fmt::Display for Tally {
     }
 }
 
-/// `REG_CTRL_STATE` bits 8..10: whether the engine's CR0/CR1 readback stands up.
+/// `REG_CTRL_STATE` bits 8..9: whether the engine's CR0/CR1 readback stands up.
 ///
 /// The readback shares its capture window with the data path, so a cell run at a
 /// phase outside the window returns a held or slid word -- and the report was
@@ -210,9 +210,6 @@ pub mod trust {
     pub const REREAD: u32 = 1 << 8;
     /// CR0 and CR1 came back different. A path holding one word answers alike.
     pub const DISTINCT: u32 = 1 << 9;
-    /// Both words carry their 16 bits in both halves, as a register read does.
-    /// A byte-slipped capture does not.
-    pub const HALVES: u32 = 1 << 10;
 }
 
 /// What may be said about the part's configuration, given the trust bits.
@@ -249,11 +246,6 @@ pub fn readback(write_cycles: u32, ctrl_state: u32, cr0: u32, cr1: u32) -> Readb
         return Readback::Withheld(
             "CR0 and CR1 read back identical -- the read path is handing back \
              one held word, not the registers");
-    }
-    if ctrl_state & trust::HALVES == 0 {
-        return Readback::Withheld(
-            "a register read arrives in both halves of the word and these do \
-             not match -- the capture is slipped by whole bytes");
     }
     Readback::Reported { cr0: cr0 as u16, cr1: cr1 as u16 }
 }
@@ -307,7 +299,7 @@ pub fn latency_code_legal(code: u8) -> bool {
 /// **Expected duration, and where it comes from**: a burst is 128 words, one
 /// word per `hr` cycle, and a pass does two of them -- 256 `hr` cycles -- plus
 /// command, latency and tCSHI, call it 512 to be safe about the fixed part. The
-/// slowest rung this rig builds is CK 100 on the DQS path, where `hr` is 50 MHz,
+/// slowest rung this rig builds has `hr` at 50 MHz,
 /// against a CPU at 60 MHz: 512 x 60/50 = 614 CPU cycles per pass. One spin is
 /// an uncached CSR read plus a mask and a branch; at ~10 cycles that is ~62
 /// spins per pass.
@@ -410,7 +402,7 @@ mod tests {
         assert!(matches!(cell(0, 0, 4096, 4096).verdict(), Verdict::NoResult));
     }
 
-    const ALL_TRUST: u32 = trust::REREAD | trust::DISTINCT | trust::HALVES;
+    const ALL_TRUST: u32 = trust::REREAD | trust::DISTINCT;
 
     /// THE BOARD'S OWN NUMBERS, #366. After a cell at a failing capture phase
     /// `bist status` printed `CR1 = 0xbf2f` -- the PREVIOUS CR0 -- and read
@@ -428,7 +420,7 @@ mod tests {
     /// reports when every bit is wrong would pass the test above and nothing else.
     #[test]
     fn every_trust_rule_can_withhold_on_its_own() {
-        for rule in [trust::REREAD, trust::DISTINCT, trust::HALVES] {
+        for rule in [trust::REREAD, trust::DISTINCT] {
             assert!(matches!(readback(1, ALL_TRUST & !rule, 0x8f2f_8f2f, 0xff81_ff81),
                              Readback::Withheld(_)),
                     "rule {rule:#x} cannot withhold on its own");
@@ -598,7 +590,7 @@ mod tests {
         assert_eq!(eye_centre(0, 8), None);
         // Two runs: the wider one, and its centre -- never a phase between them.
         assert_eq!(eye_centre(0b0011_1001, 8), Some(4));
-        // A non-DQS build walks one phase, where `sel` reaches nothing (#343).
+        // One phase is walked: `sel` reaches nothing (#343).
         assert_eq!(eye_centre(0b0000_0001, 1), Some(0));
         assert_eq!(eye_centre(0b1111_1110, 1), None);
     }

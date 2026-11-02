@@ -60,14 +60,14 @@ import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
-# Ratios to run every check at. `hr` is CK/2 on the DQS path, so with `sync`
-# pinned at 60 MHz these span CK 100 (hr slower than sync) through CK 360 (much
-# faster). 1:1 is included because it is the case that hid the last CDC bug.
+# Ratios to run every check at. `hr` is CK, so with `sync` pinned at 60 MHz
+# these span `hr` slower than sync through much faster. 1:1 is included because
+# it is the case that hid the last CDC bug.
 RATIOS = [
-    ("hr slower  (CK 100, sync 60)", 60.0, 50.0),
-    ("hr equal   (CK 120, sync 60)", 60.0, 60.0),
-    ("hr faster  (CK 180, sync 60)", 60.0, 90.0),
-    ("hr much faster (CK 360)", 60.0, 180.0),
+    ("hr slower  (CK 50, sync 60)", 60.0, 50.0),
+    ("hr equal   (CK 60, sync 60)", 60.0, 60.0),
+    ("hr faster  (CK 90, sync 60)", 60.0, 90.0),
+    ("hr much faster (CK 180)", 60.0, 180.0),
 ]
 
 

@@ -112,13 +112,11 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // completion source, so a subcommand missing from here cannot be TAB-completed
     // and cannot be discovered without running the command wrongly first.
     ("hyperram", "HyperRAM, and its read window"),
-    ("hyperram status", "identity, configuration, geometry and the DQS read path"),
+    ("hyperram status", "identity, configuration, geometry and the extra-latency sample"),
     ("hyperram cr0 <hex>", "write CR0 and read it back -- latency, drive, burst"),
     ("hyperram cr1 <hex>", "write CR1 and read it back -- clock type, refresh"),
     ("hyperram rwds <n>", "which cycle takes the extra-latency sample; 0 is the default"),
     ("hyperram read <hex>", "one word over the staging port"),
-    ("hyperram sel <n>", "READCLKSEL: 2:0 tap, 3 phase, 5:4 read stall"),
-    ("hyperram sweep", "try every READCLKSEL and say which read correctly"),
     ("hyperram test", "round-trip one word through the staging port"),
     ("hyperram cross", "do the window and the staging port agree?"),
     ("hyperram ramp [w]", "verify a 0-255 byte ramp; `w` writes it first"),
@@ -243,8 +241,8 @@ pub(crate) fn list_all(out: &mut dyn FnMut(&str)) {
         }
 
         // THE FAMILY'S OWN summary, not its first subcommand's. Taking the first
-        // row described `hyperram` as "the DQS read path's self-report", which is
-        // `hyperram status` -- a true sentence about the wrong thing, which is
+        // row described `hyperram` as `hyperram status`'s summary -- a true
+        // sentence about the wrong thing, which is
         // the worst kind of wrong in an index.
         //
         // The bare row is the one with no keyword after the name. Every family

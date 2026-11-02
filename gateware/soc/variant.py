@@ -35,7 +35,7 @@ bitstream as "built from these exact sources". Retired since; #294.
 
 ## Naming
 
-`ck80-dqs0-sync60` -- one `tag` + value per entry, in table order. Legible from `ls` and stable: a rung's directory has the same name every
+`ck80-sync60` -- one `tag` + value per entry, in table order. Legible from `ls` and stable: a rung's directory has the same name every
 time it is built, which is what makes revisiting one a cache hit rather than a
 resynthesis.
 
@@ -52,6 +52,9 @@ from pathlib import Path
 FLAG = "flag"
 TEXT = "text"
 
+# One rung below the fabric ceiling. Ladder: #410.
+CK_DEFAULT_MHZ = "80"
+
 # (environment variable, default, directory tag, kind)
 #
 # The defaults are top.py's, and top.py now reads them from here rather than
@@ -59,42 +62,14 @@ TEXT = "text"
 # the same digest, or an ordinary run after a sweep resynthesises for nothing and
 # then refuses a `--firmware-only` load as stale when the bitstream is correct.
 VARIANT_ENV = (
-    ("CYNTHION_HYPERRAM_CK_MHZ",    None,  "ck",        TEXT),
-    ("CYNTHION_HYPERRAM_DQS",       "",    "dqs",       FLAG),
+    ("CYNTHION_HYPERRAM_CK_MHZ",    CK_DEFAULT_MHZ, "ck",        TEXT),
     ("CYNTHION_SYNC_MHZ",           "60",  "sync",      TEXT),
     # Flash pad electricals; defaults are board.cynthion_r1_4's. #459.
     ("CYNTHION_FLASH_DRIVE",        "8",    "fdrive",   TEXT),
     ("CYNTHION_FLASH_SLEWRATE",     "SLOW", "fslew",    TEXT),
 )
 
-# The CK default is PER PATH, because one number cannot be right for both.
-#
-# `hr` IS CK on the non-DQS path and CK/2 on the DQS one, so the same fabric
-# closure buys twice the CK on DQS. A single default of 100 was buildable on one
-# path and not on the other, and #410 is the failure: a raw nextpnr ERROR at the
-# documented invocation, with nothing naming the CK as the cause.
-#
-# NEITHER IS THE CEILING, and that is the point of a default.
-#
-# non-DQS: the ceiling is 84 and 90 does not close, but two deterministic builds
-# of 84 at different commits measured 90.03 and 85.51 MHz -- 4.5 MHz of
-# netlist-to-netlist movement against 1.8% of margin. 80 is the rung below, at
-# 8%. DQS: 180 closes, but the PART is rated 166 MHz and a default must not
-# overclock it; 160 is the rung under that, and 168/180 are the ceiling sweep's
-# business.
-#
-# So each default is one rung below what binds it, and what binds it differs:
-# the fabric on one path, the part on the other. Measurements, their conditions
-# and the full ladder: #410.
-CK_DEFAULT_MHZ = {True: "160", False: "80"}
-
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
-
-# Defaults that are a function of another variable, so `None` in the table.
-_DERIVED = {
-    "CYNTHION_HYPERRAM_CK_MHZ":
-        lambda env: CK_DEFAULT_MHZ[flag("CYNTHION_HYPERRAM_DQS", env)],
-}
 
 
 def _resolve(name, env=None):
@@ -106,8 +81,6 @@ def _resolve(name, env=None):
             f"different bitstreams hash the same and share a build directory.")
     default, _tag, kind = _BY_NAME[name]
     env = os.environ if env is None else env
-    if default is None:                 # a default that depends on another entry
-        default = _DERIVED[name](env)
     raw = env.get(name, default) or default
     if kind is FLAG:
         # "", "0" and unset are one state; anything else is the other. Normalised

@@ -69,7 +69,7 @@ MUST_FIND = {
     "read_stall_cycles": "undriven",  # bootram.py, the sink for `sel` bits 5:4
 }
 MUST_NOT_FIND = {
-    "readclksel",     # bootram.py <- hyper_probe.sel: the exemplar, wired
+    "rwds_at",        # hyperram_probe.rwds_at -> the share mux: the exemplar, wired
     "start_transfer", # driven every transaction
     "final_word",
     "write_ready",
@@ -124,7 +124,7 @@ def indirect_drives(path: Path) -> set[str]:
 
     * `for field in PORT.CONTROL: getattr(a, field).eq(...)` -- the share mux.
     * `FFSynchronizer(src, dst)` -- `dst` is driven by the instance, and
-      `top.py` wires the DQS tap that way.
+      `top.py` wires `rwds_at` that way.
     """
     try:
         tree = ast.parse(path.read_text())

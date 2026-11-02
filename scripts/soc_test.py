@@ -840,7 +840,7 @@ def main():
                    b"|hispeed|reset]",
                    # `clear` is the destructive one. `status` is the only
                    # identify (6e46cd2): there is no `id` verb on any region.
-                   b"[status|cr0|cr1|rwds|read|sel|sweep|test|cross|ramp|bench|clear]",
+                   b"[status|cr0|cr1|rwds|read|test|cross|ramp|bench|clear]",
                    # `input` went with the selector that reached no pin (#305).
                    b"[status|off|control|both|charge]"]
         command("help", listing, "`help` lists every command")

@@ -356,11 +356,10 @@ class JTAGStager(Elaboratable):
         entry_data = fifo.r_data[0:16]
         entry_tag  = fifo.r_data[16:18]
 
-        # THE WIRE FORMAT IS STILL 16-BIT WORDS. The arbiter below now takes a
-        # 32-bit pair, because the DQS controller has no narrower granule -- but
-        # that is a property of the memory side, not of the link, and pushing it
-        # onto the link would change the host tool and the frame format for no
-        # gain. Two data words are collected here and issued as one request.
+        # THE WIRE FORMAT IS 16-BIT WORDS. The arbiter below takes a 32-bit
+        # pair; that is a property of the memory side, not of the link, and
+        # pushing it onto the link would change the host tool and the frame
+        # format for no gain. Two data words are collected here and issued as one request.
         #
         # A `write` frame therefore wants an EVEN start address and an even
         # number of data words. `scripts/soc/soc_jtag_stage.py` pads the image, since

@@ -11,9 +11,8 @@ puts its minimum at 10 MHz. `clocks.py` has enforced that on the SoC's own PLL
 since it was written; this file's solvers did not, and admitted CLKI_DIV 7 --
 8.57 MHz off the 60 MHz reference.
 
-The rungs that buys are exactly the ones of the form `60 * k / 7`: 85.714286 MHz
-non-DQS, which is where #331/#332 took their latency codes, and 102.857143 MHz
-DQS, which is one end of the gap #313 measures. Out of spec does not mean it
+The rungs that buys are exactly the ones of the form `60 * k / 7`: 85.714286 MHz,
+which is where #331/#332 took their latency codes. Out of spec does not mean it
 fails to build -- it means the datasheet stops guaranteeing jitter, on the clock
 whose edge placement is the thing being measured.
 """
@@ -27,8 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from hyperram_clocks import (  # noqa: E402
-    PFD_MIN_MHZ, reachable_ck, solve_dcsc_rungs, solve_hr_pll,
-    solve_hr_pll_rungs)
+    PFD_MIN_MHZ, reachable_ck, solve_dcsc_rungs, solve_hr_pll_rungs)
 
 INPUT_MHZ = 60.0
 
@@ -43,16 +41,14 @@ def test_the_floor_matches_the_datasheet():
 @pytest.mark.parametrize("ck", [85.714286, 102.857143, 111.428571])
 def test_a_sevenths_rung_is_refused(ck):
     """`60 * k / 7` needs CLKI_DIV 7, so it is not a rung at all."""
-    assert solve_hr_pll(ck, INPUT_MHZ, with_fast=False) is None
-    assert ck not in reachable_ck(ck - 1, ck + 1, dqs=False, input_mhz=INPUT_MHZ)
+    assert solve_hr_pll_rungs([ck], INPUT_MHZ) is None
+    assert ck not in reachable_ck(ck - 1, ck + 1, input_mhz=INPUT_MHZ)
 
 
-@pytest.mark.parametrize("dqs", [False, True])
-def test_every_reachable_ck_keeps_the_phase_detector_in_spec(dqs):
+def test_every_reachable_ck_keeps_the_phase_detector_in_spec():
     """The whole published ladder, checked against the divider it needs."""
-    for ck in reachable_ck(40, 300, dqs=dqs, input_mhz=INPUT_MHZ):
-        hr = ck / 2 if dqs else ck
-        solved = solve_hr_pll(hr, INPUT_MHZ, with_fast=dqs)
+    for ck in reachable_ck(40, 300, input_mhz=INPUT_MHZ):
+        solved = solve_hr_pll_rungs([ck], INPUT_MHZ)
         assert solved is not None, f"CK {ck} is listed but does not solve"
         clki_div = solved[1]
         assert INPUT_MHZ / clki_div >= PFD_MIN_MHZ, (

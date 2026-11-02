@@ -40,16 +40,16 @@ from soc import variant  # noqa: E402
 
 TOP = ROOT / "gateware" / "soc" / "top.py"
 
-# Three variants that differ in one axis each, plus the default.
+# Variants that differ in one axis each, plus the default.
 DEFAULT: dict = {}
-DQS = {"CYNTHION_HYPERRAM_DQS": "1"}
-DQS_CK120 = {"CYNTHION_HYPERRAM_DQS": "1", "CYNTHION_HYPERRAM_CK_MHZ": "120"}
+CK120 = {"CYNTHION_HYPERRAM_CK_MHZ": "120"}
 SYNC45 = {"CYNTHION_SYNC_MHZ": "45"}
+CK120_SYNC45 = {**CK120, **SYNC45}
 
 
 def test_different_variants_get_different_directories():
     dirs = {variant.build_dir(ROOT, env)
-            for env in (DEFAULT, DQS, DQS_CK120, SYNC45)}
+            for env in (DEFAULT, CK120, SYNC45, CK120_SYNC45)}
     assert len(dirs) == 4, sorted(str(d) for d in dirs)
 
 
@@ -60,25 +60,17 @@ def test_the_same_variant_gets_the_same_directory():
     # correct `--firmware-only` load as stale.
     same = [
         {},
-        {"CYNTHION_HYPERRAM_DQS": ""},
-        {"CYNTHION_HYPERRAM_DQS": "0"},
-        # The CK default, spelled out. Taken from the table rather than typed:
-        # it is per path now, and a literal here would pin one of the two.
-        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ[False]},
+        # The CK default, spelled out. Taken from the table rather than typed.
+        {"CYNTHION_HYPERRAM_CK_MHZ": variant.CK_DEFAULT_MHZ},
     ]
     dirs = {variant.build_dir(ROOT, env) for env in same}
     assert len(dirs) == 1, sorted(str(d) for d in dirs)
 
 
-def test_the_ck_default_follows_the_path():
-    """One default could not be right for both: `hr` is CK, or CK/2 (#410)."""
-    for dqs, expected in ((True, variant.CK_DEFAULT_MHZ[True]),
-                          (False, variant.CK_DEFAULT_MHZ[False])):
-        env = {"CYNTHION_HYPERRAM_DQS": "1" if dqs else "0"}
-        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ", env) == expected
-        # And an explicit value still wins on either path.
-        assert variant.value("CYNTHION_HYPERRAM_CK_MHZ",
-                             {**env, "CYNTHION_HYPERRAM_CK_MHZ": "120"}) == "120"
+def test_the_ck_default_is_overridable():
+    assert variant.value("CYNTHION_HYPERRAM_CK_MHZ", {}) == variant.CK_DEFAULT_MHZ
+    assert variant.value("CYNTHION_HYPERRAM_CK_MHZ",
+                         {"CYNTHION_HYPERRAM_CK_MHZ": "120"}) == "120"
 
 
 def test_a_ck_rung_is_its_own_directory():
@@ -90,7 +82,7 @@ def test_a_ck_rung_is_its_own_directory():
 
 
 def test_the_directory_is_under_the_build_root_and_is_one_component():
-    for env in (DEFAULT, DQS_CK120, {"CYNTHION_HYPERRAM_CK_MHZ": "85.7143,100"}):
+    for env in (DEFAULT, CK120, {"CYNTHION_HYPERRAM_CK_MHZ": "85.7143,100"}):
         path = variant.build_dir(ROOT, env)
         assert path.parent == ROOT / "tmp" / "awto_soc" / "build"
         # A comma or a slash arriving from the environment must not create a
@@ -100,7 +92,7 @@ def test_the_directory_is_under_the_build_root_and_is_one_component():
 
 def test_the_directory_and_the_cache_key_separate_the_same_things():
     import soc_run
-    for env in (DEFAULT, DQS, DQS_CK120, SYNC45):
+    for env in (DEFAULT, CK120, SYNC45, CK120_SYNC45):
         assert soc_run.variant_settings.__module__  # imported, not shadowed
     # Every entry in the table appears in the slug and in the settings list.
     for name, _default, tag, _kind in variant.VARIANT_ENV:

@@ -56,18 +56,15 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from amaranth import Cat, Const, Module, Signal                 # noqa: E402
-from amaranth.hdl import Fragment, IOPort                        # noqa: E402
+from amaranth.hdl import Fragment                                # noqa: E402
 from amaranth.hdl._ir import Instance                            # noqa: E402
-from amaranth.lib.io import DifferentialPort, SingleEndedPort    # noqa: E402
 from amaranth.sim import Simulator                               # noqa: E402
 from luna.gateware.interface.psram import HyperRAMPHY           # noqa: E402
 
-from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY         # noqa: E402
-
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_ck_park_check.log"
 
-# The output-gearing primitives either PHY can drive CK from. `ODDRX1F` is 2:1
-# (luna's non-DQS PHY), `ODDRX2F` 4:1 (the DQS PHY at 2 CK per `sync` cycle).
+# The output-gearing primitives CK can be driven from. `ODDRX1F` is 2:1 (luna's
+# PHY).
 ODDR_TYPES = ("ODDRX1F", "ODDRX2F", "ODDRX2DQA", "ODDRX2DQSB")
 
 # The gearing data ports, in phase order. The LAST one a primitive has is the
@@ -106,24 +103,7 @@ def non_dqs_phy():
     return HyperRAMPHY(bus=bus)
 
 
-def dqs_phy():
-    """The DQS PHY drives RAW PADS, so its bus is `lib.io` ports and not signals.
-
-    Same shape `platform.request("ram", 0, dir="-")` hands it: `clk` differential,
-    the rest single-ended.
-    """
-    bus = Bus()
-    bus.cs = SingleEndedPort(IOPort(1, name="cs"))
-    bus.clk = DifferentialPort(p=IOPort(1, name="clk_p"),
-                               n=IOPort(1, name="clk_n"))
-    bus.reset = SingleEndedPort(IOPort(1, name="reset"))
-    bus.rwds = SingleEndedPort(IOPort(1, name="rwds"))
-    bus.dq = SingleEndedPort(IOPort(8, name="dq"))
-    return HyperRAMDQSPHY(bus=bus)
-
-
-PHYS = (("non-DQS (luna's HyperRAMPHY, 2:1)", non_dqs_phy),
-        ("DQS (HyperRAMDQSPHY, 4:1)", dqs_phy))
+PHYS = (("luna's HyperRAMPHY, 2:1", non_dqs_phy),)
 
 
 def oddr_instances(fragment):
@@ -268,7 +248,7 @@ def main() -> int:
         for f in failures:
             log.error("FAIL %s", f)
         return 1
-    log.info("PASS -- CK parks Low on both PHYs when the gate closes")
+    log.info("PASS -- CK parks Low when the gate closes")
     return 0
 
 

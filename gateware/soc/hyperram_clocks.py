@@ -4,17 +4,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-`hr` and `hr_fast`, from the die's second PLL, independent of `sync`.
+`hr`, from the die's second PLL, independent of `sync`.
 
 ## Why the HyperRAM cannot keep using the CPU's clock
 
-`HyperRAMDQSPHY` gears off `fast` at twice `sync`, so device CK is `2 * SYNC_MHZ`
-and every ladder rung moves the CPU with it. Two things make that untenable:
+Device CK is `hr`, so the CPU clock and CK are separate knobs. Tying them
+together would make every ladder rung move the CPU with it:
 
-  * **The RISC-V tops out around 75 MHz.** CK 140 needs `sync` 70 and CK 180
-    needs 90, so the interesting half of the HyperRAM ladder is past the clock
-    the CPU can be built at. The part's ceiling and the core's ceiling are
-    different questions and one of them was silently answering the other.
+  * **The RISC-V tops out around 75 MHz.** The interesting half of the HyperRAM
+    ladder is past the clock the CPU can be built at.
   * **A swept CPU clock is a swept measurement.** Every rung changes the console
     divisor, the CLINT tick, the flash SCK divisor and the cache refill timing
     at the same time as CK. Nothing measured across rungs is a controlled
@@ -45,16 +43,15 @@ during configuration and are not writable afterwards", and that a hand-built
 240 was asked for.
 
 So the FREQUENCIES are per-bitstream. Which one is live is not: `DCSC` picks
-between two PLL outputs of the same VCO at run time, glitchlessly, so on the
-non-DQS path CK joins the runtime cross product instead of gating it. Two rungs
-per build, `MAX_RUNGS`, and the DQS path is fixed at one -- both limits are
-silicon and are argued where they are enforced.
+between two PLL outputs of the same VCO at run time, glitchlessly, so CK
+joins the runtime cross product instead of gating it. Two rungs per build,
+`MAX_RUNGS`; the limit is silicon and is argued where it is enforced.
 """
 
 from amaranth import ClockDomain, ClockSignal, Elaboratable, Instance, Module, Signal
 from amaranth.lib.cdc import FFSynchronizer
 
-__all__ = ["HyperRAMDomains", "solve_hr_pll", "reachable_ck",
+__all__ = ["HyperRAMDomains", "reachable_ck",
            "solve_dcsc_rungs", "solve_hr_pll_rungs", "MAX_RUNGS"]
 
 # Rungs one bitstream can carry, and it is a HARD limit of the silicon.
@@ -93,54 +90,14 @@ def _clki_range(input_mhz):
     return range(1, int(input_mhz // PFD_MIN_MHZ) + 1)
 
 
-def solve_hr_pll(hr_mhz, input_mhz=60.0, with_fast=True, tolerance=0.001):
-    """Dividers giving `hr`, and `hr_fast` at twice it when the DQS PHY needs it.
-
-    Feedback is taken from CLKOP, so CLKFB_DIV counts *output* periods:
-    VCO = input * CLKFB_DIV * CLKOP_DIV / CLKI_DIV, and therefore
-    hr = input * CLKFB_DIV / CLKI_DIV independently of CLKOP_DIV. Treating
-    CLKFB_DIV as a plain VCO multiplier is the mistake `variable_clock.py`
-    records as having produced clocks at twice the requested rate.
-
-    Unlike the SoC's generator this solves for no `usb`, because this PLL drives
-    nothing that enumerates. That is the whole reason it is a second PLL.
-
-    Returns (vco, clki_div, clkfb_div, clkop_div, clkos_div) or None.
-
-    `hr_fast` is CLKOS, not CLKOS2: only CLKOP and CLKOS reach the ECP5's
-    edge-clock input mux. See `elaborate`.
-    """
-    for clki_div in _clki_range(input_mhz):
-        for clkfb_div in range(1, 81):
-            if abs(input_mhz * clkfb_div / clki_div - hr_mhz) > tolerance:
-                continue
-            for clkop_div in range(1, MAX_DIV + 1):
-                vco = hr_mhz * clkop_div
-                if not VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ:
-                    continue
-                # `hr_fast` divides the same VCO, so it exists only where
-                # CLKOP_DIV is even. Rejected here rather than checked after:
-                # a silently-wrong fast clock corrupts data rather than
-                # failing to build.
-                if with_fast and clkop_div % 2:
-                    continue
-                clkos = clkop_div // 2 if with_fast else None
-                return (vco, clki_div, clkfb_div, clkop_div, clkos)
-    return None
-
-
 def solve_hr_pll_rungs(ck_list, input_mhz=60.0, tolerance=0.001):
-    """One VCO and one output divider per CK in `ck_list`. Non-DQS only.
+    """One VCO and one output divider per CK in `ck_list`.
 
     CLKOP carries rung 0 AND the feedback, so two equations hold at once:
     `ck_list[0] = input * CLKFB_DIV / CLKI_DIV` fixes the loop, and
     `VCO = ck_list[0] * CLKOP_DIV` fixes the VCO. Every other rung is then a
     plain integer divisor of that same VCO -- which is the whole reason several
     CK values fit in one bitstream.
-
-    DQS is excluded by arithmetic, not by preference: there `hr_fast` must be
-    exactly `2 * hr` and must reach the bank edge-clock mux, which takes CLKOP
-    and CLKOS only. Both are then spoken for by one rung. See `HyperRAMDomains`.
 
     Returns (vco, clki_div, clkfb_div, [div per rung]) or None.
     """
@@ -164,20 +121,14 @@ def solve_hr_pll_rungs(ck_list, input_mhz=60.0, tolerance=0.001):
     return None
 
 
-def reachable_ck(low, high, dqs=True, input_mhz=60.0):
-    """Every device CK this PLL can produce in [low, high], ascending.
-
-    CK is `2 * hr` on the DQS PHY and `hr` on the non-DQS one, so the rungs
-    differ between them and quoting one ladder for both is how a comparison
-    stops being a comparison.
-    """
+def reachable_ck(low, high, input_mhz=60.0):
+    """Every device CK this PLL can produce in [low, high], ascending."""
     out = []
     for clki in _clki_range(input_mhz):
         for clkfb in range(1, 81):
-            hr = input_mhz * clkfb / clki
-            ck = 2 * hr if dqs else hr
-            if low - 1e-9 <= ck <= high + 1e-9 and solve_hr_pll(
-                    hr, input_mhz, with_fast=dqs):
+            ck = input_mhz * clkfb / clki
+            if low - 1e-9 <= ck <= high + 1e-9 and solve_hr_pll_rungs(
+                    [ck], input_mhz):
                 out.append(round(ck, 6))
     return sorted(set(out))
 
@@ -236,16 +187,9 @@ def solve_dcsc_rungs(low, high, outputs=4, input_mhz=60.0, step=5.0):
 
 
 class HyperRAMDomains(Elaboratable):
-    """`hr`, and `hr_fast` at twice it, from the die's second PLL.
+    """`hr`, from the die's second PLL. `hr` IS device CK."""
 
-    `ck_mhz` is the DEVICE clock, not the fabric one: the DQS PHY gears 4:1 off
-    `hr_fast` and emits two CK per `hr` cycle, so `hr = ck_mhz / 2` there and
-    `hr = ck_mhz` on the non-DQS path. Taking the device number as the argument
-    means a caller cannot get the factor of two wrong, which is the mistake
-    every ladder in this tree has made at least once.
-    """
-
-    def __init__(self, *, ck_mhz, dqs=True, input_mhz=60.0):
+    def __init__(self, *, ck_mhz, input_mhz=60.0):
         # A float or a sequence; a single rung behaves exactly like the scalar.
         self.ck_rungs = ([float(ck_mhz)] if isinstance(ck_mhz, (int, float))
                          else [float(ck) for ck in ck_mhz])
@@ -259,52 +203,21 @@ class HyperRAMDomains(Elaboratable):
         # Rung 0. `ck_mhz` stays a scalar so every caller that reads it -- the
         # BIST engine's timing constants among them -- is unchanged.
         self.ck_mhz = self.ck_rungs[0]
-        self.dqs = dqs
-
-        if dqs:
-            # ONE RUNG, AND IT IS THE SILICON, NOT A SIMPLIFICATION.
-            #
-            # `hr_fast` is the DQS PHY's edge clock and must be `2 * hr`
-            # exactly. The bank ECLK input mux takes CLKOP and CLKOS from a left
-            # PLL, four clock pads and two fabric taps -- and nothing else; see
-            # `elaborate` and #314. A DCSC output is not on that list at all
-            # (`G_DCSOUT_DCS*` reaches the primary clock network only), so the
-            # edge clock cannot be selected at run time. Fixing `hr_fast` fixes
-            # `hr` with it, because the ratio is not free.
-            #
-            # `ECLKBRIDGECS` is the one runtime mux on the edge-clock path, but
-            # its `W2_CLKI0/1` sources are `G_BANK{6,7}ECLK*` -- already-formed
-            # bank edge clocks, not the input muxes -- and switching it would
-            # invalidate the `DDRDLLA` delay code that sets the DQSBUFM read
-            # window, which is the thing this rig exists to measure.
-            if len(self.ck_rungs) > 1:
-                raise ValueError(
-                    f"{len(self.ck_rungs)} rungs on the DQS path: hr_fast is an "
-                    f"edge clock, the ECLK input mux takes only CLKOP/CLKOS, and "
-                    f"hr = hr_fast / 2 leaves nothing to select. Use dqs=False.")
-            self.hr_mhz = self.ck_mhz / 2
-            solved = solve_hr_pll(self.hr_mhz, input_mhz, with_fast=True)
-            if solved is None:
-                raise ValueError(self._unreachable(input_mhz))
-            (self.vco_mhz, self.clki_div, self.clkfb_div,
-             self.clkop_div, self.clkos_div) = solved
-            self.rung_divs = [self.clkop_div]
-        else:
-            # `hr` IS CK here, so each rung is one output divider of the shared
-            # VCO and the four EHXPLLL outputs are what makes several fit.
-            self.hr_mhz = self.ck_mhz
-            solved = solve_hr_pll_rungs(self.ck_rungs, input_mhz)
-            if solved is None:
-                raise ValueError(self._unreachable(input_mhz))
-            (self.vco_mhz, self.clki_div, self.clkfb_div, self.rung_divs) = solved
-            self.clkop_div = self.rung_divs[0]
-            self.clkos_div = self.rung_divs[1] if len(self.rung_divs) > 1 else None
+        # Each rung is one output divider of the shared VCO; the four EHXPLLL
+        # outputs are what makes several fit.
+        self.hr_mhz = self.ck_mhz
+        solved = solve_hr_pll_rungs(self.ck_rungs, input_mhz)
+        if solved is None:
+            raise ValueError(self._unreachable(input_mhz))
+        (self.vco_mhz, self.clki_div, self.clkfb_div, self.rung_divs) = solved
+        self.clkop_div = self.rung_divs[0]
+        self.clkos_div = self.rung_divs[1] if len(self.rung_divs) > 1 else None
 
         # The FASTEST rung, because the placer times one net that carries either
         # rate. Constraining the domain at rung 0 would leave the other rung
         # timed against a frequency nobody built for -- the same class of PASS
         # that `add_clock_constraint` below exists to stop.
-        self.hr_mhz_max = max(self.ck_rungs) / 2 if dqs else max(self.ck_rungs)
+        self.hr_mhz_max = max(self.ck_rungs)
         self.input_mhz = input_mhz
 
         # Held low until the PLL locks, so the engine cannot start a transaction
@@ -334,10 +247,9 @@ class HyperRAMDomains(Elaboratable):
         """Why the ladder rung asked for does not exist, and what does nearby."""
         rungs = ", ".join(f"{ck:g}" for ck in self.ck_rungs)
         near = reachable_ck(min(self.ck_rungs) - 20, max(self.ck_rungs) + 20,
-                            self.dqs, input_mhz)
+                            input_mhz)
         return (f"no PLL configuration gives HyperRAM CK {rungs} MHz"
-                + (" with hr_fast at twice it" if self.dqs else
-                   " off one shared VCO" if len(self.ck_rungs) > 1 else "")
+                + (" off one shared VCO" if len(self.ck_rungs) > 1 else "")
                 + f"; VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz. "
                 f"Reachable nearby: {near}")
 
@@ -345,27 +257,20 @@ class HyperRAMDomains(Elaboratable):
         m = Module()
 
         m.domains.hr = ClockDomain()
-        if self.dqs:
-            m.domains.hr_fast = ClockDomain()
 
         # One net per rung, straight off the PLL, plus the net the domain
         # actually runs on. With one rung they are the same wire.
         clk_rung = [Signal(name=f"clk_hr_rung{index}")
                     for index in range(len(self.rung_divs))]
         clk_hr = clk_rung[0] if len(clk_rung) == 1 else Signal(name="clk_hr")
-        clk_hr_fast = Signal()
         locked_raw = Signal()
 
-        # CLKOS is rung 1 on the non-DQS path and `hr_fast` on the DQS one.
-        # Never both: the DQS path has one rung, for the reason in `__init__`.
-        clkos_div = self.clkos_div if self.dqs else (
-            self.rung_divs[1] if len(self.rung_divs) > 1 else None)
+        clkos_div = self.clkos_div
 
         m.submodules.pll = Instance(
             "EHXPLLL",
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8", a_MFG_ENABLE_FILTEROPAMP="1",
             a_MFG_GMCREF_SEL="2",
-            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.dqs else {}),
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
@@ -392,8 +297,7 @@ class HyperRAMDomains(Elaboratable):
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk_rung[0],
-            **({"o_CLKOS": clk_hr_fast} if self.dqs else
-               {"o_CLKOS": clk_rung[1]} if len(clk_rung) > 1 else {}),
+            **({"o_CLKOS": clk_rung[1]} if len(clk_rung) > 1 else {}),
             o_LOCK=locked_raw,
         )
 
@@ -411,8 +315,7 @@ class HyperRAMDomains(Elaboratable):
             # mode is for.
             #
             # DCSOUT reaches the PRIMARY clock network only (`G_DCSOUT_DCS*` ->
-            # `G_*PCLK*`), never the edge-clock mux. That is what confines this
-            # to the non-DQS path -- see `__init__`.
+            # `G_*PCLK*`), never the edge-clock mux.
             m.submodules.ck_mux = Instance(
                 "DCSC",
                 p_DCSMODE="POS",
@@ -425,28 +328,6 @@ class HyperRAMDomains(Elaboratable):
             )
 
         m.d.comb += ClockSignal("hr").eq(clk_hr)
-        if self.dqs:
-            # CLKOS, NOT CLKOS2 -- the edge clock network cannot see CLKOS2.
-            #
-            # `hr_fast` is the ECLK for the DQS PHY's ODDRX2F gearing and
-            # DQSBUFM capture, so it must reach the bank's edge-clock spine on
-            # dedicated routing, not fabric. The bank ECLK input mux
-            # (`W2_ECLKI0` / `W2_JECLKI1` in the ECP5 `ECLK_L` tile) takes only
-            # `G_J{LL,UL}CPLL0CLK{OP,OS}`, the four `G_JPCLKT*` clock pins, and
-            # the two `*QECLKCIB*` fabric taps. CLKOS2/CLKOS3 exist only on the
-            # primary clock network, so an ECLK sourced from CLKOS2 can only
-            # arrive through the fabric tap -- which nextpnr refuses on the
-            # dedicated pass and then falls back to general routing with
-            # unconstrained skew. See #314.
-            #
-            # No ECLKBRIDGECS. Its bel pins are hardwired to the outputs of two
-            # input muxes -- `.fixed_conn W2_JCLK0_ECLKBRIDGECS1 W2_JECLKI1` and
-            # `W2_JCLK1_ECLKBRIDGECS1 S1W2_JECLKI1` in the same `bits.db` -- so
-            # it sits DOWNSTREAM of the list above and cannot rescue a source
-            # that list rejects. The lower-left PLL feeds bank 7 directly; there
-            # is no die to cross. `ECLKBRIDGECS: 0/2` is the success criterion.
-            m.d.comb += ClockSignal("hr_fast").eq(clk_hr_fast)
-
         # TELL THE PLACER WHAT THESE RUN AT.
         #
         # Without this nextpnr times them against a default and prints a PASS
@@ -461,8 +342,6 @@ class HyperRAMDomains(Elaboratable):
         # rung unchecked.
         if platform is not None:
             platform.add_clock_constraint(clk_hr, self.hr_mhz_max * 1e6)
-            if self.dqs:
-                platform.add_clock_constraint(clk_hr_fast, 2 * self.hr_mhz * 1e6)
 
         # LOCK is asynchronous to everything. Synchronised into `hr` because
         # that is the domain the engine gates on.

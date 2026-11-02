@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# RESET# polarity at the pad, and the DLL gate the engine waits on. #479 #475.
+# RESET# polarity at the pad, and the engine starting once it owns the part. #479 #475.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Two signals the merge got wrong, both silent in every local gate.
@@ -11,17 +11,16 @@
 `reset.o` high pulls the pad LOW, which is RESET# ASSERTED. `HyperRAMShared`
 must therefore hand the buffer the assertion itself, not its complement.
 
-The merged non-DQS path drove `~phy_reset`, and `phy_reset` is 0 in the
+The merged path drove `~phy_reset`, and `phy_reset` is 0 in the
 power-on STAGE mode -- so the part was held in hardware reset for the whole
 life of the bitstream. It answered nothing, stored nothing, and every settled
 read came back zero with no error (#479, #484).
 
-## The DLL gate
+## The engine start
 
-`HyperRAMCeiling` leaves its `RESET` state on `heartbeat[16] & dll_ready`. The
-non-DQS PHY has no DQSBUFM and so no DLL: nothing will ever report ready, and
-the port must say so, or the engine parks in `RESET` with `busy=1 done=0` and
-zero cycles for ever (#475).
+`HyperRAMCeiling` leaves its `RESET` state on `heartbeat[16] & granted` only. A
+wait on a DLL that does not exist parked the engine in `RESET` with `busy=1
+done=0` and zero cycles for ever (#475).
 
 Both are checked at the port and at the pad rather than in the source, so a
 rewrite that keeps the defect in different words still fails.
@@ -63,9 +62,9 @@ class _HoldsTheBus:
         return self.bus
 
 
-def _run(bench, *, dqs=False):
+def _run(bench):
     platform = _HoldsTheBus()
-    dut = HyperRAMShared(dqs=dqs, ck_mhz=80.0, latency_clocks=7)
+    dut = HyperRAMShared(ck_mhz=80.0)
     sim = Simulator(Fragment.get(dut, platform))
     # The module's `sync` is `hr` once `top.py` renames it; one clock either way.
     sim.add_clock(1 / 80e6)
@@ -118,8 +117,8 @@ def test_the_engine_can_still_assert_reset_when_it_owns_the_part():
 def test_the_engine_waits_for_the_part_then_starts():
     """Two ways the engine wedges, both seen on the board. #475.
 
-    It must not leave `RESET` on a path with no DLL waiting for a `dll_ready`
-    that will never arrive -- `busy=1 done=0`, FSM at 0, zero cycles.
+    It must not wait in `RESET` for a signal nothing drives -- `busy=1 done=0`,
+    FSM at 0, zero cycles.
 
     And it must not leave `RESET` before the mux grants it the part: the
     `start_transfer` is discarded and the FSM then waits in its write burst for
@@ -132,7 +131,7 @@ def test_the_engine_waits_for_the_part_then_starts():
     from peripherals.hyperram_bist import HyperRAMBist  # noqa: PLC0415
 
     port = HyperRAMPort(HyperRAMController(phy=None, sync_mhz=80.0), name="bist")
-    dut = HyperRAMBist(ck_mhz=80.0, port=port, dqs=False, domain="sync")
+    dut = HyperRAMBist(ck_mhz=80.0, port=port, domain="sync")
     sim = Simulator(dut)
     sim.add_clock(1 / 80e6)
 

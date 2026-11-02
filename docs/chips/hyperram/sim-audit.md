@@ -88,8 +88,8 @@ with a deliberately rewired run required to fail.
 
 | section | assertion | class | where it lives now |
 |---|---|---|---|
-| `section_as_built` | [completed] as built | caller | stays |
-| `section_as_built` | as built: a read issues a command the device decodes | caller | stays |
+| `section_as_built` | [completed] as built | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_as_built` | as built: a read issues a command the device decodes | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_clock_stop` | a coalesced line write is correct once CK can stop | caller | stays |
 | `section_clock_stop` | ...in 32 device words, not the ungated 48 | caller | stays |
 | `section_clock_stop` | ...at the address each beat asked for | caller | stays |
@@ -104,8 +104,8 @@ with a deliberately rewired run required to fail.
 | `section_clock_stop` | ...and does not even touch 32 device words | caller | stays |
 | `section_clock_stop` | the stall bound is inside rev A01-006's 100 ns tCK maximum | caller | stays |
 | `section_clock_stop` | ...and the bubble it has to cover is one cycle, well inside it | caller | stays |
-| `section_command` | [completed] the command read | caller | stays |
-| `section_command` | one command was issued | caller | stays |
+| `section_command` | [completed] the command read | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_command` | one command was issued | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_escape` | upstream's non-DQS READ_DATA never returns from a silent device | caller | stays |
 | `section_escape` | ...nor from a device that delivers 7 of the 8 beats asked for | caller | stays |
 | `section_escape` | ...and upstream's WRITE_DATA never returns from a stalled consumer | caller | stays |
@@ -122,19 +122,19 @@ with a deliberately rewired run required to fail.
 | `section_escape` | [completed] non-DQS register write | caller | stays |
 | `section_escape` | ...and a register write ends on its own, unflagged | caller | stays |
 | `section_escape` | [completed] non-DQS register read, silent device | caller | stays |
-| `section_escape` | upstream's DQS READ_DATA never returns from a silent device | caller | stays |
-| `section_escape` | ...nor its WRITE_DATA from a stalled consumer | caller | stays |
-| `section_escape` | [completed] DQS, silent device | caller | stays |
-| `section_escape` | ...and the DQS controller flags it | caller | stays |
-| `section_escape` | [completed] DQS, consumer that stops asking | caller | stays |
-| `section_escape` | [completed] DQS register write | caller | stays |
-| `section_escape` | ...unflagged, since the caller's own path ended it | caller | stays |
-| `section_held` | held: the word arrives at the address asked for | caller | stays |
-| `section_held` | pulsed `perform_write`/`write_data`: the device does NOT get it | caller | stays |
-| `section_held` | pulsed `final_word`: the burst does not end where it was meant to | caller | stays |
-| `section_held` | [completed] pulsed `final_word` | caller | stays |
-| `section_latency` | [completed] the fixed-latency read | caller | stays |
-| `section_latency` | upstream forces the long branch unconditionally | caller | stays |
+| `section_escape` | upstream's DQS READ_DATA never returns from a silent device | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | ...nor its WRITE_DATA from a stalled consumer | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | [completed] DQS, silent device | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | ...and the DQS controller flags it | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | [completed] DQS, consumer that stops asking | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | [completed] DQS register write | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_escape` | ...unflagged, since the caller's own path ended it | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_held` | held: the word arrives at the address asked for | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_held` | pulsed `perform_write`/`write_data`: the device does NOT get it | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_held` | pulsed `final_word`: the burst does not end where it was meant to | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_held` | [completed] pulsed `final_word` | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_latency` | [completed] the fixed-latency read | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_latency` | upstream forces the long branch unconditionally | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_latency_input` | an undriven `latency_clocks` still reaches the data body | caller | stays |
 | `section_latency_input` | undriven matches the build-time constant exactly | caller | stays |
 | `section_latency_input` | each latency setting waits a different number of cycles | caller | stays |
@@ -159,10 +159,10 @@ with a deliberately rewired run required to fail.
 | `section_line_write` | a 64-byte line touches 32 device words and not one more | caller | stays |
 | `section_line_write` | every word lands at the address the beat asked for | caller | stays |
 | `section_line_write` | one HyperBus transaction per beat, since none may be held open | caller | stays |
-| `section_recovery` | upstream's RECOVERY state is still a TODO | caller | stays |
-| `section_recovery` | upstream's controller leaves ONE cycle and nothing more | caller | stays |
-| `section_recovery` | [completed] back-to-back DQS reads | caller | stays |
-| `section_recovery` | ...and the gap is the count RECOVERY was given | caller | stays |
+| `section_recovery` | upstream's RECOVERY state is still a TODO | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_recovery` | upstream's controller leaves ONE cycle and nothing more | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_recovery` | [completed] back-to-back DQS reads | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_recovery` | ...and the gap is the count RECOVERY was given | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_recovery_non_dqs` | upstream's non-DQS controller leaves LESS than the count needs | caller | stays |
 | `section_recovery_non_dqs` | ...and it is the GAP that differs, not the transaction count | caller | stays |
 | `section_recovery_non_dqs` | [completed] back-to-back non-DQS reads | caller | stays |
@@ -186,17 +186,17 @@ with a deliberately rewired run required to fail.
 | `section_shared_engine` | the second word carries the upper half and final_word | caller | stays |
 | `section_shared_engine` | write controls stay held through recovery | caller | stays |
 | `section_shared_engine` | the write acknowledges after both words | caller | stays |
-| `section_structural` | upstream assigns bus.clk as a single net | caller | stays |
-| `section_structural` | ours drives the differential clock's TRUE pin only | caller | stays |
-| `section_structural` | ours drives RESET#, which upstream leaves floating | caller | stays |
-| `section_structural` | ours takes the polarity from the resource, not from a literal | caller | stays |
-| `section_structural` | ours needs the `fast` domain, and says so | caller | stays |
-| `section_structural` | ours keeps upstream's controller rather than copying it | caller | stays |
+| `section_structural` | upstream assigns bus.clk as a single net | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_structural` | ours drives the differential clock's TRUE pin only | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_structural` | ours drives RESET#, which upstream leaves floating | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_structural` | ours takes the polarity from the resource, not from a literal | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_structural` | ours needs the `fast` domain, and says so | dqs-removed | DQS code removed at tag `dqs-last` |
+| `section_structural` | ours keeps upstream's controller rather than copying it | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_tcsm` | upstream holds CS# Low until the harness gives up | caller | stays |
 | `section_tcsm` | ours chops it inside the budget the controller computed | caller | stays |
 | `section_tcsm` | ...at the word cap exactly, not one beat past it | caller | stays |
 | `section_tcsm` | ...and the caller is told the controller ended it | caller | stays |
-| `section_tcsm` | the DQS controller chops the same shape | caller | stays |
+| `section_tcsm` | the DQS controller chops the same shape | dqs-removed | DQS code removed at tag `dqs-last` |
 | `section_wishbone` | pulsing a request before a delayed grant completes NOTHING | caller | stays |
 | `section_wishbone` | the real port holds its request until the delayed grant | caller | stays |
 | `section_wishbone` | Wishbone word addresses become 16-bit HyperRAM addresses | caller | stays |

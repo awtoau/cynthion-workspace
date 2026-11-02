@@ -42,8 +42,8 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 8** — latent |
 | `flash.py` `FlashILA` | hardcoded `sync` | incidental 2-stage, per bit | `sample_rate=60e6`, cosmetic | **DEFECT 8** — latent, already documented |
 | [`bootram.py`](../../../gateware/soc/bootram.py) (HyperRAM) | `sync` only | JTAG side arrives pre-synchronised | `ck_mhz` argument | **DEFECT 5** |
-| [`peripherals/hyperram_dqs_controller.py`](../../../gateware/soc/peripherals/hyperram_dqs_controller.py) | `sync` only | none | `sync_mhz` argument, `ceil`ed | **sound** — dormant |
-| [`peripherals/hyperram_dqs_phy.py`](../../../gateware/soc/peripherals/hyperram_dqs_phy.py) | `sync` + `fast` | ECP5 hard 4:1 gearing (`ODDRX2*`/`IDDRX2*`/`TSHX2*`) | `DDRDLL_SETTLE_CYCLES = 8`, cycles by spec | **sound** — dormant; see the note on `LOCK` |
+| `peripherals/hyperram_dqs_controller.py` | `sync` only | none | `sync_mhz` argument, `ceil`ed | **sound** — dormant |
+| `peripherals/hyperram_dqs_phy.py` | `sync` + `fast` | ECP5 hard 4:1 gearing (`ODDRX2*`/`IDDRX2*`/`TSHX2*`) | `DDRDLL_SETTLE_CYCLES = 8`, cycles by spec | **sound** — dormant; see the note on `LOCK` |
 | [`peripherals/hyperram_probe.py`](../../../gateware/soc/peripherals/hyperram_probe.py) | `sync` only | none | — | **sound** |
 | [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
 | [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 9** |

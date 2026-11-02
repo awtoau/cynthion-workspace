@@ -40,7 +40,6 @@ from amaranth import Elaboratable, Module, Mux, Signal
 from amaranth.lib.cdc import FFSynchronizer
 
 from peripherals.hyperram_controller import HyperRAMController
-from peripherals.hyperram_dqs_controller import HyperRAMDQSController
 
 __all__ = ["HyperRAMPort", "HyperRAMShared", "HyperRAMHandover",
            "MODE_STAGE", "MODE_BIST"]
@@ -73,19 +72,10 @@ class HyperRAMPort:
         for field in self.CONTROL + self.STATUS:
             setattr(self, field, Signal.like(getattr(controller, field),
                                              name=f"{name}_{field}"))
-        # The PHY's runtime knobs, muxed with the rest: the engine toggles
-        # RESET# on its heartbeat and sweeps the DQS tap, the staging side holds
-        # RESET# released and takes its tap from the probe CSR.
+        # RESET#, muxed with the rest: the engine toggles it on its heartbeat,
+        # the staging side holds it released.
         self.phy_reset = Signal(name=f"{name}_phy_reset")
-        self.readclksel = Signal(3, name=f"{name}_readclksel")
-        self.read_phase = Signal(name=f"{name}_read_phase")
-        # Back from the PHY. Ungated: nothing acts on them.
-        self.dll_locked = Signal(name=f"{name}_dll_locked")
-        self.dll_ready = Signal(name=f"{name}_dll_ready")
-        self.burstdet = Signal(name=f"{name}_burstdet")
-        # The extra-latency sample's verdict, and WHICH cycle takes it. The
-        # cycle is a lever because the arithmetic behind its default is the
-        # behavioural PHY's, not this board's (#186, #381, #540).
+        # The extra-latency sample's verdict, and WHICH cycle takes it (#540).
         self.rwds_ask = Signal(name=f"{name}_rwds_ask")
         self.rwds_at = Signal(4, name=f"{name}_rwds_at")
         # This port drives the controller. Separate from `idle`, which is low
@@ -109,22 +99,15 @@ class HyperRAMShared(Elaboratable):
         is idle, so a mode write cannot land inside a HyperBus transaction.
     """
 
-    def __init__(self, *, dqs, ck_mhz, latency_clocks):
-        self.dqs = dqs
+    def __init__(self, *, ck_mhz):
         self.ck_mhz = ck_mhz
-        # The FABRIC rate. The DQS PHY emits two CK per `hr` cycle.
-        self.sync_mhz = ck_mhz / 2 if dqs else ck_mhz
-        self.width = 32 if dqs else 16
+        self.sync_mhz = ck_mhz
+        self.width = 16
 
         # Built here, wired to its pads in `elaborate`: the controller only
         # reads `phy` when it elaborates, and the pads cannot be requested
         # without a platform.
-        if dqs:
-            self.psram = HyperRAMDQSController(
-                phy=None, sync_mhz=self.sync_mhz,
-                high_latency_clocks=latency_clocks)
-        else:
-            self.psram = HyperRAMController(phy=None, sync_mhz=self.sync_mhz)
+        self.psram = HyperRAMController(phy=None, sync_mhz=self.sync_mhz)
 
         self.stage = HyperRAMPort(self.psram, name="stage")
         self.bist = HyperRAMPort(self.psram, name="bist")
@@ -144,39 +127,16 @@ class HyperRAMShared(Elaboratable):
         m = Module()
 
         psram = self.psram
-        dll_locked = Signal()
-        dll_ready = Signal()
-        burstdet = Signal()
-        readclksel = Signal(3)
-        read_phase = Signal()
         phy_reset = Signal()
 
-        if self.dqs:
-            # Raw pads: the DQS primitives own the tristates, the gearing and
-            # the output buffers. The PHY drives CK, CS# and RESET# itself.
-            from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
+        from luna.gateware.interface.psram import HyperRAMPHY
 
-            ram_bus = platform.request("ram", 0, dir="-")
-            phy = HyperRAMDQSPHY(bus=ram_bus, readclksel=readclksel,
-                                 read_phase=read_phase)
-            m.d.comb += [dll_locked.eq(phy.dll_locked),
-                         dll_ready.eq(phy.dll_ready),
-                         burstdet.eq(phy.phy.burstdet),
-                         # Active high into the PHY; the pad is `PinsN` and the
-                         # PHY reads that polarity from the pin map.
-                         phy.phy.reset.eq(phy_reset)]
-        else:
-            from luna.gateware.interface.psram import HyperRAMPHY
-
-            ram_bus = platform.request("ram", 0)
-            phy = HyperRAMPHY(bus=ram_bus)
-            # RESET# active high into the buffer: the pad is `PinsN`, so
-            # Amaranth inverts once and a second inversion here would hold the
-            # part in reset for the life of the bitstream (#479).
-            #
-            # No DQSBUFM, so no tap to select and no strobe to detect. The DLL
-            # signals stay 0 because there is no DLL to report on.
-            m.d.comb += ram_bus.reset.o.eq(phy_reset)
+        ram_bus = platform.request("ram", 0)
+        phy = HyperRAMPHY(bus=ram_bus)
+        # RESET# active high into the buffer: the pad is `PinsN`, so
+        # Amaranth inverts once and a second inversion here would hold the
+        # part in reset for the life of the bitstream (#479).
+        m.d.comb += ram_bus.reset.o.eq(phy_reset)
 
         psram.phy = phy.phy
         m.submodules.phy = phy
@@ -198,8 +158,6 @@ class HyperRAMShared(Elaboratable):
                 Mux(self.mode, getattr(bist, field), getattr(stage, field)))
         m.d.comb += [
             phy_reset.eq(Mux(self.mode, bist.phy_reset, stage.phy_reset)),
-            readclksel.eq(Mux(self.mode, bist.readclksel, stage.readclksel)),
-            read_phase.eq(Mux(self.mode, bist.read_phase, stage.read_phase)),
         ]
 
         # A 0 from the CSR means "keep the build-time cycle", so a firmware that
@@ -216,13 +174,6 @@ class HyperRAMShared(Elaboratable):
                 port.read_ready.eq(psram.read_ready & (self.mode == index)),
                 port.write_ready.eq(psram.write_ready & (self.mode == index)),
                 port.read_data.eq(psram.read_data),
-                port.dll_locked.eq(dll_locked),
-                port.dll_ready.eq(dll_ready),
-                port.burstdet.eq(burstdet),
-                # BOTH controllers, never a constant. Tying this to 0 on the
-                # non-DQS build made it unable to report on the variant that
-                # actually ships (`dqs0`) -- an instrument that cannot go red,
-                # read as evidence that the sample never fired (#540).
                 port.rwds_ask.eq(psram.rwds_asked),
             ]
 
@@ -290,8 +241,7 @@ class HyperRAMHandover(Elaboratable):
         self.port = port
         self.width = width
         self._domain = domain
-        # Two device words per 32-bit pair on the 16-bit controller, one on the
-        # 32-bit DQS one.
+        # Two device words per 32-bit pair.
         self.words = 32 // width
         self.interface = self.Interface(width=width)
 
@@ -401,7 +351,7 @@ class HyperRAMHandover(Elaboratable):
             port.single_page.eq(0),
             port.write_data.eq(wdata.word_select(hr_word, self.width)),
             port.final_word.eq(hr_word == last_word),
-            # RESET# released, and the DQS tap comes from the probe CSR.
+            # RESET# released.
             port.phy_reset.eq(0),
         ]
 

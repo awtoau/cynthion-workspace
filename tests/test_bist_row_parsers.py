@@ -72,13 +72,13 @@ CELL = """\
 # NO rows and that is not a parse failure.
 ALL_CLEAN = """\
   4096 cells: latency x fix/var x drive x clock x phase
-  512 DISTINCT configurations x 8 repeats: `sel` reaches nothing without the DQS PHY (#343)
+  512 DISTINCT configurations x 8 repeats: `sel` reaches nothing (#343)
   printing only what is NOT a clean pass
   CK 90 MHz  rung 1 of 2  PLL locked
   sync 60 MHz counted  PLL locked
       time  lat  mode  drive  clk  sel    errors     words   control  verdict
   4096 pass, 0 fail, 0 no result of 4096
-  512 DISTINCT configurations x 8 repeats: `sel` reaches nothing without the DQS PHY (#343)
+  512 DISTINCT configurations x 8 repeats: `sel` reaches nothing (#343)
 """
 
 

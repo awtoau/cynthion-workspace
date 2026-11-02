@@ -4,30 +4,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Sustained write/read/verify against HyperRAM, at an arbitrary clock, either PHY.
+Sustained write/read/verify against HyperRAM, at an arbitrary clock.
 
 Driven by `scripts/hyperram/hyperram_ceiling.py`. Building this file directly is for
 checking that a frequency places at all:
 
-    python3 gateware/probes/hyperram/hyperram_ceiling_top.py --build --sync-mhz 100 --dqs
+    python3 gateware/probes/hyperram/hyperram_ceiling_top.py --build --sync-mhz 100
 
 `--build` never programs the board.
 
-## The x-axis is CK, not `sync`
+## The x-axis is CK
 
-The two PHYs clock the part differently, and comparing them by `sync` compares
-nothing:
-
-| PHY | gearing | bits per `sync` cycle | **device CK** |
-|---|---|---|---|
-| `HyperRAMPHY` (non-DQS) | `ODDRX1F`, 2:1 | 16 | `sync` |
-| `HyperRAMDQSPHY` (DQS) | `ODDRX2F`, 4:1 | 32 | **2 x `sync`** |
-
-`ODDRX2F` emits `0, clk_en[1], 0, clk_en[0]` per `sync` cycle, so with
-`clk_en = 0b11` the outgoing clock toggles twice per `sync` cycle. A DQS build at
-`sync` 100 MHz runs the part at 200 MHz -- already past its 166 MHz rating --
-while a non-DQS build at `sync` 100 runs it at 100. Everything here is reported
-against CK so the two ladders lie on one axis.
+`HyperRAMPHY` is `ODDRX1F`, 2:1 geared, 16 bits per `sync` cycle: device CK is
+`sync`.
 
 ## tCSM caps the burst, and the previous measurement exceeded it
 
@@ -43,14 +32,6 @@ clock swept and less above it, so every transaction is legal and the throughput
 reported is one the part can actually hold.
 
 ## What makes a pass believable
-
-**BURSTDET.** With fixed latency set in CR0 the part takes the long count every
-time, so a read can come back clean because the count landed right rather than
-because the strobe was found. `burstdet_seen` is latched from `DQSBUFM` and
-reported; a DQS pass with it clear has not demonstrated DQS.
-
-**The DDRDLL lock.** The whole read path's delay codes are invalid until
-`DDRDLLA` locks, so `dll_locked`/`dll_ready` are reported too.
 
 **An address-derived pattern.** A controller that stopped advancing its address
 would return one word forever, and a constant fill would score that as perfect.
@@ -78,8 +59,6 @@ from luna.gateware.interface.psram import HyperRAMPHY
 
 from peripherals import hyperram_controller
 from peripherals.hyperram_controller import HyperRAMController
-from peripherals.hyperram_dqs_controller import (
-    low_latency_clocks as dqs_low_latency_clocks)
 
 from bist import BISTAddresses, BISTHarness
 
@@ -96,7 +75,7 @@ REG_ERRORS      = 7
 REG_WORDS       = 8
 REG_DIE         = 9
 REG_CLOCK       = 10   # sync in kHz, as built -- the host checks its own idea
-REG_CONFIG      = 11   # dqs flag, bytes/word, burst length
+REG_CONFIG      = 11   # bytes/word, burst length
 REG_BAD_INDEX   = 12
 REG_BAD_GOT     = 13
 REG_BAD_WANT    = 14
@@ -141,8 +120,7 @@ REG_DEVICE_READBACK = 30
 REG_DEVICE_READBACK_CR1 = 31
 
 # Combinations the sweep walks: capture phase 0-7 against CR0 drive code 0-7.
-# Phase reaches the PHY only on a DQS build, so a non-DQS sweep is 8 distinct
-# cells run 8 times. See #343.
+# Phase reaches no PHY, so the sweep is 8 distinct cells run 8 times. See #343.
 SWEEP_PHASES = 8
 SWEEP_DRIVES = 8
 SWEEP_CELLS = SWEEP_PHASES * SWEEP_DRIVES
@@ -188,13 +166,10 @@ CR0_POWER_ON_LATENCY_CODE = (CR0_POWER_ON >> 4) & 0xF
 # The datasheet's FIXED-LATENCY DOUBLING, not a half-clock counter.
 #
 # CR0[3]=1 selects fixed latency, where the part waits 2 x the initial-latency
-# code on every transaction. The non-DQS PHY is 2:1 geared, so one controller
+# code on every transaction. The PHY is 2:1 geared, so one controller
 # cycle IS one CK, and the shipped 14 is 2 x the power-on code's 7 -- confirmed
 # on the board 2026-08-10. `LOW_LATENCY_CLOCKS = 7` is the same L undoubled,
 # which is the variable-latency branch. (#331)
-#
-# It is 2 for the DQS path too, but the DQS controller's cycle is 2 CK, so its
-# count is `L - 1` rather than `2 * L`. See `HyperRAMDQSController`. (#314)
 CONTROLLER_CYCLES_PER_CLOCK = 2
 REG_ACTUAL      = 17
 REG_GOLDEN      = 18
@@ -239,8 +214,8 @@ DIE_PRESENT = 1 << 8
 VCO_MIN_MHZ, VCO_MAX_MHZ, MAX_DIV = 400.0, 800.0, 128
 
 
-def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
-    """Dividers giving `sync_mhz`, and `fast_ratio * sync_mhz` when asked.
+def solve_pll(sync_mhz, input_mhz=60.0, tolerance=0.001):
+    """Dividers giving `sync_mhz`.
 
     Feedback is taken from CLKOP, so CLKFB_DIV counts *output* periods:
     VCO = input * CLKFB_DIV * CLKOP_DIV / CLKI_DIV, and therefore
@@ -255,11 +230,7 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
     `JTAGRegisterInterface` runs in `sync` plus a local JTCK domain -- so the
     constraint does not apply and the ladder gets 61 rungs instead of 3.
 
-    Returns (vco, clki_div, clkfb_div, clkop_div, clkos_div) or None.
-
-    `fast` is CLKOS, not CLKOS2: only CLKOP and CLKOS reach the bank edge-clock
-    input mux, and `fast` is the DQS PHY's ECLK. See `HyperRAMClocks.elaborate`
-    and #314.
+    Returns (vco, clki_div, clkfb_div, clkop_div) or None.
     """
     # CLKI_DIV stops at 6, not 7. The ECP5's phase detector has a 10 MHz
     # minimum (FPGA-DS-02012 Table 3.23), and 60/7 = 8.57 MHz is under it --
@@ -272,54 +243,41 @@ def solve_pll(sync_mhz, input_mhz=60.0, fast_ratio=None, tolerance=0.001):
                 continue
             for clkop_div in range(1, MAX_DIV + 1):
                 vco = sync_mhz * clkop_div
-                if not VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ:
-                    continue
-                # `fast` divides the same VCO, so it only exists where CLKOP_DIV
-                # is a multiple of the ratio. Rejected here rather than checked
-                # afterwards: a silently-wrong `fast` corrupts data instead of
-                # failing to build.
-                if fast_ratio is not None and clkop_div % fast_ratio:
-                    continue
-                clkos = None if fast_ratio is None else clkop_div // fast_ratio
-                return (vco, clki_div, clkfb_div, clkop_div, clkos)
+                if VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ:
+                    return (vco, clki_div, clkfb_div, clkop_div)
     return None
 
 
-def reachable(low, high, fast_ratio=None, input_mhz=60.0):
+def reachable(low, high, input_mhz=60.0):
     """Every `sync` this PLL can produce in [low, high], ascending."""
     out = []
     for clki in range(1, 8):
         for clkfb in range(1, 81):
             sync = input_mhz * clkfb / clki
             if low - 1e-9 <= sync <= high + 1e-9 and solve_pll(
-                    sync, input_mhz, fast_ratio):
+                    sync, input_mhz):
                 out.append(round(sync, 6))
     return sorted(set(out))
 
 
 class HyperRAMClocks(Elaboratable):
-    """`sync`, and `fast` at twice it when the DQS PHY needs it. No `usb`."""
+    """`sync` from the board oscillator. No `usb`."""
 
-    def __init__(self, *, sync_mhz, with_fast):
+    def __init__(self, *, sync_mhz):
         self.sync_mhz = sync_mhz
-        self.with_fast = with_fast
-        solved = solve_pll(sync_mhz, fast_ratio=2 if with_fast else None)
+        solved = solve_pll(sync_mhz)
         if solved is None:
             raise ValueError(
                 f"no PLL configuration gives sync {sync_mhz:g} MHz"
-                + (" with fast at twice it" if with_fast else "")
-                + f"; VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz")
+                f"; VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz")
         (self.vco_mhz, self.clki_div, self.clkfb_div,
-         self.clkop_div, self.clkos_div) = solved
-        self.fast_mhz = None if not with_fast else self.vco_mhz / self.clkos_div
+         self.clkop_div) = solved
 
     def elaborate(self, platform):
         m = Module()
         m.domains.sync = ClockDomain()
-        if self.with_fast:
-            m.domains.fast = ClockDomain()
 
-        clk_sync, clk_fast, locked = Signal(), Signal(), Signal()
+        clk_sync, locked = Signal(), Signal()
 
         m.submodules.pll = Instance(
             "EHXPLLL",
@@ -328,18 +286,7 @@ class HyperRAMClocks(Elaboratable):
             i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_STDBY=0, i_PLLWAKESYNC=0, i_RST=0, i_ENCLKOP=0,
-            # CLKOS, NOT CLKOS2 -- the edge-clock network cannot see CLKOS2.
-            #
-            # `fast` is the ECLK for `HyperRAMDQSPHY`'s ODDRX2F gearing and its
-            # DQSBUFM capture, so it must reach bank 7's edge-clock spine on
-            # dedicated routing. Each bank ECLK input mux takes exactly ten
-            # sources -- `G_J{LL,UL}CPLL0CLK{OP,OS}`, the four `G_JPCLKT{6,7}{0,1}`
-            # clock pins and two `*QECLKCIB*` fabric taps (`ECLK_L` tile,
-            # `tiledata/ECLK_L/bits.db`). CLKOS2/CLKOS3 are on the primary clock
-            # network only, so an ECLK from CLKOS2 can arrive ONLY through the
-            # fabric tap -- which nextpnr takes, with skew nobody bounded, and
-            # announces as `log_info` rather than a warning. #314
-            o_CLKOP=clk_sync, o_CLKOS=clk_fast, o_LOCK=locked,
+            o_CLKOP=clk_sync, o_LOCK=locked,
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
@@ -348,34 +295,23 @@ class HyperRAMClocks(Elaboratable):
             p_FEEDBK_PATH="CLKOP",
             p_CLKOP_ENABLE="ENABLED", p_CLKOP_DIV=self.clkop_div,
             p_CLKOP_CPHASE=self.clkop_div - 1, p_CLKOP_FPHASE=0,
-            p_CLKOS_ENABLE="ENABLED" if self.with_fast else "DISABLED",
-            p_CLKOS_DIV=self.clkos_div or 1,
-            p_CLKOS_CPHASE=(self.clkos_div or 1) - 1, p_CLKOS_FPHASE=0,
+            p_CLKOS_ENABLE="DISABLED", p_CLKOS_DIV=1,
+            p_CLKOS_CPHASE=0, p_CLKOS_FPHASE=0,
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8",
             a_MFG_ENABLE_FILTEROPAMP="1", a_MFG_GMCREF_SEL="2",
-            # PINNED, and only when there is an edge clock to lose. The HyperRAM
-            # DQ/RWDS pads are all bank 7 (`iodb.json`, CABGA256), and PLL0_LL at
-            # `MIB_R50C2` is the die's ONLY left-hand PLL -- the 25F tilegrid has
-            # PLL0_LL, PLL1_LR, PLL0_LR and no UL site, so the mux's
-            # `G_JULCPLL0CLK*` entries are unreachable here. A placer that puts
-            # this PLL on the right drops `fast` back onto fabric with no error.
-            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.with_fast else {}),
         )
 
-        # Both domains held in reset until lock: a domain clocked by an unlocked
-        # PLL sees a frequency that drifts while it settles.
+        # Held in reset until lock: a domain clocked by an unlocked PLL sees a
+        # frequency that drifts while it settles.
         m.d.comb += [ClockSignal("sync").eq(clk_sync),
                      ResetSignal("sync").eq(~locked)]
-        if self.with_fast:
-            m.d.comb += [ClockSignal("fast").eq(clk_fast),
-                         ResetSignal("fast").eq(~locked)]
         return m
 
 
 class HyperRAMCeiling(Elaboratable):
     """Write a burst, read it back, verify, repeat -- and count what disagrees."""
 
-    def __init__(self, *, sync_mhz=100.0, dqs=True, burst_words=BURST_WORDS,
+    def __init__(self, *, sync_mhz=100.0, burst_words=BURST_WORDS,
                  negative_control=False, transport=None, own_clocks=True,
                  own_leds=True, own_dtr=True, port=None):
         """The `own_*`/`transport`/`port` arguments exist so this can be EMBEDDED.
@@ -392,7 +328,6 @@ class HyperRAMCeiling(Elaboratable):
         applet are comparable.
         """
         self.sync_mhz = sync_mhz
-        self.dqs = dqs
         self.burst_words = burst_words
         self._transport = transport
         # `own_clocks=False` says the caller has already made the domain, which
@@ -422,15 +357,15 @@ class HyperRAMCeiling(Elaboratable):
         # sweep found no failure to demonstrate the detector on.
         self.negative_control = negative_control
 
-        # 32 bits per `sync` cycle over DQS, 16 without. A test written to the
-        # wrong width reads back looking bit-shifted, which is a convincing
-        # impersonation of a timing fault.
-        self.word_bits = 32 if dqs else 16
+        # 16 bits per `sync` cycle. A test written to the wrong width reads back
+        # looking bit-shifted, which is a convincing impersonation of a timing
+        # fault.
+        self.word_bits = 16
         self.bytes_per_word = self.word_bits // 8
 
         # Device CK. The rate the *part* is being asked to run at, which is what
         # a ceiling is a ceiling of.
-        self.ck_mhz = sync_mhz * 2 if dqs else sync_mhz
+        self.ck_mhz = sync_mhz
 
     def pattern(self, word_addr):
         """The word due at a device address, using EVERY address bit.
@@ -461,8 +396,7 @@ class HyperRAMCeiling(Elaboratable):
         m = Module()
 
         if self._own_clocks:
-            m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz,
-                                              with_fast=self.dqs)
+            m.submodules.car = HyperRAMClocks(sync_mhz=self.sync_mhz)
 
         harness = BISTHarness(
             applet_id=APPLET_ID,
@@ -474,13 +408,9 @@ class HyperRAMCeiling(Elaboratable):
             transport=self._transport)
         m.submodules.harness = harness
 
-        # DQSBUFM has eight phase selections. Keeping this in a JTAG parameter
-        # is what lets one configured design ask whether BURSTDET identifies a
-        # useful phase rather than rebuilding the same experiment eight times.
-        #
-        # DQS BUILDS ONLY. `HyperRAMPHY` captures on `IDDRX1F` clocked by `sync`
-        # and has no phase input, so this register is read by nothing there and
-        # every `sel` row is a repeat. Held by `tests/test_hyperram_axis_wiring.py` (#343).
+        # Reaches no PHY: `HyperRAMPHY` captures on `IDDRX1F` clocked by `sync`
+        # and has no phase input, so every `sel` row is a repeat (#343). Kept
+        # for the register and matrix layout the firmware indexes.
         readclksel = Signal(3, init=0b010)
         harness.add_register(REG_READCLKSEL, value_signal=readclksel)
 
@@ -514,7 +444,6 @@ class HyperRAMCeiling(Elaboratable):
         # overwrites the counters. Recording `harness.errors` in SWEEP_RECORD
         # would otherwise report the control's error count as the cell's.
         cell_errors = Signal(32)
-        cell_burstdet = Signal()
 
         sweep_go_previous = Signal()
         sweep_start = Signal()
@@ -587,15 +516,11 @@ class HyperRAMCeiling(Elaboratable):
         pass_limit = Signal(32)
         harness.add_register(REG_PASS_LIMIT, value_signal=pass_limit)
 
-        dll_locked = Signal(reset=1)
-        dll_ready = Signal(reset=1)
-        burstdet = Signal()
         # Whether this engine owns the part. Always, unless it is embedded
         # behind the mode mux -- see `RESET` below.
         granted = Signal(reset=1)
 
-        # CR0 AS IT WILL BE, for BOTH paths -- outside the DQS/non-DQS branches
-        # on purpose. A path that does not drive `latency_clocks` and
+        # CR0 AS IT WILL BE. A path that does not drive `latency_clocks` and
         # `fixed_latency` leaves the controller at its reset values while
         # `Bist::configure` reprograms the PART, and every latency cell then
         # returns byte-identical rows (#331, #354).
@@ -609,107 +534,48 @@ class HyperRAMCeiling(Elaboratable):
             # the controller it stands in for (#432).
             psram = self._port
             reset_assert = psram.phy_reset
-            m.d.comb += [burstdet.eq(psram.burstdet),
-                         granted.eq(psram.granted),
-                         psram.readclksel.eq(Mux(sweeping, sweep_phase,
-                                                 readclksel))]
-            # Only where there is a DLL. Off the DQS path the port reports 0
-            # because it has none to report on, and `RESET` exits on
-            # `dll_ready` -- so taking it from there parks the engine (#475).
-            if self.dqs:
-                m.d.comb += [dll_locked.eq(psram.dll_locked),
-                             dll_ready.eq(psram.dll_ready)]
-        elif self.dqs:
-            from peripherals.hyperram_dqs_phy import HyperRAMDQSPHY
-            from peripherals.hyperram_dqs_controller import HyperRAMDQSController
-            from bootram import HYPERRAM_LATENCY_CLOCKS
-            # `dir="-"`: this PHY drives raw pads. The pin map is the platform's.
-            bus = platform.request("ram", 0, dir="-")
-            m.submodules.phy = phy = HyperRAMDQSPHY(
-                bus=bus, readclksel=Mux(sweeping, sweep_phase, readclksel))
-            m.submodules.psram = psram = HyperRAMDQSController(
-                phy=phy.phy, sync_mhz=self.sync_mhz,
-                high_latency_clocks=HYPERRAM_LATENCY_CLOCKS)
-            m.d.comb += [dll_locked.eq(phy.dll_locked),
-                         dll_ready.eq(phy.dll_ready)]
-            reset_assert = phy.phy.reset
-            m.d.comb += burstdet.eq(phy.phy.burstdet)
+            m.d.comb += granted.eq(psram.granted)
         else:
             bus = platform.request("ram")
-            # NO PHASE INPUT, and none available: no DQSBUFM, so `readclksel`
-            # and `sweep_phase` reach nothing on this path (#343). Wiring one
-            # would mean driving the DQ `DELAYF` taps, which luna leaves at a
-            # hardcoded `DEL_VALUE` with a TODO.
+            # NO PHASE INPUT: `sweep_phase` reaches nothing (#343).
             m.submodules.phy = phy = HyperRAMPHY(bus=bus)
             m.submodules.psram = psram = HyperRAMController(
                 phy=phy.phy, sync_mhz=self.sync_mhz)
-            # The non-DQS PHY never drives RESET#; the platform's buffer holds it
-            # released, which is the behaviour this path has always had.
+            # The PHY never drives RESET#; the platform's buffer holds it
+            # released.
             reset_assert = Signal()
 
-        # The latency sweep, in each path's own units. Outside the branch above
-        # because it belongs to the PATH, not to whoever owns the pins.
-        if self.dqs:
-            # THE SAME SWEEP, IN THIS PATH'S UNITS. `HANDLE_LATENCY` runs
-            # `latency_clocks + 1` cycles and one cycle is 2 CK at 4:1 gearing,
-            # so the wait is `2 x (n + 1)` CK; the part's fixed latency is
-            # `2 x L`, giving `n = L - 1`. That is the relation line 194 already
-            # records and the reason the shipped constant is 6 for the power-on
-            # L of 7 -- it was right, it was simply never driven.
-            # BOTH counts, from the same code. The short one was a class
-            # constant nothing here could drive, so a `var` cell whose device
-            # declined the extra latency waited 8 CK at every code and no code
-            # was right. `low_latency_clocks()` holds the rounding an odd L
-            # forces on the 4:1 gearing. (#380)
-            m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
-            with m.Switch(effective_cr0[4:8]):
-                for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
-                    with m.Case(code):
-                        m.d.comb += [
-                            psram.latency_clocks.eq(clocks - 1),
-                            psram.low_latency_clocks.eq(
-                                dqs_low_latency_clocks(clocks)),
-                        ]
-                with m.Default():
-                    power_on = LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE]
-                    m.d.comb += [
-                        psram.latency_clocks.eq(power_on - 1),
-                        psram.low_latency_clocks.eq(
-                            dqs_low_latency_clocks(power_on)),
-                    ]
-        else:
-            # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
-            # and left the controller's own wait welded, so only the one code
-            # matching it could align and the other fifteen failed whatever the
-            # part did.
-            # CR0[3] too, or the controller stays welded to fixed latency while
-            # the sweep moves the part into variable -- which failed every `var`
-            # cell of 4096 (#338).
-            m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
-            with m.Switch(effective_cr0[4:8]):
-                for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
-                    with m.Case(code):
-                        m.d.comb += psram.latency_clocks.eq(
-                            CONTROLLER_CYCLES_PER_CLOCK * clocks)
-                with m.Default():
+        # The latency sweep.
+        # SWEEP BOTH SIDES. Until #331 this reprogrammed the part's CR0[7:4]
+        # and left the controller's own wait welded, so only the one code
+        # matching it could align and the other fifteen failed whatever the
+        # part did.
+        # CR0[3] too, or the controller stays welded to fixed latency while
+        # the sweep moves the part into variable -- which failed every `var`
+        # cell of 4096 (#338).
+        m.d.comb += psram.fixed_latency.eq(effective_cr0[3])
+        with m.Switch(effective_cr0[4:8]):
+            for code, clocks in LATENCY_CLOCKS_BY_CODE.items():
+                with m.Case(code):
                     m.d.comb += psram.latency_clocks.eq(
-                        CONTROLLER_CYCLES_PER_CLOCK
-                        * LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE])
-            # The SHORT branch, taken when the part declines the extra latency:
-            # 1L against the fixed path's 2L, so half. Derived from the same code
-            # rather than left a constant, which is what limited `var` to codes
-            # 2 and 6 (#338).
-            m.d.comb += psram.low_latency_clocks.eq(psram.latency_clocks >> 1)
+                        CONTROLLER_CYCLES_PER_CLOCK * clocks)
+            with m.Default():
+                m.d.comb += psram.latency_clocks.eq(
+                    CONTROLLER_CYCLES_PER_CLOCK
+                    * LATENCY_CLOCKS_BY_CODE[CR0_POWER_ON_LATENCY_CODE])
+        # The SHORT branch, taken when the part declines the extra latency:
+        # 1L against the fixed path's 2L, so half. Derived from the same code
+        # rather than left a constant, which is what limited `var` to codes
+        # 2 and 6 (#338).
+        m.d.comb += psram.low_latency_clocks.eq(psram.latency_clocks >> 1)
 
         # Device word address. The controller advances internally within a burst,
-        # so only the start address is issued; it steps by `burst_words` scaled to
-        # the interface width, because one 32-bit DQS word is two device words.
+        # so only the start address is issued.
         base = Signal(ADDRESS_BITS)
         index = Signal(range(self.burst_words + 1))
         write_cycles = Signal(32)
         read_cycles = Signal(32)
         passes = Signal(16)
-        burstdet_seen = Signal()
         heartbeat = Signal(24)
 
         # All three are combinational and driven from the FSM state, so
@@ -720,16 +586,13 @@ class HyperRAMCeiling(Elaboratable):
         # `m.d.sync` on entry to WRITE_START arrives one cycle late: the
         # controller latches a READ, runs a read transaction, and never asserts
         # `write_ready`. Measured, not reasoned about -- that version reported
-        # 398 M write cycles and zero words moved. `hyperram_dqs_top.py` had the
-        # same shape and was retired for it -- never run on hardware, and it
-        # would have hung if it had been.
+        # 398 M write cycles and zero words moved.
         writing = Signal()
         last = Signal()
         start = Signal()
 
-        device_words = self.burst_words * (2 if self.dqs else 1)
         word_addr = Signal(ADDRESS_BITS)
-        m.d.comb += word_addr.eq(base + (index * (2 if self.dqs else 1)))
+        m.d.comb += word_addr.eq(base + index)
         expected = Signal(self.word_bits)
         m.d.comb += expected.eq(self.pattern(word_addr))
 
@@ -760,8 +623,6 @@ class HyperRAMCeiling(Elaboratable):
                 self.pattern(unreachable), expected))
 
         m.d.sync += heartbeat.eq(heartbeat + 1)
-        with m.If(burstdet):
-            m.d.sync += burstdet_seen.eq(1)
 
         # tCSHI in whole `sync` cycles, rounded up.
         recovery_cycles = max(1, ceil(T_CSHI_NS * self.sync_mhz / 1000.0))
@@ -902,7 +763,7 @@ class HyperRAMCeiling(Elaboratable):
                 # waits for a `write_ready` that cannot come (#475). Waiting
                 # here also puts the mux on BIST for the pulse above, which is
                 # the reset #473 says the rig lost.
-                with m.If(heartbeat[16] & dll_ready & granted):
+                with m.If(heartbeat[16] & granted):
                     # Configure the PART before measuring it, if the host asked.
                     # Skipped entirely when neither apply bit is set, so the
                     # default path is byte-for-byte what it was.
@@ -1123,7 +984,7 @@ class HyperRAMCeiling(Elaboratable):
                     m.next = "RESET"
                 with m.Elif(psram.idle & (recovery >= recovery_cycles)):
                     m.d.sync += [recovery.eq(0), passes.eq(passes + 1),
-                                 base.eq(base + device_words)]
+                                 base.eq(base + self.burst_words)]
                     # Halt at the limit instead of looping. `passes` is the count
                     # BEFORE this increment, so `+ 1` is what it will become.
                     #
@@ -1155,8 +1016,7 @@ class HyperRAMCeiling(Elaboratable):
                             ]
                             m.next = "SWEEP_RECORD"
                         with m.Else():
-                            m.d.sync += [cell_errors.eq(harness.errors),
-                                         cell_burstdet.eq(burstdet_seen)]
+                            m.d.sync += cell_errors.eq(harness.errors)
                             m.next = "SWEEP_CONTROL"
                     with m.Elif(sweep_pending & ~sweeping):
                         m.d.sync += [sweeping.eq(1), sweep_cell.eq(0),
@@ -1192,7 +1052,7 @@ class HyperRAMCeiling(Elaboratable):
                 m.d.comb += [
                     results_write.addr.eq(sweep_cell),
                     results_write.data.eq(
-                        Cat(saturated, cell_burstdet,
+                        Cat(saturated, Const(0, 1),   # bit 24: reserved
                             cell_errors == 0, ~cell_selected,
                             sweep_control_ok)),
                     results_write.en.eq(1),
@@ -1214,7 +1074,7 @@ class HyperRAMCeiling(Elaboratable):
                 # 16,777,215 -- obvious only because the field saturates instead
                 # of wrapping.
                 m.d.comb += harness.clear.eq(1)
-                m.d.sync += [passes.eq(0), base.eq(0), burstdet_seen.eq(0),
+                m.d.sync += [passes.eq(0), base.eq(0),
                              bad_seen.eq(0)]
                 with m.If(cell_selected):
                     m.next = "CONFIG_CR0"
@@ -1257,26 +1117,19 @@ class HyperRAMCeiling(Elaboratable):
         # Reading the halves separately says which one is false, which the state
         # number never could.
         #
-        # WHETHER THE READBACK MAY BE REPORTED AT ALL. Three rules over the
+        # WHETHER THE READBACK MAY BE REPORTED AT ALL. Two rules over the
         # three register reads, each one a residue seen on the board (#358):
-        # a lagging path cannot answer two consecutive CR0 reads alike, a held
-        # path answers CR0 and CR1 alike, and a byte-slipped one breaks the
-        # replication a register read has in both halves of the fabric word.
+        # a lagging path cannot answer two consecutive CR0 reads alike, and a
+        # held path answers CR0 and CR1 alike.
         #
         # Rules, not a phase table: which phases are good is a per-board
         # measurement, and a hardcoded window would fabricate trust off it.
         readback_reread_ok = Signal()
         readback_distinct = Signal()
-        readback_halves_ok = Signal()
         m.d.comb += [
             readback_reread_ok.eq(device_readback_again == device_readback),
             readback_distinct.eq(device_readback != device_readback_cr1),
         ]
-        # 16-bit word on the non-DQS path, so there is no second half to match.
-        m.d.comb += readback_halves_ok.eq(
-            ((device_readback[16:] == device_readback[:16])
-             & (device_readback_cr1[16:] == device_readback_cr1[:16]))
-            if self.dqs else 1)
 
         # THE READ PATH'S STATE: the controller handshake, and whether the
         # readback the CPU is about to print stands up.
@@ -1307,8 +1160,7 @@ class HyperRAMCeiling(Elaboratable):
                      Const(0, 4),
                      readback_reread_ok,                # bit 8
                      readback_distinct,                 # bit 9
-                     readback_halves_ok,                # bit 10
-                     Const(0, 21)))
+                     Const(0, 22)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it
@@ -1346,7 +1198,8 @@ class HyperRAMCeiling(Elaboratable):
             harness.actual.eq(psram.read_data),
             harness.golden.eq(expected),
             harness.status_extra.eq(
-                Cat(dll_locked, dll_ready, burstdet_seen, bad_seen,
+                Cat(Const(1, 1), Const(1, 1), Const(0, 1),   # bits 0-2: reserved
+                    bad_seen,
                     Const(int(round(self.ck_mhz)) & 0xFF, 8), passes)),
         ]
 
@@ -1361,8 +1214,7 @@ class HyperRAMCeiling(Elaboratable):
         harness.add_read_only_register(
             REG_CLOCK, read=Const(int(round(self.sync_mhz * 1000)), 32))
         harness.add_read_only_register(
-            REG_CONFIG, read=Cat(Const(1 if self.dqs else 0, 1),
-                                 Const(0, 7),
+            REG_CONFIG, read=Cat(Const(0, 8),
                                  Const(self.bytes_per_word, 8),
                                  Const(self.burst_words, 16)))
         #
@@ -1372,8 +1224,8 @@ class HyperRAMCeiling(Elaboratable):
         if platform is not None and self._own_leds:
             leds = [platform.request("led", n, dir="o") for n in range(6)]
             m.d.comb += [
-                leds[0].o.eq(~dll_locked),                    # red:    no DLL
-                leds[1].o.eq(~burstdet_seen if self.dqs else 0),  # orange: no strobe
+                leds[0].o.eq(0),                              # red:    unused
+                leds[1].o.eq(0),                              # orange: unused
                 leds[2].o.eq(passes == 0),                    # yellow: first pass
                 leds[3].o.eq((passes != 0) & ~harness.error), # green:  clean
                 leds[4].o.eq(harness.error),                  # blue:   mismatches
@@ -1391,8 +1243,6 @@ def main(argv):
     parser.add_argument("--build", action="store_true",
                         help="run yosys, nextpnr and ecppack; do not program")
     parser.add_argument("--sync-mhz", type=float, default=100.0)
-    parser.add_argument("--dqs", action="store_true",
-                        help="DQS PHY; device CK is twice --sync-mhz")
     parser.add_argument("--build-dir", default=None)
     parser.add_argument("--negative-control", action="store_true",
                         help="check reads against the complement of what was "
@@ -1402,10 +1252,9 @@ def main(argv):
     args = parser.parse_args(argv)
 
     if args.list:
-        for tag, ratio in (("non-DQS (CK = sync)", None), ("DQS (CK = 2x sync)", 2)):
-            freqs = reachable(55, 260, ratio)
-            print(f"\n{tag}: {len(freqs)} reachable")
-            print("  " + "  ".join(f"{f:g}" for f in freqs))
+        freqs = reachable(55, 260)
+        print(f"{len(freqs)} reachable")
+        print("  " + "  ".join(f"{f:g}" for f in freqs))
         return 0
 
     if not args.build:
@@ -1415,13 +1264,11 @@ def main(argv):
     from board import CynthionPlatformRev1D4
 
     root = Path(__file__).resolve().parent.parent.parent
-    tag = "dqs" if args.dqs else "sdr"
     out = args.build_dir or str(
-        root / "tmp" / "hyperram-ceiling" / f"manual-{tag}-{args.sync_mhz:g}")
-    design = HyperRAMCeiling(sync_mhz=args.sync_mhz, dqs=args.dqs,
+        root / "tmp" / "hyperram-ceiling" / f"manual-sdr-{args.sync_mhz:g}")
+    design = HyperRAMCeiling(sync_mhz=args.sync_mhz,
                              negative_control=args.negative_control)
-    print(f"sync {args.sync_mhz:g} MHz -> device CK {design.ck_mhz:g} MHz "
-          f"({'DQS' if args.dqs else 'non-DQS'})")
+    print(f"sync {args.sync_mhz:g} MHz -> device CK {design.ck_mhz:g} MHz")
     CynthionPlatformRev1D4().build(design, build_dir=out, do_program=False)
     print(f"built into {out}")
     return 0

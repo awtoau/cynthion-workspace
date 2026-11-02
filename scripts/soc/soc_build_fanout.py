@@ -7,7 +7,7 @@
 
     ./scripts/soc/soc_build_fanout.py --ck 80,85,90,95            # a CK ladder
     ./scripts/soc/soc_build_fanout.py --ck 80,85 --jobs 1         # the same, in series
-    ./scripts/soc/soc_build_fanout.py CYNTHION_HYPERRAM_DQS=1 ''  # both PHYs
+    ./scripts/soc/soc_build_fanout.py CYNTHION_SYNC_MHZ=45 ''     # two variants
 
 Each build is `soc_run.py --build-only`, which touches no hardware -- so a whole
 ladder can be built while the board is busy, and the board is then needed only
@@ -82,7 +82,7 @@ def parse_spec(spec: str) -> dict:
     """`KEY=VAL,KEY=VAL` -> an environment overlay. Empty means the default.
 
     A comma inside a VALUE stays there. `CYNTHION_HYPERRAM_CK_MHZ=84,72` is the
-    two-rung build that halves a non-DQS sweep, and splitting on every comma
+    two-rung build that halves a sweep, and splitting on every comma
     made the one spec worth writing unwritable -- it read `72` as a variable.
     """
     out = {}

@@ -191,8 +191,8 @@ def stage(sink, image, emit):
 
     # Pad to a whole 32-bit PAIR, not just to a 16-bit word.
     #
-    # The sink collects two wire words and issues one 32-bit request, because the
-    # DQS controller has no narrower granule. A frame ending on an odd word would
+    # The sink collects two wire words and issues one 32-bit request. A frame
+    # ending on an odd word would
     # leave that half-pair sitting in the sink, and the following frame's address
     # would discard it -- the last word of the image, silently.
     #

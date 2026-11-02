@@ -31,9 +31,8 @@ unchanged -- it reads the header and cannot tell which path filled it.
 ## The staging CSR moves one 32-bit pair at a time
 
 Fetch a pair, auto-increment by two, raise a flag the firmware polls. It was 16
-bits wide until the DQS PHY made that the expensive choice -- see
-`HyperRAMBoot`'s docstring, and `docs/soc-memory-bus.md` for the survey of
-what other HyperRAM controllers do.
+bits wide; see `HyperRAMBoot`'s docstring, and `docs/soc-memory-bus.md` for the
+survey of what other HyperRAM controllers do.
 
   * No FIFO, no side-effecting read, no register whose value depends on how
     many times it has been read. That last class of bug cost a day on the SPI
@@ -65,26 +64,6 @@ from luna.gateware.interface.psram import HyperBusPHY
 
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
-# Which DQSBUFM tap samples returning data. A property of the board and of CK,
-# not of the design -- `scripts/hyperram/hyperram_readclksel_sweep.py` walks all eight
-# against BURSTDET, which is #148. `0b010` is upstream's untested default and is
-# the starting point, not an answer.
-HYPERRAM_READCLKSEL = 0b010
-
-# Fixed-latency `sync` cycles for the DQS controller.
-#
-# SIX, derived from the part rather than from a tap sweep. CR0 = 0x8f2f selects
-# fixed latency at 7 clocks, so the device takes 14 CK on every transaction, and
-# at 4:1 gearing that is 7 fabric beats. The controller waits this count plus a
-# zero beat, so it must be at least 6 to still be listening when the data
-# arrives. `scripts/hyperram/hyperram_latency_probe.py` sweeps it against the model and
-# reports 6, 7 and 8 completing while 1-5 do not.
-#
-# Anything below 6 samples before the device presents -- upstream's 5 included --
-# and that looks like a uniform one-word displacement: at 4 the window reads
-# 0/16 while single-word staging reads still come back correct. See #186.
-HYPERRAM_LATENCY_CLOCKS = 6
-
 # tCSM, the longest CS# may stay Low. CR1[1:0] = 01b, which Table 12 ties to a
 # 64 ms array refresh over 8192 rows at T_CASE < 85 C, halved.
 HYPERRAM_TCSM_NS = 4000.0
@@ -107,11 +86,8 @@ HYPERRAM_TCK_MAX_NS = 100.0
 # states rather than a measured gap.
 HYPERRAM_TCSM_MARGIN = 0.9
 
-# CK in MHz when the caller does not say. `HyperRAMPHY` emits one CK per `sync`
-# cycle, so for the non-DQS build this is `top.SYNC_MHZ` -- which
-# passes its own value in, because `riscv_clock_ladder.py` rewrites that constant
-# and a second copy here would drift silently. This default serves sims and
-# bring-up tops only.
+# CK in MHz when the caller does not say. This default serves sims and bring-up
+# tops only.
 HYPERRAM_CK_MHZ = 60.0
 
 
@@ -128,8 +104,8 @@ def hyperram_max_burst_words(ck_mhz, *, clock_stop=False):
     one per two words, and the same wall-clock budget then buys two thirds as
     many. Word count stops tracking CS#-Low time the moment CK can be gated.
 
-    Rounded down to an even number: a 32-bit beat is two 16-bit words at
-    `word_width=16` and a cap landing mid-beat would cut one in half.
+    Rounded down to an even number: a 32-bit beat is two 16-bit words and a cap
+    landing mid-beat would cut one in half.
     """
     budget_ck = (HYPERRAM_TCSM_NS * HYPERRAM_TCSM_MARGIN * 1e-3 * ck_mhz
                  - HYPERRAM_OVERHEAD_CK)
@@ -221,8 +197,8 @@ class HyperRAMWishbone(wiring.Component):
     So a transaction held open across Wishbone beats is a promise to supply a
     word every single cycle until it closes.
 
-    A beat is two words at `word_width=16` and one at 32, so keeping that promise
-    means a beat every two cycles, or every one. Anything slower and the device
+    A beat is two 16-bit words, so keeping that promise means a beat every two
+    cycles. Anything slower and the device
     eats whatever happens to be on `dq` in the gap: a junk word at a real
     address, and -- because the engine's half-of-the-beat tracker advances with
     the device while this module's resets per beat -- every following beat
@@ -238,12 +214,9 @@ class HyperRAMWishbone(wiring.Component):
     waits. See `ClockStopPHY`. `sustained` without it is the arrangement the
     board measured at 8/16 words correct.
 
-    `word_width` is the controller's data width, not the bus's -- the bus is
-    always 32 bits. `HyperRAMController` hands over 16 bits at a time, so a beat
-    is two words and the low half is held in `read_low` until the high half
-    arrives; `HyperRAMDQSController` hands over 32, so a beat is one word and that
-    assembly disappears. Everything else is identical, which is the reason this
-    is a parameter rather than a second module.
+    The bus is 32 bits and `HyperRAMController` hands over 16 at a time, so a
+    beat is two words and the low half is held in `read_low` until the high half
+    arrives.
 
     | signal | direction | meaning |
     |--------|-----------|---------|
@@ -252,15 +225,12 @@ class HyperRAMWishbone(wiring.Component):
     | `in_valid` | in | one returned or accepted controller word |
     """
 
-    def __init__(self, *, size=HYPERRAM_SIZE, word_width=16, sustained=False,
+    def __init__(self, *, size=HYPERRAM_SIZE, sustained=False,
                  ck_mhz=HYPERRAM_CK_MHZ, clock_stop=False):
         if size <= 0 or size & (size - 1):
             raise ValueError("HyperRAM window size must be a power of two")
         if size % 4:
             raise ValueError("HyperRAM window size must contain whole Wishbone words")
-        if word_width not in (16, 32):
-            raise ValueError("HyperRAM controller word width must be 16 or 32")
-        self._word_width = word_width
         self._sustained = sustained
         # The cap is tCSM, in time, so it is computed from CK rather than stated.
         self.max_burst_words = hyperram_max_burst_words(
@@ -286,7 +256,7 @@ class HyperRAMWishbone(wiring.Component):
             "req_addr":  wiring.Out(32),
             "req_data":  wiring.Out(32),
             "granted":   wiring.In(1),
-            "in_data":   wiring.In(word_width),
+            "in_data":   wiring.In(16),
             "in_valid":  wiring.In(1),
         })
         self.bus.memory_map = memory_map
@@ -302,9 +272,8 @@ class HyperRAMWishbone(wiring.Component):
         read_low = Signal(16)
         second_word = Signal()
 
-        # Does this word_event close the 32-bit Wishbone beat? With a 16-bit
-        # controller only the second of two words does; with a 32-bit one every
-        # word does, and `second_word` stays low forever.
+        # Does this word_event close the 32-bit Wishbone beat? Only the second
+        # of two words does.
         beat_done = Signal()
         rmw_read = Signal()
         final_beat = Signal()
@@ -313,7 +282,7 @@ class HyperRAMWishbone(wiring.Component):
 
         request = self.bus.cyc & self.bus.stb & ~pending
         word_event = self.granted & self.in_valid
-        m.d.comb += beat_done.eq(1 if self._word_width == 32 else second_word)
+        m.d.comb += beat_done.eq(second_word)
         complete = pending & word_event & beat_done & ~rmw_read
         # Decided in Python, not on the bus: with `sustained` false this is a
         # constant and the whole burst path is pruned rather than left as logic
@@ -329,8 +298,7 @@ class HyperRAMWishbone(wiring.Component):
         m.d.comb += [
             self.bus.ack.eq(complete),
             self.bus.err.eq(0),
-            self.bus.dat_r.eq(self.in_data if self._word_width == 32
-                              else Cat(read_low, self.in_data)),
+            self.bus.dat_r.eq(Cat(read_low, self.in_data)),
             # Between burst beats the next Wishbone request keeps ownership while
             # its fields replace the beat acknowledged on the preceding edge.
             self.req.eq(pending | (bursting & self.bus.cyc & self.bus.stb)),
@@ -367,16 +335,13 @@ class HyperRAMWishbone(wiring.Component):
 
         with m.If((pending | (bursting & self.bus.cyc & self.bus.stb)) & word_event):
             with m.If(~beat_done):
-                # 16-bit controller only: hold the low half until the high one
-                # lands. `beat_done` is constant-1 at 32 bits, so Amaranth prunes
-                # this branch and `read_low` with it.
+                # Hold the low half until the high one lands.
                 with m.If(~is_write | rmw_read):
                     m.d.sync += read_low.eq(self.in_data)
                 m.d.sync += second_word.eq(1)
             with m.Else():
                 with m.If(rmw_read):
-                    old_data = (self.in_data if self._word_width == 32
-                                else Cat(read_low, self.in_data))
+                    old_data = Cat(read_low, self.in_data)
                     m.d.sync += [
                         write_data.eq(Cat(*[
                             Mux(select[index], write_data.word_select(index, 8),
@@ -413,19 +378,8 @@ class HyperRAMBoot(wiring.Component):
 
     ## Why this is 32 bits wide and addresses in PAIRS
 
-    A 16-bit port is free on the non-DQS controller, which moves one 16-bit word
-    per cycle. The DQS PHY moves 32 bits per cycle and has no narrower mode --
-    `HyperBusDQSPHY` is "a 32-bit HyperBus interface on a DQS group for use with
-    a 4:1 PHY module" -- so a 16-bit port on top of it has to be synthesised from
-    a half-select and an RWDS byte mask.
-
-    That synthesis is the source of three separate faults: writes come back with
-    the masked half replaced by a copy of the other (`a5c3` read as `c3c3`), an
-    odd start address hung the read path outright, and every access carried an
-    address-bit-0 mux that no other HyperRAM controller has. LiteX's
-    `litehyperbus` and OpenHBMC both express byte granularity as byte enables on
-    a 32-bit bus mapped onto RWDS; neither has a narrow side-port, and luna's own
-    DQS interface ties the write mask to zero because it does not support one.
+    LiteX's `litehyperbus` and OpenHBMC both express byte granularity as byte
+    enables on a 32-bit bus mapped onto RWDS; neither has a narrow side-port.
 
     Nothing here needs 16-bit granularity. This port stages a firmware image,
     which is a byte stream of arbitrary length, and the CPU reaches HyperRAM only
@@ -593,7 +547,7 @@ class BootRAM(Elaboratable):
     this module reaches it one 32-bit pair per transaction (#432).
     """
 
-    def __init__(self, *, interface, dqs=False, sustained=False,
+    def __init__(self, *, interface, sustained=False,
                  clock_stop=False, ck_mhz=HYPERRAM_CK_MHZ):
         # REGISTER SPACE, driven from a CSR rather than tied off. The controller
         # has always had the input and nothing above it ever set it, so CR0/CR1
@@ -602,23 +556,10 @@ class BootRAM(Elaboratable):
         # a paired fetch returns the same value in both halves -- so this is for
         # configuring the part, not for testing it.
         self.register_space = Signal()
-        # DQS changes the data width -- 32 bits per beat against 16 -- so it is
-        # recorded here and read where the word assembly is decided.
-        self._dqs = dqs
-        if clock_stop and dqs:
-            # `HyperRAMDQSPHY` gears CK off `fast` through ODDRX2F and the mask
-            # path adds a second strobe; neither is modelled or measured, and
-            # gating a 2:1 geared clock is a different question from gating a
-            # 1:1 one. Refuse rather than emit something untested.
-            raise ValueError("Active Clock Stop is not wired for the DQS PHY")
         self._clock_stop = clock_stop
-        # The DQS PHY gears the fabric at CK/2, and the vendored controller needs
-        # the FABRIC clock to turn tCSHI into a cycle count.
-        self._sync_mhz = ck_mhz / 2 if dqs else ck_mhz
         self._max_stall = hyperram_max_stall_cycles(ck_mhz)
         self.port = HyperRAMBoot()
-        self.mmap = HyperRAMWishbone(word_width=32 if dqs else 16,
-                                     sustained=sustained, ck_mhz=ck_mhz,
+        self.mmap = HyperRAMWishbone(sustained=sustained, ck_mhz=ck_mhz,
                                      clock_stop=clock_stop)
         self._interface = interface
 
@@ -694,13 +635,6 @@ class BootRAM(Elaboratable):
         address = Signal(32)
         write_data = Signal(32)
         second_word = Signal()
-
-        # Does a 32-bit beat take TWO controller words? That is a property of the
-        # controller's width alone -- every owner presents 32 bits, the non-DQS
-        # controller moves 16 bits per cycle and the DQS one moves 32. Not a
-        # per-owner signal: that cannot see `dqs` and marks the Wishbone window
-        # wide against a controller already 32 bits.
-        wide = not self._dqs
 
         start = Signal()
         selected_owner = Signal(range(3))
@@ -838,16 +772,10 @@ class BootRAM(Elaboratable):
         word_event = (Mux(writing, psram.write_ready, psram.read_ready)
                       & ~Mux(writing, stall, stall_read))
 
-        # `wide` and "keeps the transaction open" are two signals. They coincide
-        # only on the 16-bit controller, where the Wishbone window is both the
-        # sole owner needing two words and the sole owner that bursts; on DQS the
-        # window still bursts but its beat is one word.
-
-        # Has this owner's 32-bit beat been fully transferred? On the DQS
-        # controller one word IS the beat, so this is always true and the whole
-        # second-word half disappears at elaboration.
+        # Has this owner's 32-bit beat been fully transferred? A beat is two
+        # controller words.
         half_done = Signal()
-        m.d.comb += half_done.eq(second_word if wide else 1)
+        m.d.comb += half_done.eq(second_word)
 
         # Does this owner continue past the current beat? Only the window does,
         # and only while it says so; that is what makes a cache line one burst
@@ -861,9 +789,8 @@ class BootRAM(Elaboratable):
 
         # Do not advance past the closing half. This holds both `final_word` and the
         # last write data through recovery, as required by the upstream controller.
-        if wide:
-            with m.If(active & word_event & ~current_final):
-                m.d.sync += second_word.eq(~second_word)
+        with m.If(active & word_event & ~current_final):
+            m.d.sync += second_word.eq(~second_word)
 
         # The 32 bits this owner is presenting. The window replaces its fields on
         # the edge that acknowledges the previous beat, so mid-burst the live
@@ -889,41 +816,25 @@ class BootRAM(Elaboratable):
         # `dev.py test-board` cannot judge a swap: it writes and reads through this
         # function, so an inverted one cancels. `hr ramp` writes 0-255, where every
         # byte names its own position, and that is what settles it.
-        read_word = Signal(32 if self._dqs else 16)
+        read_word = Signal(16)
         m.d.comb += read_word.eq(psram.read_data)
-
-        if self._dqs:
-            # Every owner presents a whole 32-bit pair, so this is one assignment
-            # and there is no byte mask at all.
-            #
-            # NO SWAP ON THE WRITE SIDE (#186). Duplicating a 16-bit staging word
-            # into both halves under an RWDS mask does not work on silicon --
-            # `a5c3` reads back as `c3c3` -- and luna's DQS interface has no write
-            # mask at all: it drives `rwds.o` to 0 unconditionally.
-            m.d.comb += psram.write_data.eq(live_data)
-        else:
-            m.d.comb += psram.write_data.eq(
-                Mux(second_word, live_data[16:], live_data[:16]))
+        m.d.comb += psram.write_data.eq(
+            Mux(second_word, live_data[16:], live_data[:16]))
 
         # `live_address` is even by construction -- the window addresses in
         # 32-bit beats and both staging ports step by two -- so no `& ~1` is
-        # needed. A staging port is 32 bits, so on the 16-bit controller it takes
-        # two words: hold the first, present the pair when the second lands. The
-        # window does the same inside `HyperRAMWishbone`.
-        if wide:
-            staged_low = Signal(16)
-            staging_word = active & (owner == OWNER_CSR) & word_event
-            with m.If(staging_word & ~second_word):
-                m.d.sync += staged_low.eq(read_word)
-            staged_read = Cat(staged_low, read_word)
-            staged_valid = staging_word & second_word
-            # One ack per 32-bit pair, not per device word.
-            jtag_done = (active & (owner == OWNER_JTAG)
-                         & psram.write_ready & second_word)
-        else:
-            staged_read = read_word
-            staged_valid = active & (owner == OWNER_CSR) & word_event
-            jtag_done = active & (owner == OWNER_JTAG) & psram.write_ready
+        # needed. A staging port is 32 bits, so it takes two words: hold the
+        # first, present the pair when the second lands. The window does the same
+        # inside `HyperRAMWishbone`.
+        staged_low = Signal(16)
+        staging_word = active & (owner == OWNER_CSR) & word_event
+        with m.If(staging_word & ~second_word):
+            m.d.sync += staged_low.eq(read_word)
+        staged_read = Cat(staged_low, read_word)
+        staged_valid = staging_word & second_word
+        # One ack per 32-bit pair, not per device word.
+        jtag_done = (active & (owner == OWNER_JTAG)
+                     & psram.write_ready & second_word)
 
         m.d.comb += [
             psram.single_page.eq(0),
