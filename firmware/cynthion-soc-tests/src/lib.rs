@@ -34,6 +34,9 @@ pub mod log_format;
 #[path = "../../cynthion-soc/src/power_rails.rs"]
 pub mod power_rails;
 
+#[path = "../../cynthion-soc/src/vbus_gate.rs"]
+pub mod vbus_gate;
+
 #[path = "../../cynthion-soc/src/shell/parse.rs"]
 pub mod parse;
 

@@ -147,6 +147,7 @@ mod uart;
 mod wire;
 mod ulpi;
 mod vbus;
+mod vbus_gate;
 #[cfg(feature = "workload")]
 mod workload;
 

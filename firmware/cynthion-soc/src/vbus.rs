@@ -20,8 +20,8 @@
 //! mechanism for exactly this, slower than the internal protection and the only
 //! option on the passthrough path.
 //!
-//! So `close` consults the PAC1954 before connecting anything, and refuses on a
-//! reading it does not like or cannot trust. See `LIMIT_MV` and `MAX_AGE_MS`.
+//! So `close` consults the PAC1954 before connecting anything, and refuses on the
+//! part's own UV/OV flags. See `vbus_gate.rs` (#552).
 //!
 //! ## Sources
 //!
@@ -30,6 +30,7 @@
 
 
 
+use crate::bus::Bus;
 use crate::power;
 
 /// Bit positions, matching `gateware/soc/peripherals/vbus_csr.py` and upstream's
@@ -102,45 +103,14 @@ impl Source {
     }
 }
 
-/// The most this will pass through to TARGET A, in millivolts.
-///
-/// TARGET A is USB-A. A device there expects 5 V and cannot negotiate, refuse or
-/// even notice more until it is damaged. 5.5 V matches the board's own input
-/// overvoltage threshold, so the number a user sees is the same one the hardware
-/// uses -- one limit to remember rather than two.
-///
-/// This is NOT a Cynthion protection limit. The passthrough network is rated to
-/// 20 V and the board is unharmed either way.
-pub const LIMIT_MV: u32 = 5_500;
-
-/// Below this, the port is not really supplying anything.
-///
-/// Under 4.4 V the switch is outside its documented working range, so closing it
-/// is neither useful nor characterised.
-const FLOOR_MV: u32 = 4_400;
-
-/// How stale a sample may be and still gate a switch, in milliseconds.
-///
-/// The check is only as good as the reading behind it. `power::Monitor::poll`
-/// runs on a 50 ms cadence, so 200 ms is four missed polls -- late enough to mean
-/// the monitor has stopped rather than merely jittered.
-const MAX_AGE_MS: u32 = 200;
+pub use crate::vbus_gate::Refusal;
+use crate::vbus_gate::{decide, FLOOR_MV};
 
 // INPUT SELECTION IS GONE, and it never worked. `control_vbus_in_en` (K13) and
 // `aux_vbus_in_en` (L13) reach no pin: neither appears among the 126 `LOCATE`
 // lines of the shipping design's own constraint file. `prefer_control`,
 // `allow_all_inputs` and `vbus input` all wrote a scratch register and returned
 // success. The load split they claimed to fix is an open question again (#305).
-
-/// Why a close was refused.
-pub enum Refusal {
-    /// No sample, or one too old to act on.
-    Stale,
-    /// Measured volts, then the limit.
-    TooHigh(u32),
-    /// Measured volts.
-    TooLow(u32),
-}
 
 fn read() -> u8 {
     // SAFETY: fixed peripheral address, `main=0` region, so uncached.
@@ -152,24 +122,40 @@ fn write(value: u8) {
     unsafe { core::ptr::write_volatile(cynthion_soc_pac::base::BOARD_VBUS as *mut u8, value) };
 }
 
-fn fresh_sample(monitor: &power::Monitor) -> Result<power::Sample, Refusal> {
-    match monitor.age() {
-        power::Age::Millis(ms) if ms <= MAX_AGE_MS => {}
-        power::Age::Millis(_) => return Err(Refusal::Stale),
-        _ => return Err(Refusal::Stale),
+/// Arm `source`'s limits, read it on demand, and let the part's flags decide.
+///
+/// The basis is the PAC1954's own UV/OV flags (it compares every sample) plus
+/// one on-demand VBUS read, not a polled sample (#552). Returns the whole sample
+/// so `charge_target_c` can look at a second channel from the same instant.
+fn gate(
+    source: Source,
+    monitor: &mut power::Monitor,
+    bus: Option<&mut Bus>,
+) -> Result<(u32, power::Sample), Refusal> {
+    let bus = bus.ok_or(Refusal::Unreadable)?;
+    let (sample, flags) = monitor.vbus_read(bus, source.channel())?;
+    let millivolts = sample.readings[source.channel()].bus_mv;
+    match decide(source.channel(), millivolts, flags) {
+        Ok(mv) => Ok((mv, sample)),
+        Err(refusal) => {
+            // Refused: whatever was closed before stays closed, so its limits
+            // must be the armed ones, not the ones just tried.
+            monitor.vbus_restore(bus, closed_source().map(Source::channel));
+            Err(refusal)
+        }
     }
-    monitor.latest().ok_or(Refusal::Stale)
 }
 
-fn source_mv(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
-    let millivolts = fresh_sample(monitor)?.readings[source.channel()].bus_mv;
-    if millivolts > LIMIT_MV {
-        return Err(Refusal::TooHigh(millivolts));
-    }
-    if millivolts < FLOOR_MV {
-        return Err(Refusal::TooLow(millivolts));
-    }
-    Ok(millivolts)
+/// Is any switch closed (the gate bit is on)?
+pub fn any_closed() -> bool {
+    read() & (1 << BIT_ENABLE) != 0
+}
+
+/// The source whose switch is closed, if any.
+fn closed_source() -> Option<Source> {
+    [Source::Control, Source::Aux, Source::TargetC]
+        .into_iter()
+        .find(|&source| is_closed(source))
 }
 
 /// Open every switch, unconditionally.
@@ -220,11 +206,12 @@ pub fn is_closed(source: Source) -> bool {
 /// Connect `source` to the shared rail, if its measured voltage allows.
 ///
 /// Returns the measured millivolts on success.
-pub fn close(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
-    // A sample too old to trust is a refusal, not a warning. The check is only
-    // as good as the reading behind it, and `Older`/`Never` mean the monitor has
-    // stopped rather than merely jittered.
-    let millivolts = source_mv(source, monitor)?;
+pub fn close(
+    source: Source,
+    monitor: &mut power::Monitor,
+    bus: Option<&mut Bus>,
+) -> Result<u32, Refusal> {
+    let (millivolts, _) = gate(source, monitor, bus)?;
 
     // ONE SOURCE AT A TIME, and this write is what enforces it.
     //
@@ -254,11 +241,14 @@ pub fn close(source: Source, monitor: &power::Monitor) -> Result<u32, Refusal> {
 ///
 /// TARGET-C must not already be powered by another source. Repeating this while
 /// our exact path is active is allowed so the Rp level can be changed in place.
-pub fn charge_target_c(monitor: &power::Monitor) -> Result<u32, Refusal> {
-    let millivolts = source_mv(Source::Control, monitor)?;
+pub fn charge_target_c(
+    monitor: &mut power::Monitor,
+    bus: Option<&mut Bus>,
+) -> Result<u32, Refusal> {
+    let (millivolts, sample) = gate(Source::Control, monitor, bus)?;
     let wanted = (1 << BIT_ENABLE) | (1 << BIT_CONTROL) | (1 << BIT_TARGET_C);
     if read() != wanted {
-        let target_mv = fresh_sample(monitor)?.readings[Source::TargetC.channel()].bus_mv;
+        let target_mv = sample.readings[Source::TargetC.channel()].bus_mv;
         if target_mv >= FLOOR_MV {
             return Err(Refusal::TooHigh(target_mv));
         }

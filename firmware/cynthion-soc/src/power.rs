@@ -69,6 +69,7 @@ use core::fmt::Write;
 use crate::bus::{self, Bus, BUS_POWER_MONITOR};
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
+use crate::vbus_gate::{alert_action, channel_armed, limit_bits, ov_bit, sampling_continuously, uv_bit, Refusal, FLOOR_MV, LIMIT_MV};
 
 /// The address the PAC1954 on r1.4 is strapped to.
 ///
@@ -184,8 +185,8 @@ impl Limit {
         let top = match self {
             Limit::OverCurrent => 23,
             Limit::UnderCurrent => 19,
-            Limit::OverVoltage => 15,
-            Limit::UnderVoltage => 11,
+            Limit::OverVoltage => return ov_bit(channel),
+            Limit::UnderVoltage => return uv_bit(channel),
         };
         1 << (top - channel as u32)
     }
@@ -562,6 +563,25 @@ pub fn current_ua(raw: u16) -> i32 {
     }
 }
 
+/// How long [`Monitor::read_now`] waits after REFRESH_V, in microseconds.
+///
+/// Waits for the latch (<= 1 ms) and one conversion (976 us at 1024 SPS).
+/// 1.25x of 1 ms. Counted on the free-running counter.
+const ON_DEMAND_WAIT_US: u32 = 1_250;
+
+/// The eight big-endian registers VBUS1-4 then VSENSE1-4, as readings.
+///
+/// Big-endian, high byte first, as every 16-bit register on this part is.
+fn decode(raw: &[u8; MEASUREMENT_BYTES]) -> [Reading; 4] {
+    let mut readings = [Reading { bus_mv: 0, current_ua: 0 }; 4];
+    for channel in 0..4 {
+        let vbus = u16::from_be_bytes([raw[channel * 2], raw[channel * 2 + 1]]);
+        let vsense = u16::from_be_bytes([raw[8 + channel * 2], raw[8 + channel * 2 + 1]]);
+        readings[channel] = Reading { bus_mv: bus_mv(vbus), current_ua: current_ua(vsense) };
+    }
+    readings
+}
+
 /// Is a REFRESH_V outstanding, waiting for its 1 ms before the read?
 ///
 /// Read by `rtic_app::tick`, which releases the task again on the very next
@@ -622,6 +642,8 @@ pub struct Monitor {
     alert_enable: u32,
     /// Plug detection armed -- see `detect_arm`.
     detect: bool,
+    /// The channel the VBUS gate has armed UV/OV on, if any (#552).
+    vbus_armed: Option<usize>,
     /// Every limit bit that has fired since boot, accumulated.
     ///
     /// **`ALERT_STATUS` is read-to-clear and belongs to the service path.** A
@@ -698,6 +720,7 @@ impl Monitor {
             alert_samples: [[1; 4]; 4],
             alert_enable: 0,
             detect: false,
+            vbus_armed: None,
             alert_fired: 0,
             refreshing: false,
             refresh_at: None,
@@ -879,23 +902,115 @@ impl Monitor {
         // sample timestamped with the read that fetched it would understate its
         // own age, which is the sort of small consistent lie nothing notices.
         let latched = self.refresh_at;
-
-        let mut readings = [Reading {
-            bus_mv: 0,
-            current_ua: 0,
-        }; 4];
-        for channel in 0..4 {
-            // Big-endian, high byte first, as every 16-bit register on this part
-            // is. Getting this backwards produces values that look like noise on
-            // a small reading and like a fault on a large one.
-            let vbus = u16::from_be_bytes([raw[channel * 2], raw[channel * 2 + 1]]);
-            let vsense = u16::from_be_bytes([raw[8 + channel * 2], raw[8 + channel * 2 + 1]]);
-            readings[channel] = Reading {
-                bus_mv: bus_mv(vbus),
-                current_ua: current_ua(vsense),
-            };
-        }
+        let readings = decode(&raw);
         Ok(latched.map(|latched| Sample { readings, latched }))
+    }
+
+    /// One on-demand sample: REFRESH_V, wait out the latch, read (#552).
+    ///
+    /// For the VBUS gate and `usb <port>` while the standing poll is off.
+    /// Joins an in-flight poll cycle rather than starting a second REFRESH inside
+    /// its 1 ms window (#123): the caller holds the `devices` lock, so the poll
+    /// task cannot interleave, and `refreshing` says whether dispatch A already
+    /// ran. Publishes the sample, so `power` shows the same number.
+    ///
+    /// Waits for: the latch (<= 1 ms, DS20006539B) and one 976 us conversion so
+    /// limits written just before have been compared. Expected 1.0 ms, bound
+    /// 1.25 ms (1.25x), counted on the free-running `time` counter so it cannot
+    /// hang. On expiry the read proceeds; a part that has not latched returns the
+    /// previous sample, which the 2nd status read in the gate still judges.
+    pub fn read_now(&mut self, bus: &mut Bus) -> Result<Sample, bus::Error> {
+        if !self.configured {
+            self.configure(bus)?;
+            clock::wait(clock::micros(ON_DEMAND_WAIT_US));
+        }
+        if !self.refreshing {
+            self.phase = "refresh";
+            refresh(bus)?;
+            self.refresh_at = Some(clock::now());
+            self.refreshing = true;
+        }
+        let at = self.refresh_at.unwrap_or_else(clock::now);
+        while at.elapsed(clock::now()) < clock::micros(ON_DEMAND_WAIT_US) {}
+        self.refreshing = false;
+        REFRESH_PENDING.store(false, core::sync::atomic::Ordering::Relaxed);
+        self.phase = "read";
+        let mut raw = [0u8; MEASUREMENT_BYTES];
+        bus.read_registers(BUS_POWER_MONITOR, ADDRESS, REG_VBUS1, &mut raw)?;
+        let sample = Sample { readings: decode(&raw), latched: at };
+        self.sample = Some(sample);
+        PRIMED.store(true, core::sync::atomic::Ordering::Relaxed);
+        Ok(sample)
+    }
+
+    // ---- the VBUS gate's use of the limit ALERT (#552) ---------------------
+
+    /// Program UV = `FLOOR_MV` and OV = `LIMIT_MV` on `channel` only, enable and
+    /// route their ALERT, and disarm the other source channels.
+    ///
+    /// Only the source being closed: an open switch's rail is unconnected and
+    /// reads UV. It takes those two limits on that channel (`power limit`
+    /// overwrites them; arming again restores).
+    fn vbus_arm(&mut self, bus: &mut Bus, closing: Option<usize>) -> Result<(), Refusal> {
+        let ctrl = self.read16(bus, REG_CTRL).map_err(|_| Refusal::Unreadable)?;
+        if !sampling_continuously(ctrl) {
+            return Err(Refusal::NotSampling);
+        }
+        self.alert_pin_enable(bus).map_err(|_| Refusal::Unreadable)?;
+        for channel in 1..4 {
+            let on = channel_armed(channel, closing);
+            for (limit, mv) in [(Limit::UnderVoltage, FLOOR_MV), (Limit::OverVoltage, LIMIT_MV)] {
+                let raw = mv_to_limit_code(mv as i32);
+                let armed = self.alert_enable & limit.bit(channel) != 0;
+                let result = if on {
+                    if self.alert_limits[limit as usize][channel] != raw {
+                        self.alert_set_limit(bus, limit, channel, raw)
+                    } else {
+                        Ok(())
+                    }
+                    .and_then(|_| if armed { Ok(()) } else { self.alert_arm(bus, limit, channel, true) })
+                } else if armed {
+                    self.alert_arm(bus, limit, channel, false)
+                } else {
+                    Ok(())
+                };
+                result.map_err(|_| Refusal::Unreadable)?;
+            }
+        }
+        self.vbus_armed = closing;
+        Ok(())
+    }
+
+    /// Disarm every gate limit (switch open, or a refusal with nothing closed).
+    pub fn vbus_disarm(&mut self, bus: &mut Bus) {
+        let _ = self.vbus_arm(bus, None);
+    }
+
+    /// Re-establish protection for `closed` (the source whose switch is still
+    /// closed after a refusal), or disarm if nothing is closed.
+    pub fn vbus_restore(&mut self, bus: &mut Bus, closed: Option<usize>) {
+        let _ = self.vbus_arm(bus, closed);
+    }
+
+    /// The gate's read for `channel`: arm, then one on-demand sample, then the
+    /// part's own limit flags. Returns the sample and the flags that apply.
+    ///
+    /// Sequence: arm (limits written >= 1 conversion before the final status
+    /// read), clear stale latches, REFRESH + wait ([`Monitor::read_now`]), read
+    /// `ALERT_STATUS`. The part compares every sample, so the flag is current to
+    /// within one conversion (976 us) by construction.
+    pub fn vbus_read(&mut self, bus: &mut Bus, channel: usize) -> Result<(Sample, u32), Refusal> {
+        self.vbus_arm(bus, Some(channel))?;
+        // Latches from before this arm describe an earlier state of the rail.
+        let stale = self.alert_service(bus).map_err(|_| Refusal::Unreadable)?;
+        self.alert_fired |= stale;
+        let sample = self.read_now(bus).map_err(|_| Refusal::Unreadable)?;
+        let flags = self.alert_service(bus).map_err(|_| Refusal::Unreadable)?;
+        self.alert_fired |= flags;
+        // This read took the event the pin released the alert task for.
+        let _ = crate::irq::take_power_alert();
+        let flags = flags & limit_bits(channel);
+        Ok((sample, flags))
     }
 
     // ---- the limit ALERT (#270) -------------------------------------------
@@ -1244,10 +1359,31 @@ impl Monitor {
         let mut fired_bits = 0u32;
         match self.alert_service(bus) {
             Ok(fired) => {
-                fired_bits = fired;
                 // Recorded before anything else, because this is the only read
                 // of it that will ever happen -- the register is empty now.
                 self.alert_fired |= fired;
+                // The VBUS gate's own UV/OV (#552), FIRST: protection before
+                // logging. An excursion on the armed source opens every switch
+                // and disarms; those bits stay out of the back-off below,
+                // which would move the gate's thresholds.
+                let action = alert_action(fired, self.vbus_armed, crate::vbus::any_closed());
+                if action.open {
+                    crate::vbus::open_all();
+                }
+                if action.disarm {
+                    if let Some(channel) = self.vbus_armed {
+                        crate::log!(
+                            uart,
+                            "vbus: {} {} -- {}",
+                            PORTS[channel],
+                            if action.gate_bits & ov_bit(channel) != 0 { "ov" } else { "uv" },
+                            if action.open { "switches opened" } else { "tripped while open" }
+                        );
+                    }
+                    let _ = self.vbus_arm(bus, None);
+                }
+                let fired = fired & !action.gate_bits;
+                fired_bits = fired;
                 // WHAT tripped, WHAT the limit was, and WHAT the rail is doing
                 // -- not merely that something happened.
                 //
