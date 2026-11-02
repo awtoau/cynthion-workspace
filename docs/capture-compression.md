@@ -36,9 +36,13 @@
 - Python reference codec = the spec. Gateware compressor and decompressor are checked bit-exact against it in simulation: round trip on real traces, zero-length packets, all-zero/all-ones/alternating, random, max-length, block-boundary cases, mode switching mid-stream, overflow/drop markers.
 - Same sim harness style as `scripts/soc/` (registered in `soc_sims.py`).
 
-## Open questions
-1. Block size (1, 2 or 4 KiB raw)?
-2. When HyperRAM cannot keep up: drop-with-marker (analyzer behaviour) or stall the source?
-3. Source PHY: passive `target_phy` tap (topology C) and/or the host engine's RX FIFO (topology A)?
-4. PC path: stream decompressed bytes, or export pcap from the decompressor?
-5. How many packets must the pre-compression tap hold for the RISC-V?
+## Decisions (Dan, 2026-11-02)
+1. **Block size: 1 KiB raw.** Index entry per 1 KiB block.
+2. **Full buffer: stall the source or drop, configurable.** A CSR policy (`stall` | `drop`); `drop` writes an overflow marker and counts dropped bytes/packets.
+3. **Source: both** the passive `target_phy` tap and the host engine's RX FIFO, selectable by CSR. (Capturing both at once would need two compressors: not decided.)
+4. **PC path: out of scope for now**; whatever works first.
+5. **Pre-compression tap size: open, needs analysis.** Dan's note: status arrives over the data. ULPI inserts RXCMD status bytes (line state, RxActive/RxError, VBUS state) into the receive byte stream, so the RISC-V tap must sit on the framed *event* stream, not on raw data bytes. Analysis in progress: what the RISC-V needs to see, per event rate, and the resulting depth.
+
+## Open
+- Tap content and depth (item 5).
+- Simultaneous capture from both sources.
