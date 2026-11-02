@@ -280,7 +280,7 @@ Values are from one board. A second has not been checked.
 Declared in `gateware/board/cynthion_r1_4.py`. All four quad data
 lines are wired, so quad mode is a gateware question, not rework.
 
-## No read ceiling has been found (NEW, 2026-08-03)
+## No read ceiling has been found
 
 **Nothing fails.** Every mode reads byte-exact at every rate reachable, up to
 **144 MHz SCK** — **8% past this part's rating**, which is 133 MHz for everything
@@ -322,13 +322,7 @@ right, so checking only the start checks the easiest part.
 **`0x03` runs at 144 MHz**, which the datasheet rates at 50. The opcode's rating
 is not a wall on this board.
 
-### Superseded
-
-| was recorded | now |
-|---|---|
-| divisor 0 produces no clock; SCK capped at sync/2 | **wrong.** Divisor 0 reads byte-exact at every rung, at exactly half the cycle count of divisor 1 |
-| 120 MHz FAIL, 160 MHz FAIL | both were divisor-0 points, disbelieved for the reason above. 120 MHz passes |
-| 80 MHz is the fastest verified | 144 MHz, five modes |
+Verified: 144 MHz, five modes. Divisor 0 reads byte-exact at every rung, at exactly half the cycle count of divisor 1; 120 MHz passes.
 
 **No DDR, and fitting the part that has it would be slower.** The datasheet
 contains no DTR opcodes; DDR reads belong to the `W25Q32JV-DTR` (`-IM`/`-JM`,
@@ -346,7 +340,7 @@ downgrade.** Genuine DDR on this board is the HyperRAM.
 Full speed table, read modes, clock domains and the bugs found getting there:
 this document.
 
-## Cache-line refill, which is what firmware execution pays (NEW, 2026-08-03)
+## Cache-line refill, which is what firmware execution pays
 
 A VexiiRiscv I-cache miss costs one transaction plus 64 bytes and nothing else,
 so this is the number that decides whether flash is the bottleneck. Timed in the
@@ -410,7 +404,7 @@ Boot-image selection, slot layout and the partition work:
 Whether quad SPI speeds up configuration:
 [`../chips/ecp5/qspi-boot-time.md`](../chips/ecp5/qspi-boot-time.md).
 
-## Registers that affect read speed (NEW, 2026-08-03)
+## Registers that affect read speed
 
 - **QE (SR2 bit 1) is already set, and cannot be cleared.** §7.1 calls it the
   *"factory **fixed** default"* for `IQ`/`JQ` ordering options. So IO2 and IO3 are
@@ -437,7 +431,7 @@ Whether quad SPI speeds up configuration:
 Every remaining speed option on this part, with the arithmetic:
 [`../architecture.md`](../architecture.md).
 
-## What the SoC took, and what it bought (NEW, 2026-08-03)
+## What the SoC took, and what it bought
 
 `FLASH_MODE = "quad"` is **adopted**. One row per commit, measured with
 `scripts/soc_shell.py bench` on the board; Fmax from three
@@ -545,14 +539,10 @@ because a schematic records what was ordered rather than what was fitted:
 Only **W25Q32FV** and **W25Q32JV-IQ/JQ** survive `EF 40 16` + SR3 + QE=1, and
 the schematic picks between them.
 
-### Correction to what this workspace recorded
+### Datasheet corrections
 
-Two statements in the existing notes are wrong and are corrected here:
-
-| was recorded | correct |
-|---|---|
-| SR3 `0x60`, **"ADS clear"** (this document) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
-| *"QPI mode can address in as few as 8 clocks"* | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
+- SR3 `0x60` means DRV=25%, WPS=0, and nothing else: **this part has no ADS bit** (ADS/ADP are 4-byte-addressing bits, only on ≥256 Mbit parts; SR3 bit S23 is Reserved).
+- **This part has no QPI mode** (the "QPI can address in as few as 8 clocks" claim holds for the FV and JV-IM, not what is fitted).
 
 ### QPI (`0x38`) — absent
 

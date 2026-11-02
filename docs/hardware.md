@@ -1,109 +1,46 @@
 # Cynthion r1.4 hardware — the index
 
-**Every hardware fact has one home. Find it here rather than re-deriving it.**
+Every hardware fact has one home; find it here. If something here is wrong, fix it here.
 
-This board's facts have been re-derived — wrongly — more than once: a power monitor
-called an INA when its silicon says PAC1954, an FPGA assumed to have 12,288 LUTs
-when 20,143 have been placed and verified, a 64 Mbit HyperRAM read as 4 MiB. Each
-of those was already written down when it was re-derived. If something here is
-wrong, fix it here; do not work around it in a third file.
-
-Board: **Cynthion r1.4** (`LFE5U-12F` marking, BG256) with the `cynthion_d11`
-Apollo build. Measurements are from one board unless stated otherwise; a second has
-not been checked. Every assertion is traceable to source in `repos/`,
-`gateware/`, a script's output, or a cited commit.
+- Board: **Cynthion r1.4** (`LFE5U-12F` marking, BG256), `cynthion_d11` Apollo build.
+- The SoC needs the Apollo **fork** firmware: [`apollo-firmware.md`](apollo-firmware.md); see also [`chips/samd11-apollo.md`](chips/samd11-apollo.md).
+- Measurements are from one board; a second has not been checked.
+- Assertions trace to `repos/`, `gateware/`, a script's output, or a cited commit.
 
 ## The chips
 
 | part | what it is | how software reaches it | note |
 |---|---|---|---|
-| **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die** | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
-| **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, holds the bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM | HyperBus from the fabric; **no CPU path yet** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
-
-**Making either memory faster** — every remaining option with its arithmetic, the
-published ECP5 scoreboard, and what is ruled out on these exact parts:
-[`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) and
-[`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in
-[`architecture.md`](architecture.md).
-
-**Every bus rate on the board, against what its parts actually support** —
-three numbers per interface with a datasheet citation for each, and the gaps
-ranked: [`chips/bus-speed-audit.md`](chips/bus-speed-audit.md). Written after
-the I²C bus turned out to have run twelve times slower than every device on it
-for the life of the project.
-| **PAC1954-1** | 4-channel power monitor | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
+| **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die**; 20,143 LUT4 placed and verified on a 24,288-LUT die | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
+| **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM (64 Mbit ÷ 8) | HyperBus from the fabric; **no CPU path yet** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| **PAC1954-1** | 4-channel power monitor (`PRODUCT_ID` `0x7B`, `MANUFACTURER_ID` `0x54`) | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | **ATSAMD11D14A** | the Apollo debug MCU | USB vendor requests on CONTROL | [`chips/samd11-apollo.md`](chips/samd11-apollo.md) |
 | PI3USB102G | USB 2.0 DPDT mux (U16), CONTROL only | Apollo PA06 | [below](#the-control-port-mux) |
 
-**Soft cores get notes here too**, for the same reason the silicon does: what
-they do on this board differs from what their parameters say, and the
-measurements have to be findable.
+- Making either memory faster: [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md), [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in [`architecture.md`](architecture.md).
+- Every bus rate against what its parts support (rated | board | actual): [`chips/bus-speed-audit.md`](chips/bus-speed-audit.md).
 
-| core | what it is | note |
+| soft core | what it is | note |
 |---|---|---|
-| **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md), and [`riscv-core-build.md`](riscv-core-build.md) for regenerating it |
+| **VexiiRiscv** | the SoC's RV32IMAC CPU, generated at elaboration | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md); regenerating: [`riscv-core-build.md`](riscv-core-build.md) |
 | **NS16550A ×2** | the console UARTs | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 
-The pin map itself is **`gateware/board/cynthion_r1_4.py`** — 206
-lines of pin declarations, vendored so that reaching it does not drag in
-`LUNAApolloPlatform`, `LUNAPlatform` and a `luna-soc` fork pin. That file is the
-authority on which signal is on which ball; the tables below quote it, they do not
-replace it.
+Pin map: [`gateware/board/cynthion_r1_4.py`](../gateware/board/cynthion_r1_4.py) (283 lines), vendored so reaching it does not drag in `LUNAApolloPlatform`, `LUNAPlatform` and a `luna-soc` fork pin. It is the authority on signal-to-ball; the tables below quote it.
 
 ## Register reference
 
-**SoC peripheral registers come from the SoC's own memory map, not from prose.**
-
-Run `./scripts/soc/soc_generate_pac.py`. It elaborates the SoC far enough to read its
-memory map — no synthesis, no place-and-route, no board touched — and emits
-`firmware/cynthion-soc-pac/soc.svd` (CMSIS-SVD: 12 peripherals, 55 registers, 96
-fields) and the `cynthion-soc-pac` crate from it, via `svd2rust` and `form`. Add
-`--svd-only` to stop at the SVD, or `--check` to report whether the committed one
-is current without writing anything
-(`tmp/logs/soc_generate_pac.log`).
-
-`firmware/cynthion-soc/src/target.rs` takes every hardware address from
-`cynthion_soc_pac::base`, so moving a peripheral in the gateware moves the
-firmware's constant with it and renaming one is a compile error.
-
-The generator also cross-checks the map it read against the `*_BASE` constants in
-`top.py` and against the literals in `target.rs`, and refuses to write
-anything if they disagree. A disagreement is a defect in one of the three, not a
-formatting difference.
-
-**The svd2rust register accessors are not used, and that is on purpose.** Every
-CSR here is behind an `amaranth_soc` multiplexer with a granularity of 8 bits,
-where a multi-byte register latches a shadow from its low byte and commits on its
-high byte; svd2rust emits one natural-width volatile access per register, which is
-a different bus transaction. The drivers keep their own byte-level access. The
-crate supplies addresses, which are what drifts.
-
-What the memory map does **not** carry is prose: `csr.Register` rewrites
-`__doc__` from a template, so every register in the design reports the docstring
-"A CSR register" and the SVD's descriptions are mechanical. Bit-level meaning is
-only present where the gateware declares separate CSR fields — the 16550's
-registers are each one 8-bit field, so `LSR.DR` and `IER.ERBFI` live in
-`gateware/soc/peripherals/uart16550.py`, and the standard's own offsets and read side
-effects are restated once, in
-[`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) — they are the
-NS16550A's rather than ours, and cannot drift with the memory map.
-
-**Do not go looking for SoC register offsets in the gateware source or in Apollo's
-firmware, and do not restate them in a document.** That is precisely how firmware
-came to send `0x9f << 24` on the strength of a comment asserting the PHY did not
-left-justify, when it does — the hardware and the comment disagreed and nothing
-could catch it.
-
-**External chip registers are a different case, and they do live in the chip
-notes.** The PAC1954 and the FUSB302B are on I2C, and the USB3343's registers sit
-behind a ULPI register window; none of them are in our memory map, so nothing
-generates them. Their maps are in
-[`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md),
-[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) and
-[`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md).
+- SoC peripheral registers come from the SoC's memory map, not prose. Do not look for offsets in gateware source or Apollo firmware; do not restate them in a document.
+- `python3 scripts/soc/soc_generate_pac.py` elaborates the SoC far enough to read the memory map (no synthesis/PnR, no board) and emits [`firmware/cynthion-soc-pac/soc.svd`](../firmware/cynthion-soc-pac/soc.svd) (CMSIS-SVD) and the `cynthion-soc-pac` crate via `svd2rust` and `form`.
+  - SVD currently has 21 `<peripheral>`, 146 `<register>`, 210 `<field>` elements (counted from the file).
+  - `--svd-only` stops at the SVD; `--check` reports whether the committed one is current, writing nothing. Log: `tmp/logs/soc_generate_pac.log`.
+- [`firmware/cynthion-soc/src/target.rs`](../firmware/cynthion-soc/src/target.rs) takes every address from `cynthion_soc_pac::base`: moving a peripheral moves the constant, renaming one is a compile error.
+- The generator cross-checks the map against the `*_BASE` constants in `top.py` and the literals in `target.rs`; it writes nothing if they disagree.
+- svd2rust accessors are **not used**: every CSR is behind an `amaranth_soc` multiplexer with 8-bit granularity (multi-byte register latches a shadow on the low byte, commits on the high byte); svd2rust emits one natural-width access, a different bus transaction. Drivers keep byte-level access; the crate supplies addresses only.
+- The map carries no prose: `csr.Register` rewrites `__doc__` from a template. Bit-level meaning exists only where the gateware declares separate CSR fields. 16550 registers are each one 8-bit field (`LSR.DR`, `IER.ERBFI` in [`gateware/soc/peripherals/uart16550.py`](../gateware/soc/peripherals/uart16550.py)); standard offsets and read side effects are in [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md).
+- External chip registers (PAC1954, FUSB302B on I2C; USB3343 behind a ULPI register window) are not in our map; their maps live in [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md), [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md), [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md).
 
 ## The buses
 
@@ -121,69 +58,42 @@ generates them. Their maps are in
 | FPGA_ADV | single wire, half-duplex — [`chips/cynone-sideband.md`](chips/cynone-sideband.md) | Apollo ↔ ECP5 | MCU PA09 ↔ ECP5 T6 |
 | `uart` | async serial | Apollo ↔ ECP5 | ECP5 R14 rx, T14 tx |
 
-### Three I2C buses, and the reason is not a preference
+### Three I2C buses (forced by the parts)
 
-**Both FUSB302Bs are at address `0x22`.** Two devices at the same fixed address
-cannot be distinguished on one bus, so the board gives them separate pin-sets.
-**"Just use one bus" is not available in hardware** — the mux is forced by the
-parts, not chosen by the design. That is what motivates a single I2C controller
-with a 2-bit bus select rather than three replicated controllers
-([`gateware-architecture-plan.md`](gateware-architecture-plan.md), [#98](https://github.com/awtoau/cynthion-workspace/issues/98)).
+- Both FUSB302Bs answer `0x22`, so each gets its own pin-set. "One bus" is not available in hardware.
+- One I2C controller with a 2-bit bus select, not three replicated controllers: [`gateware-architecture-plan.md`](gateware-architecture-plan.md), [#98](https://github.com/awtoau/cynthion-workspace/issues/98).
+- `scl` is `dir="o"` on all three (push-pull, no readback): **clock stretching is impossible**; anything needing it fails silently.
+- Only TARGET and AUX have FUSB302Bs. CONTROL has a Type-C connector and none.
 
-`scl` is declared `dir="o"` on all three buses — push-pull, no readback — so
-**clock stretching is impossible on this board**. Anything that needs it will not
-work, and will not fail visibly.
+## Pin sharing
 
-Only TARGET and AUX have PD controllers. CONTROL has a Type-C connector and no
-FUSB302B.
+### MCU: PA10/11/14/15 shared three ways (JTAG / UART / SPI)
 
-## Pin sharing — the two hazards
+Canonical table, enforcement lock and limits: [`chips/samd11-apollo.md`](chips/samd11-apollo.md). Other MCU pins:
 
-### MCU side: PA10/11/14/15 are shared three ways
+| MCU pin | function |
+|---|---|
+| PA02 | PROGRAM_BUTTON |
+| PA03 | FPGA_INITN (r1.3+) |
+| PA04 | FPGA_DONE |
+| PA06 | USB_SWITCH → PI3USB102G |
+| PA08 | FPGA_PROGRAM (PROGRAMN) |
+| PA09 | FPGA_ADV (EIC EXTINT7) |
+| PA16/17/22/23/27 | LED A–E |
+| PA30/PA31 | SWCLK / SWDIO (Tag-Connect) |
 
-| MCU pin | JTAG | UART (SERCOM2) | SPI (SERCOM0) | Other |
-|---|---|---|---|---|
-| PA02 | — | — | — | PROGRAM_BUTTON |
-| PA03 | — | — | — | FPGA_INITN (r1.3+) |
-| PA04 | — | — | — | FPGA_DONE |
-| PA06 | — | — | — | USB_SWITCH → PI3USB102G |
-| PA08 | — | — | — | FPGA_PROGRAM (PROGRAMN) |
-| PA09 | — | — | — | FPGA_ADV (EIC EXTINT7) |
-| **PA10** | **TDO** | — | **PAD2 (MISO)** | — |
-| **PA11** | **TMS** | **RX (PAD3)** | — | — |
-| **PA14** | **TDI** | **TX (PAD0)** | **PAD0 (MOSI)** | — |
-| **PA15** | **TCK** | — | **PAD1 (SCK)** | — |
-| PA16/17/22/23/27 | — | — | — | LED A–E |
-| PA30/PA31 | — | — | — | SWCLK / SWDIO (Tag-Connect) |
+- PA08/PA09 are not free, so the UART cannot be relocated on the d11 ([#65](https://github.com/awtoau/cynthion-workspace/issues/65)/#66).
 
-JTAG and UART cannot both be active. It is enforced with a lock rather than left to
-convention: `uart_configure_pinmux()` refuses while `apollo_mode_jtag_active()`, and
-the CDC line-coding, line-state and rx-wanted callbacks are gated on the same flag,
-because a host opening the console mid-flash would otherwise corrupt an in-flight
-configure. **PA08/PA09 are not free, so the UART cannot be relocated on the d11**
-([#65](https://github.com/awtoau/cynthion-workspace/issues/65)/#66).
+### FPGA: R14/T14 are the same wires as JTAG TDI/TMS
 
-### FPGA side: R14/T14 are the same wires as JTAG TDI/TMS
-
-The platform file states it directly: *"UART pins R14 and T14 are connected to JTAG
-pins R11 (TDI) and T11 (TMS) respectively, so the microcontroller can use either
-function but not both simultaneously."* The constraint exists at **both** ends,
-which is why it cannot be solved on the MCU alone.
-
-Note the crossover — the FPGA's *rx* (R14) shares with TDI, which is the MCU's *TX*
-pin (PA14). Reading one end's table alone tends to produce the wrong pairing.
-
-Detail, and the limits of what has actually been confirmed:
-[`chips/samd11-apollo.md`](chips/samd11-apollo.md).
+- Platform file: UART pins R14 and T14 connect to JTAG R11 (TDI) and T11 (TMS); the MCU can use either function, not both. The constraint exists at both ends.
+- Crossover: the FPGA's *rx* (R14) shares with TDI, the MCU's *TX* pin (PA14).
 
 ### Other shared pins
 
-- **T8/T7/N8** — SPI and QSPI flash share them; the QSPI resource adds M7/N7.
-- **N4/P3** — target USB direct taps, declared three times over at LVDS, LVCMOS33
-  and LVCMOS12 (the last for chirp detection).
-- **Flash SCK has no ball number** and cannot be requested as a pin; it is reachable
-  only through the `USRMCLK` macro, which is what caps flash clocking at a
-  characterised 62 MHz.
+- **T8/T7/N8** — SPI and QSPI flash share them; QSPI adds M7/N7.
+- **N4/P3** — target USB direct taps, declared three times (LVDS, LVCMOS33, LVCMOS12 for chirp detection).
+- **Flash SCK has no ball**; reachable only via the `USRMCLK` macro, which caps flash clocking at a characterised 62 MHz (see [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)).
 
 ## Block diagram
 
@@ -206,25 +116,15 @@ HOST PC
                               (analyzer capture, or moondancer/facedancer emulation)
 ```
 
-USB ports: **three Type-C** (CONTROL, AUX, TARGET-C) plus **TARGET-A** (a type-A
-receptacle sharing `target_phy` with TARGET-C). Buttons: **two** — PROGRAM
-(MCU-owned, PA02) and USER (FPGA-owned, M14) — plus RESET, which resets the MCU
-and, via the normal boot path, the FPGA too. Six FPGA LEDs (E13 C13 B14 A15 D12
-C11, active-low) and five MCU LEDs.
+- USB ports: **three Type-C** (CONTROL, AUX, TARGET-C) plus **TARGET-A** (type-A, shares `target_phy` with TARGET-C).
+- Buttons: PROGRAM (MCU, PA02), USER (FPGA, M14), RESET (resets MCU and, via the normal boot path, the FPGA).
+- LEDs: six FPGA (E13 C13 B14 A15 D12 C11, active-low) and five MCU.
+- Only **CONTROL** is muxed. AUX and TARGET are hardwired to their PHYs, hence `default_usb_connection = "aux_phy"`.
 
-### What the six FPGA LEDs mean
+### The six FPGA LEDs
 
-Driven so that **a working board and a dead one do not look the same** — nothing
-drove them before, which is a large part of why the silent SoC took days.
-Declared `LEDResources(pins="E13 C13 B14 A15 D12 C11", invert=True)`, so the
-gateware drives active-high.
-
-**The colour order is the schematic's, not the platform's.** `LEDResources` is
-positional and carries no colour, so nothing in the gateware or firmware could
-contradict a wrong name — and a reversed order survived in three places until
-someone watched the board and saw the wrong lamp blinking ([#415](https://github.com/awtoau/cynthion-workspace/issues/415)). The source is
-`repos/cynthion-hardware/indicators_buttons.kicad_sch`, where each diode carries
-its colour in its `Value` field.
+- Declared `LEDResources(pins="E13 C13 B14 A15 D12 C11", invert=True)`; gateware drives active-high.
+- Colour order is the schematic's, not the platform's: `repos/cynthion-hardware/indicators_buttons.kicad_sch`, `Value` field of each diode ([#415](https://github.com/awtoau/cynthion-workspace/issues/415)). `led` prints ball and schematic reference beside each colour.
 
 | # | ball | sch | colour | driven by | behaviour |
 |---|---|---|---|---|---|
@@ -235,60 +135,23 @@ its colour in its `Value` field.
 | 4 | D12 | D3 | **orange** | RTIC task, firmware | **flashing, 2 Hz** |
 | 5 | C11 | D2 | **red** | `ever_errored` | latched — **off is good** |
 
-**Off is good, motion is alive.**
-
 | what you see | what it means |
 |---|---|
 | yellow **and** orange flashing, red dark | working normally |
-| yellow flashing, **orange frozen** | the FPGA runs; **the OS has stopped scheduling** |
-| yellow frozen | no clock, or the PLL lost lock |
+| yellow flashing, **orange frozen** | FPGA runs; **OS stopped scheduling** |
+| yellow frozen | no clock, or PLL lost lock |
 | **red lit** | a bus error occurred, whatever else looks right |
-| orange dark from boot | firmware never ran — its fabric default is dark on purpose |
+| orange dark from boot | firmware never ran (fabric default is dark on purpose) |
 | nothing at all | no bitstream, or no power |
 
-**The two heartbeats are adjacent on purpose.** Yellow is a fabric counter off
-the solved `sync` clock; orange is a periodic RTIC task at the lowest priority.
-One at twice the rate of its neighbour is checkable by eye with no console — and
-that comparison is what caught the reversed colour map.
-
-They answer different questions. Yellow says the **FPGA and its PLL** are alive
-and keeps flashing on a dead CPU. Orange says the **OS is scheduling**, and at
-the lowest priority it also says everything above it is getting done with slack
-left over.
-
-**No `ever_fetched` or `ever_io` lamp.** Both latch within microseconds of any
-boot and never distinguish anything again, so the board would carry two
-permanently-lit lamps — the dead-instrument problem this section exists to
-avoid ([#411](https://github.com/awtoau/cynthion-workspace/issues/411)).
-
-**A latched lamp answers "has this ever happened".** A bus error is one cycle
-long and a human glances at the board at an arbitrary moment: *a fault that
-cleared itself is still a fault.* The same correction made the sideband usable —
-its `state` was raw Wishbone `cyc`, high only during a transaction, so reading
-`0` was near-certain even on a busy CPU.
-
-**A flashing lamp beats a solid one** because a stuck-high output and a healthy
-design must not look the same. Motion proves something is running; a solid LED
-proves only that a pin is high, which is also what a design held in reset looks
-like.
-
-`led` prints the ball and the schematic reference beside each colour, so a wrong
-colour name is falsifiable from the console rather than from a schematic dig.
-
-The heartbeat divider must be derived from the clock, not hardcoded. Getting it
-wrong here gives a heartbeat at the wrong rate, which is harmless; the same
-mistake in `SidebandDebug` gives a **dead** link
-([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)).
-`top.py` derives both from `SYNC_MHZ`. See [#111](https://github.com/awtoau/cynthion-workspace/issues/111).
-
-Only the **CONTROL** port is muxed. AUX and TARGET are hardwired to their PHYs,
-which is why `default_usb_connection = "aux_phy"` — gateware that wants a host link
-without fighting Apollo for the control port uses AUX.
+- Yellow: fabric counter off the solved `sync` clock; alive with a dead CPU. Orange: periodic RTIC task at lowest priority; OS is scheduling with slack. Adjacent, 2:1 rate, checkable by eye.
+- Latched lamp = "has this ever happened" (a bus error is one cycle). Flashing beats solid: a stuck-high pin looks like a design held in reset.
+- No `ever_fetched` / `ever_io` lamp: both latch within microseconds of boot ([#411](https://github.com/awtoau/cynthion-workspace/issues/411)).
+- Heartbeat divider is derived from `SYNC_MHZ` in `top.py`, as is `SidebandDebug`'s; a hardcoded one there gives a **dead** link ([`chips/cynone-sideband.md`](chips/cynone-sideband.md#the-bit-period-is-fixed-at-build-time-on-the-fpga-side)), [#111](https://github.com/awtoau/cynthion-workspace/issues/111).
 
 ## Identity — what enumerates as what
 
-Cynthion enumerates as **one device ID per personality**, distinguished by
-interface subclass, **not by PID**.
+One device ID per personality, distinguished by interface subclass, **not PID**.
 
 | Personality | VID:PID | bInterfaceClass | bInterfaceSubClass | Source |
 |---|---|---|---|---|
@@ -298,17 +161,13 @@ interface subclass, **not by PID**.
 | Gateware — analyzer | `1d50:615b` | 0xFF | `0x10` | `repos/cynthion/shared/usb.toml:73` |
 | Gateware — moondancer/facedancer | `1d50:615b` | 0xFF | `0x20` | `repos/cynthion/shared/usb.toml:74` |
 
-Apollo host-side also accepts `1209:0010` and a set of pid.codes test PIDs
-(`1209:0001..0005`, `1209:000f` for the flash bridge) as gateware IDs
-(`repos/apollo/apollo_fpga/__init__.py:50-59`). The FlashBridge gateware is a
-separate identity, `1209:000f`, whose bulk interface uses subclass `0x01`.
+- `1d50:615b` means gateware is running (not "unready for DFU"); a `0xF0` advertiser-stop or `--force-offline` handoff recovers the port. DFU vs Apollo firmware needs the interface descriptor, not the PID.
+- Apollo host-side also accepts `1209:0010` and pid.codes test PIDs (`1209:0001..0005`) as gateware IDs (`repos/apollo/apollo_fpga/__init__.py:50-59`).
+- FlashBridge gateware is `1209:000f`; its bulk interface uses subclass `0x01`. `0x01..0x0f` is "Reserved" in `usb.toml` (Cynthion gateware); the namespaces do not collide.
 
 ## The CONTROL port mux
 
-The physical mux is a **PI3USB102G** USB 2.0 DPDT switch (`U16`, Diodes
-10-TQFN) in `control_port`, per `production/bom.csv` and the schematic symbol,
-driven by the `CONTROL_SWITCH` net, which originates as an output from the
-`debugger` sheet (Apollo **PA06**) and lands as an input on `control_port`.
+`U16` PI3USB102G (Diodes 10-TQFN) in `control_port` (`production/bom.csv`), driven by `CONTROL_SWITCH`, an output of the `debugger` sheet (Apollo **PA06**).
 
 | Mux pin | Net | Goes to |
 |---|---|---|
@@ -324,19 +183,12 @@ driven by the `CONTROL_SWITCH` net, which originates as an output from the
 | **FPGA owns CONTROL** | `SWITCH_FPGA` (2) | **low**, output | `L` | **1** | `control_phy` → ECP5 | `1d50:615b`, subclass `0x00`/`0x10`/`0x20` | PHY_RESET input + pull-down released |
 | **Pre-handoff / boot** | `SWITCH_UNKNOWN` (0) | not yet driven | undriven | indeterminate | — | — | — |
 
-On pre-r0.6 boards there is no mux at all, so `hand_off_usb()`/`take_over_usb()`
-tri-state PHY_RESET (PA09) instead.
-
-Both transitions bracket the switch with a USB disconnect, so the host
-re-enumerates rather than silently seeing a different device behind the same port:
-`hand_off_usb()` calls `tud_disconnect()` **before** flipping `S`;
-`take_over_usb()` flips `S` **first**, then disconnect/reconnect. Both are
-idempotent (`repos/apollo/firmware/src/usb_switch.c:29-74`).
+- Pre-r0.6 boards have no mux: `hand_off_usb()`/`take_over_usb()` tri-state PHY_RESET (PA09).
+- Both transitions bracket the switch with a USB disconnect (host re-enumerates): `hand_off_usb()` calls `tud_disconnect()` **before** flipping `S`; `take_over_usb()` flips `S` **first**, then disconnect/reconnect. Both idempotent (`repos/apollo/firmware/src/usb_switch.c:29-74`).
 
 ### Who gets the port, and when
 
-Ownership is **not** driven by configuration completion. It is driven continuously
-by the FPGA_ADV keepalive.
+Ownership is driven continuously by the FPGA_ADV keepalive, not by configuration completion.
 
 | Event | Trigger | Apollo action | Result |
 |---|---|---|---|
@@ -349,41 +201,23 @@ by the FPGA_ADV keepalive.
 | `0xec` emergency reset | — | `jtag_deinit()`, `allow_fpga_takeover_usb(false)` | control plane returns to HOLD, takeover now disallowed |
 | `0xed` boot to DFU | WDT reset into Saturn-V | — | Saturn-V DFU on CONTROL |
 
-`0xc2` (`allow_fpga_takeover_usb`) only sets a **policy** flag: an FPGA that is
-happily advertising still will not get the port until the host has sent it.
-Conversely `0xec` clears the flag, so after an emergency reset the FPGA cannot take
-the port back until the host re-permits it. On boards without a USB switch there is
-no advertising channel at all, so it hands off immediately rather than arming a
-policy.
+- `0xc2` (`allow_fpga_takeover_usb`) only sets a policy flag: an advertising FPGA does not get the port until the host sent it. `0xec` clears it. Boards without a USB switch have no advertising channel and hand off immediately.
 
 ### The keepalive has two encodings
 
-Both drive the same ECP5 pin (`int`, T6). In Apollo's power-on EIC mode both are read
-by the same edge counter, which only cares about edge *rate*.
+Both drive ECP5 `int` (T6); Apollo's EIC edge counter reads only edge rate.
 
 | Variant | Waveform | Used by |
 |---|---|---|
 | Upstream `ApolloAdvertiser` | 50 Hz square wave (toggles every 10 ms) | analyzer gateware |
 | Local `PatternUartStreamer` | `C1 14 01 A5` 8-N-1 burst @ 1 Mbaud, every 100 ms | facedancer gateware |
 
-Detection window **200 ms**, threshold **>2 edges**. The read/clear of
-`edge_counter` is wrapped in `NVIC_DisableIRQ`/`EnableIRQ` so an edge landing
-between the two statements is not dropped (`fpga_adv.c:682-697`).
+- Detection window **200 ms**, threshold **>2 edges**. The `edge_counter` read/clear is wrapped in `NVIC_DisableIRQ`/`EnableIRQ` so an edge between the two statements is not dropped (`fpga_adv.c:682-697`).
+- The same wire carries the sideband command protocol and a third (framed) encoding that Apollo's UART mode matches: [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request), which also covers why `PatternUartStreamer`'s 1 Mbaud cannot be decoded by Apollo's 230400-baud receiver.
 
-The same wire also carries the sideband command protocol, and the third encoding —
-the framed advertisement Apollo's UART mode matches — is what lets one wire do both.
-That is [`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request), which
-also covers why `PatternUartStreamer`'s 1 Mbaud cannot be decoded by Apollo's
-230400-baud receiver.
+## The VBUS power tree
 
-## The VBUS power tree — who can source, and to where
-
-**The board can power a target.** There is a switch per port, and this is the fact
-that answers "can Cynthion charge a device", "can it act as a USB host", and
-"what happens to TARGET A when I close two switches at once".
-
-It is a **passthrough, not a regulator**. TARGET A is powered from whichever
-upstream port is feeding the board; nothing here generates 5 V.
+The board can power a target: a switch per port. It is a **passthrough, not a regulator**; TARGET A is powered from whichever upstream port feeds the board; nothing generates 5 V.
 
 | resource | pin | direction | role |
 |---|---|---|---|
@@ -394,188 +228,83 @@ upstream port is feeding the board; nothing here generates 5 V.
 | `target_c_vbus_en` | K5 | | pass TARGET-C's VBUS → TARGET A |
 | `target_a_discharge` | K4 | | actively discharge TARGET A |
 
-From the platform file, which is the authority — never transcribe these, read
-`repos/cynthion/.../platform/cynthion_r1_4.py`:
+- Authority: `repos/cynthion/.../platform/cynthion_r1_4.py`: "VBUS on each of the Type-C ports can be connected to TARGET A through a bidirectional switch. If any of these switches is enabled, TARGET A is considered an output."
+- **TARGET A is the common node.** Each `*_vbus_en` joins its port to that rail; closing two routes ONE supply to TWO destinations. Passing power from some other port *to* AUX needs `aux_vbus_en` plus `target_c_vbus_en` or `control_vbus_en` (mossmann, [cynthion#184](https://github.com/greatscottgadgets/cynthion/issues/184)).
 
-> VBUS on each of the Type-C ports can be connected to TARGET A through a
-> bidirectional switch. **If any of these switches is enabled, TARGET A is
-> considered an output.**
+### Input and passthrough are separate
 
-**TARGET A is the common node**, and that is the whole model. Each `*_vbus_en`
-connects its port to that shared rail, so closing two switches routes ONE supply
-to TWO destinations rather than tying two supplies together. mossmann,
-[cynthion#184][c184]:
+From GSG's [Cynthion Hardware Design Update](https://www.crowdsupply.com/great-scott-gadgets/cynthion/updates/cynthion-hardware-design-update) (r0.6 redesign, inherited by r1.4):
 
-> The purpose of `aux_vbus_en` when used alone is to pass VBUS power from AUX to
-> TARGET A. If you want to pass power from some other port *to* AUX, you must
-> enable both `aux_vbus_en` and either `target_c_vbus_en` or `control_vbus_en`.
+- Passthrough up to **20 V** (top of PD SPR).
+- A 5 V supply is still required on CONTROL or AUX to power Cynthion.
+- Overvoltage protection shuts off either input above **5.5 V**; it does not affect passthrough. No diode drop on passthrough.
+- All four ports have voltage and current monitoring (PAC1954) for flexible OVP/OCP/reverse-current protection of external hosts/devices, with slower response than the internal OVP.
+- Threshold: `D17`, 5.6 V ±2% zener (5.49–5.71 V) in `repos/cynthion-hardware/power_distribution.kicad_sch`. No firmware involved.
+- Each of CONTROL and AUX has two independent shutoffs: hardware OVP, and FPGA control of the active-low `*_vbus_in_en`.
 
-[c184]: https://github.com/greatscottgadgets/cynthion/issues/184
+### CC / SBU protection
 
-### Input and passthrough are separate, and the board protects itself
-
-This is the r0.6 redesign that r1.4 inherits, and it answers most of what anyone
-asks here. From GSG's [Cynthion Hardware Design Update][cshw]:
-
-> Cynthion now supports power passthrough **up to 20 V**, the highest voltage
-> allowed in PD's Standard Power Range (SPR).
-
-> A 5 V power supply is still required on either CONTROL or AUX to power Cynthion
-> itself. **Overvoltage protection automatically shuts off either input if it
-> exceeds 5.5 V.**
-
-> **Power input and power passthrough are now two separate functions, no longer
-> entangled with one another.** All power output is strictly passthrough, not an
-> output of an internal supply rail. **Overvoltage shutoff of an input does not
-> affect passthrough. There is no longer a diode drop** reducing passthrough
-> voltage.
-
-> All four ports now feature voltage and current monitoring... **can be used to
-> implement flexible overvoltage, overcurrent, or reverse current protection for
-> external hosts or devices, though with a slower response time** than Cynthion's
-> internal overvoltage protection.
-
-[cshw]: https://www.crowdsupply.com/great-scott-gadgets/cynthion/updates/cynthion-hardware-design-update
-
-**The threshold is a zener, and it is in the schematic.** `D17` is a 5.6 V ±2%
-zener — 5.49 to 5.71 V, inside the documented 5.5–6.0 V window — in
-`repos/cynthion-hardware/power_distribution.kicad_sch`. No firmware is involved,
-on either input.
-
-So each of CONTROL and AUX has **two** independent shutoff paths: the automatic
-hardware OVP, and deliberate FPGA control through the active-low `*_vbus_in_en`
-pins. Passthrough keeps working through either.
-
-### The signal pins have their own protection, and it is a different part
-
-Everything above guards **VBUS**. The CC and SBU pins are guarded separately, by
-a part this document did not name until now ([#156](https://github.com/awtoau/cynthion-workspace/issues/156)).
-
-`DPO2036DBB-7`, described in `type_c.kicad_sch` as *"4-CH OVER-VOLTAGE PROTECTION
-FOR CC/SBU PINS ON USB TYPE-C"*. There are **two**, one per Type-C port —
-**`U13`** on TARGET and **`U14`** on AUX. The sheet is instantiated once per port,
-so both appear as a single symbol in the file and the refdes comes from the
-instance path.
+- `DPO2036DBB-7` ("4-CH OVER-VOLTAGE PROTECTION FOR CC/SBU PINS ON USB TYPE-C", `type_c.kicad_sch`), two of them: **`U13`** on TARGET, **`U14`** on AUX (one sheet instantiated per port; refdes from the instance path). [#156](https://github.com/awtoau/cynthion-workspace/issues/156). Detail: [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md).
 
 | protection | guards | mechanism |
 |---|---|---|
 | `D17`, 5.6 V zener | VBUS inputs (CONTROL, AUX) | hardware shutoff above 5.5 V |
-| **`U13`/`U14` DPO2036** | **CC1/CC2, SBU1/SBU2** | **series pass, opens on over-voltage; `FAULTB` open-collector** |
-| PAC1954 | all four ports | firmware policy, and slower |
+| **`U13`/`U14` DPO2036** | **CC1/CC2, SBU1/SBU2** | series pass, opens on over-voltage; `FAULTB` open-collector |
+| PAC1954 | all four ports | firmware policy, slower |
 
-Why it matters: CC and SBU are low-voltage signal pins in a connector whose VBUS
-may legitimately carry 20 V. A damaged cable, debris, or a non-compliant device
-can short VBUS onto CC — which would take out the FUSB302B, and through SBU would
-drive straight into FPGA I/O. That is the failure this part exists to stop, and it
-is not visible anywhere else in this tree.
+- Why: VBUS may carry 20 V; a short of VBUS onto CC would take out the FUSB302B, and via SBU would drive FPGA I/O.
+- [#97](https://github.com/awtoau/cynthion-workspace/issues/97): all four SBU pins passed drive-and-readback through the DPO2036 (DC continuity only).
 
-**[#97](https://github.com/awtoau/cynthion-workspace/issues/97) is a free datapoint on it.** All four SBU pins passed drive-and-readback,
-and those lines run through the DPO2036 — so that result is also evidence the part
-is not shorting them.
+### Firmware's role
 
-### What that means for firmware
+The board defends itself; firmware defends the attached device. 20 V passthrough is designed behaviour. A USB-A peripheral on TARGET A cannot refuse 20 V, so a firmware guard there is user protection, built on the PAC1954 (slower than OVP, the only option for passthrough).
 
-**The board defends itself; firmware defends the attached device.** Passing 20 V
-through is designed behaviour and does not damage Cynthion. But a USB-A
-peripheral on TARGET A has no way to refuse 20 V, so a guard there is a
-user-protection feature, not a board-protection one — and it is exactly what the
-last quote above describes the PAC1954 being for. Slower than the internal OVP,
-and the only option for the passthrough path.
+### Pass elements — open question
 
-### The pass elements, and the question that is still open
-
-From `repos/cynthion-hardware/power_distribution.kicad_sch`, which is the authority
-— read it, do not trust this table to stay current:
+`repos/cynthion-hardware/power_distribution.kicad_sch` is the authority:
 
 | what | count | designators |
 |---|---|---|
 | pass MOSFET, `SIA483ADJ-T1-GE3`, P-channel | **6** | Q1, Q2, Q4, Q5, Q6, Q7 |
 | `BC847BS` dual NPN, gate drive | 6 | |
-| `PAC195X-1-VQFN` monitor | 1 | on the same sheet |
+| `PAC195X-1-VQFN` monitor | 1 | same sheet |
 
-**Six devices for six switch functions** — the three passthroughs, the two input
-shutoffs and the discharge. That is one device per function, not back-to-back
-pairs.
+- Six devices for six functions (3 passthroughs, 2 input shutoffs, discharge): one per function, not back-to-back pairs.
+- **Open:** a single P-FET's body diode conducts regardless of gate, so if these are singles, "switch open" is one-direction-only, not isolation.
+  - Symbol `Transistor_FET:SiA449DJ` has 3 pins (D, G, S): a single device.
+  - Part number `SIA483ADJ-T1-GE3` differs from the symbol name; Vishay's `DJ` suffix is used on duals in this package.
+  - The Vishay `SIA483ADJ` datasheet is not in `sources/`; it settles it.
+- Until settled, treat an open switch as "not driven", not "isolated"; no firmware or self-test may rely on an open switch blocking current.
 
-**Which makes one question load-bearing, and it is not yet answered.** A single
-P-channel MOSFET has a body diode that conducts whatever the gate is doing. If
-these are singles, **"switch open" is not isolation** — it is no path in one
-direction only, and VBUS can appear on the other side through the diode. Every
-safety claim about an open switch rests on this.
-
-Two things in the schematic point in opposite directions and neither settles it:
-
-* the KiCad symbol is `Transistor_FET:SiA449DJ` and carries **three pins — D, G,
-  S** — which models a single device;
-* the part number is `SIA483ADJ-T1-GE3`, a different part from the symbol's name,
-  and Vishay's `DJ` suffix is used on dual devices in this package.
-
-**A symbol is not a datasheet**, and a symbol whose name disagrees with the part
-number fitted is weaker evidence still. The Vishay datasheet for `SIA483ADJ` is
-not in `sources/` and settles it either way.
-
-**Until it is settled, treat an open switch as "not driven" rather than
-"isolated"**, and do not write firmware or a self-test whose safety argument
-depends on an open switch blocking current. Recording the unknown is worth more
-than an unverified "probably fine" on a power path.
-
-### What is safe to command, today
-
-The rows are situations rather than bit patterns, because the hazard depends on
-what is plugged in — a switch bit alone cannot tell you.
+### What is safe to command
 
 | situation | closing one passthrough | closing two |
 |---|---|---|
-| one port sourcing, others idle | **safe** — one supply, one or two destinations | **safe**, and it is what the second switch is *for* |
+| one port sourcing, others idle | **safe** | **safe** (what the second switch is for) |
 | two ports both sourcing | safe, if it is the sourcing one | **NOT ESTABLISHED** — ties two supplies through the shared rail |
-| source above 5.5 V (PD) | board is fine; **an attached USB-A device is not** | as left |
+| source above 5.5 V (PD) | board fine; **attached USB-A device is not** | as left |
 | any, with `target_a_discharge` closed | **NOT ESTABLISHED** — discharging a live rail | as left |
 
-The second and fourth rows are the ones nobody has shown safe from documents.
-`firmware/cynthion-soc/src/vbus.rs` therefore replaces the whole register on every
-close, so exactly one source is ever connected — a policy chosen because the
-alternative could not be justified, not because the hardware demands it.
+- [`firmware/cynthion-soc/src/vbus.rs`](../firmware/cynthion-soc/src/vbus.rs) replaces the whole register on every close, so exactly one source is connected (policy, not a hardware demand).
 
-### PD lives on two ports, not three
+### PD on two ports
 
-Only **TARGET and AUX** have FUSB302Bs; CONTROL has a Type-C connector and none.
-So CONTROL cannot negotiate above 5 V at all — a source sees no PD-capable sink
-and stays at vSafe5V. That makes CONTROL the port to prefer as a passthrough
-source when either would do.
+Only TARGET and AUX have FUSB302Bs; CONTROL cannot negotiate above 5 V (source sees no PD sink, stays at vSafe5V). Prefer CONTROL as passthrough source when either would do.
 
 ### The SoC drives the switches
 
-`repos/cynthion/.../gateware/analyzer/top.py` connects all four switches, each
-gated by `POWER_CONTROL_ENABLE`, and `repos/packetry/src/backend/cynthion.rs`
-carries the command word (bits 3–7). Reset defaults are deliberate:
-`target_c_vbus_en` **closed**, everything else **open**.
-
-The SoC exposes the switches through `peripherals/vbus_csr.py`; firmware gates every close
-against a fresh PAC1954 reading. `vbus control` powers TARGET-A from CONTROL.
-`vbus charge` additionally routes that supply to TARGET-C and presents Rp there.
-
-### Charging a device: TARGET-A needs only the switches
-
-USB-A has no CC line and no negotiation, so a source presents 5 V and the device
-draws what it can. Closing `control_vbus_en` or `aux_vbus_en` is sufficient.
-
-**TARGET-C as a source additionally needs Rp.** `vbus charge` writes both Rp
-enables, clears both Rd enables, and starts the FUSB302B's source-only toggle so
-the controller resolves CC1/CC2 orientation. Default current is the default;
-`vbus charge 1.5` and `vbus charge 3` are explicit higher advertisements.
-
-### Verify with current, not with a bit that reads back
-
-The PAC1954 measures all four ports (`docs/chips/pac1954-power-monitor.md`), so
-closing a switch should show current where expected. A register that reads back
-is not evidence that power flowed.
+- `repos/cynthion/.../gateware/analyzer/top.py` connects all four switches, each gated by `POWER_CONTROL_ENABLE`; `repos/packetry/src/backend/cynthion.rs` carries the command word (bits 3–7). Reset defaults: `target_c_vbus_en` **closed**, rest **open**.
+- SoC peripheral: [`gateware/soc/peripherals/vbus_csr.py`](../gateware/soc/peripherals/vbus_csr.py). Firmware gates every close against a fresh PAC1954 reading.
+- `vbus control` powers TARGET-A from CONTROL. `vbus charge` also routes it to TARGET-C and presents Rp there.
+- TARGET-A charging needs only the switches (no CC line): close `control_vbus_en` or `aux_vbus_en`.
+- TARGET-C as source also needs Rp: `vbus charge` writes both Rp enables, clears both Rd enables, starts the FUSB302B source-only toggle (CC1/CC2 orientation). Default current is the default; `vbus charge 1.5` / `vbus charge 3` advertise higher.
+- Verify with PAC1954 current ([`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md)), not with a register that reads back.
 
 ## Datapaths
 
 ### Control plane — host → Apollo MCU
 
-All require the CONTROL mux on **branch 2**. If the FPGA holds the port, the host
-must first stop the keepalive (vendor `0xF0` to the stub interface).
+Needs CONTROL mux on **branch 2**. If the FPGA holds the port, first stop the keepalive (vendor `0xF0` to the stub interface).
 
 | # | Path | Transport | MCU module | Physical link | Endpoint |
 |---|---|---|---|---|---|
@@ -607,7 +336,7 @@ must first stop the keepalive (vendor `0xF0` to the stub interface).
 | 20 | **Mezzanine** | 22 GPIO, `SLEWRATE=FAST` | B8 A9 B10 A10 B11 D14 C14 F14 E14 G13 G12 C16 C15 B16 B15 A14 B13 A13 D13 A12 B12 A11 | mezzanine board |
 | 21 | **SWD (MCU debug)** | SWD — **not** routed through USB | PA30=SWCLK, PA31=SWDIO, Tag-Connect TC2030-CTX | SAMD11 core |
 
-### USB data paths — the instrument's actual job
+### USB data paths
 
 | # | Path | Port | Mux setting | PHY | Gateware | Host software |
 |---|---|---|---|---|---|---|
@@ -616,178 +345,90 @@ must first stop the keepalive (vendor `0xF0` to the stub interface).
 | 24 | **Gateware→host bulk** | CONTROL | **branch 1** | `control_phy` | analyzer or facedancer top | as above |
 | 25 | **AUX port** | AUX | n/a — not muxed | `aux_phy` | `default_usb_connection` | as above |
 
-## `flash --fast` — the deliberate-handoff path
+## `flash --fast` — deliberate handoff to the FPGA
 
-Every other host operation treats an FPGA-owned CONTROL port as an obstacle to be
-cleared. This one **hands the port to the FPGA on purpose**, because the thing it
-wants to talk to is FPGA gateware, not Apollo.
+The one host operation that hands CONTROL to the FPGA on purpose (the target is FPGA gateware, not Apollo). Slow path bit-bangs every byte through Apollo's software JTAG TAP; fast path is host → USB bulk → ECP5 fabric → SPI flash, SAMD11 out of the data path. Speeds: [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md).
 
 | Step | Action | Mux | Host talks to |
 |---|---|---|---|
-| 1 | build or fetch a `FlashBridge` bitstream (cached under `$XDG_CACHE_HOME/apollo/build/<plan-digest>`, so the Amaranth/nextpnr build is paid once) | `S`=H | Apollo `1d50:615c` |
-| 2 | `programmer.configure(...)` — load the bridge into FPGA **SRAM** over JTAG. Volatile: this configures, it does not flash. | `S`=H | Apollo |
-| 3 | `allow_fpga_takeover_usb()` (`0xc2`) — the bridge is already advertising, so the next window hands the port over | **flips to `S`=L** | — (re-enumeration) |
+| 1 | build or fetch a `FlashBridge` bitstream (cached under `$XDG_CACHE_HOME/apollo/build/<plan-digest>`) | `S`=H | Apollo `1d50:615c` |
+| 2 | `programmer.configure(...)` — load the bridge into FPGA **SRAM** over JTAG (volatile; does not flash) | `S`=H | Apollo |
+| 3 | `allow_fpga_takeover_usb()` (`0xc2`) — bridge already advertising, next window hands over | **flips to `S`=L** | — (re-enumeration) |
 | 4 | enumerate `1209:000f`, match class `0xFF` / subclass `0x01`, grab EP1 | `S`=L | **FPGA gateware** |
-| 5 | stream the image over USB bulk; the FPGA drives its own SPI flash pins | `S`=L | FPGA gateware |
-| 6 | `__del__` → `request_handoff()` (`0xF0`) — stop advertising, give the port back | back to `S`=H | Apollo |
+| 5 | stream the image over USB bulk; FPGA drives its own SPI flash pins | `S`=L | FPGA gateware |
+| 6 | `__del__` → `request_handoff()` (`0xF0`) — stop advertising | back to `S`=H | Apollo |
 
-Why it is faster: in the slow path every flash byte is bit-banged through Apollo's
-software JTAG TAP on a SAMD11. In the fast path the SAMD11 is not in the data path
-at all — bytes go host → USB bulk → ECP5 fabric → SPI flash, at PHY speed.
-
-The bridge descriptor carries **two** interfaces: the bulk flash interface (`0x01`)
-and the Apollo stub (`0x00`) that makes step 6 possible. Without the stub, handing
-the port back would need a power cycle. The `0x01..0x0f` range is "Reserved" in
-`usb.toml`, which describes *Cynthion* gateware; the Apollo-side FlashBridge uses
-`0x01` under its own `1209:000f` ID, so the two namespaces do not collide.
-
-`flash-fast` as a standalone subcommand is **deprecated** — it warns and forwards
-to `flash --fast`.
+- The bridge descriptor carries two interfaces: bulk flash (`0x01`) and the Apollo stub (`0x00`) that makes step 6 possible; without the stub, handing back needs a power cycle.
+- Standalone `flash-fast` is deprecated: warns and forwards to `flash --fast`.
 
 ## Recovery ladder
 
-Cheapest first. **Power cycle is the fallback, not the requirement.**
+Cheapest first; power cycle is the fallback.
 
-1. `cyn reset` — soft reset via Apollo.
-2. Vendor `0xF0` to the stub interface (what `--force-offline` sends) — stops the
-   keepalive, Apollo reclaims the port.
-3. Vendor `0xec` — emergency reset; the only legal preemption of an active JTAG
-   session.
-4. Hold PROGRAM and press RESET — deterministic, forces the FPGA offline at boot.
+1. Soft reset via Apollo (the `cyn` CLI is retired; use `./dev.py`, `./dev.py --help`; UNVERIFIED which subcommand resets).
+2. Vendor `0xF0` to the stub interface (what `--force-offline` sends) — keepalive stops, Apollo reclaims the port.
+3. Vendor `0xec` — emergency reset; the only legal preemption of an active JTAG session (`0xed` also permitted mid-programming).
+4. Hold PROGRAM, press RESET — forces the FPGA offline at boot.
 5. Power cycle ([#15](https://github.com/awtoau/cynthion-workspace/issues/15)).
 
-## Claims that keep coming back wrong
+## The SoC shell
 
-Each of these has been asserted in this repository and does not survive checking.
-They are kept here because they recur.
-
-| Claim | Actual |
-|---|---|
-| "The power monitor is an INA3221 or similar" | **PAC1954-1.** `PRODUCT_ID` reads `0x7B`, `MANUFACTURER_ID` `0x54`, read from silicon by two independent paths. |
-| "The ECP5 has 12,288 LUT4s" | **20,143 have been placed, routed and verified** on a 24,288-LUT die. |
-| "The HyperRAM is 4 MiB" (from "64 Mbit") | **8 MiB.** 64 Mbit ÷ 8 = 8 MiB. Three successive wrong explanations came from that one arithmetic slip. |
-| "Both FUSB302Bs could share a bus" | They are both at `0x22`. They cannot. |
-| "USB VID:PID `1d50:615b` for everything" | Apollo is **`1d50:615c`**; only gateware is `615b`. |
-| "The Apollo bootloader is `1d50:60e6`" | Saturn-V uses **`1d50:615c`**, the same ID as Apollo firmware. `60e6` appears nowhere in the tree. |
-| "`1d50:615b` means the board is not ready for DFU flashing" | It means gateware is running. A `0xF0` advertiser-stop or `--force-offline` handoff recovers the port. Distinguishing DFU from Apollo firmware needs the **interface descriptor**, not the PID. |
-| "Subclass `0x10` = analyzer, `0x20` = moondancer" | Correct but incomplete — it omits **`0x00` = Apollo stub / flash bridge**, which is the subclass the handoff path actually matches on. |
-| "At boot Apollo holds the port and the FPGA is in reset" | **Inverted.** Normal boot reconfigures the FPGA and hands it the port. Apollo only holds it when PROGRAM is pressed at boot. |
-| "Configuration completing is what makes Apollo cede CONTROL" | Ownership is driven **continuously** by the FPGA_ADV keepalive, and ceding also requires the host to have sent `0xc2`. |
-| "Hung firmware needs a power cycle" | See the recovery ladder. `0xec` and `0xed` remain permitted even mid-JTAG-programming. |
-| "Apollo has a debug SPI to the FPGA" | The handlers exist but are gated on `_BOARD_HAS_DEBUG_SPI`, which `cynthion_d11` does not define. Those requests STALL. SPI goes via the JTAG ER1/ER2 tunnel. |
-| "`spi.c` uses PA08/PA09/PA10" | Its **comment** says that. The code below muxes PA14/PA15/PA10. PA08 is FPGA_PROGRAM and PA09 is FPGA_ADV. |
-| "ttyACM0/1/2 — three consoles" | Still a plan. `CFG_TUD_CDC` is **1**, so exactly one CDC interface exists. |
-
-## The SoC shell — reaching this hardware from a prompt
-
-The RISC-V SoC (`gateware/soc/top.py`, firmware
-`firmware/cynthion-soc/`) answers a line-oriented shell on **both** its consoles:
-the USB CDC node on AUX, and the Apollo-facing port on the shared JTAG pins.
+The RISC-V SoC ([`gateware/soc/top.py`](../gateware/soc/top.py), firmware [`firmware/cynthion-soc/`](../firmware/cynthion-soc/)) answers a line shell on both consoles: USB CDC on AUX, and the Apollo-facing port on the shared JTAG pins.
 
 ```bash
 python3 scripts/soc_run.py                       # build, load, read the console
 python3 scripts/soc_shell.py help                # the USB console
-python3 scripts/soc_shell.py --port /dev/ttyACM0 help   # the Apollo console
+python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> help   # the Apollo console
 ```
 
-`help` in the shell is the authoritative list; the table below is what each
-command is *for*. Anything hardware-specific is in that chip's note.
+- Address the Apollo console by `/dev/serial/by-id`, never `ttyACM<n>` (enumeration order moves).
+- `help` is the authoritative command list; below is what each is for.
 
 | command | what it reports | chip note |
 |---|---|---|
 | `check` | CPU arithmetic and two known flash words | — |
-| `info` | what this image is, what CPU it is on, what bitstream it is inside | below |
-| `selftest` | runs the CPU, the block RAM and each identity register | below |
-| `flash id`, `flash read <hex>` | the memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories, same verb and same reply | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| `info` | image, CPU, bitstream identity | below |
+| `selftest` | CPU, block RAM, each identity register | below |
+| `flash id`, `flash read <hex>` | memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
+| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
-| `irq` | controller pending/enabled, per-source interrupt counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
-| `time` | the 1 ms CLINT tick: uptime, `mtime`, and what the handler costs | below |
-| `cpu stats` | where the cycles go: busy against idle, IPC, turn length, poll jitter | below |
-| `log [n]` | push *n* deferred events, as an interrupt handler would | below |
-| `board` | every port as a tree: its rail, its PD controller, its PHY | below |
+| `irq` | event-controller pending/enabled, per-source counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md), [`soc-interrupts.md`](soc-interrupts.md) |
+| `time` | 1 ms CLINT tick: uptime, `mtime`, handler cost | below |
+| `cpu stats` | busy against idle, IPC, turn length, poll jitter | below |
+| `log [n]` | push *n* deferred events as an interrupt handler would | below |
+| `board` | every port as a tree: rail, PD controller, PHY | below |
 | `led [colour on\|off\|fabric]` | the six LEDs, the button, PWRDN | — |
-| `i2c [power\|target\|aux]` | scan one of the three I2C buses and identify what answers | below |
-| `power [floor <port> <mA>]` | the four rails, and the change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
-| `phy` | the TARGET USB3343's ULPI registers, plus a walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
-| `typec [init]` | both FUSB302B controllers, their CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
+| `i2c [power\|target\|aux]` | scan one I2C bus and identify what answers | below |
+| `power [floor <port> <mA>]` | the four rails, and change reporting | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
+| `phy` | TARGET USB3343 ULPI registers, walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
+| `typec [init]` | both FUSB302B: CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
 | `load <hex>`, `reset` | stage an image and boot into it | — |
 
-**`info`** prints eight lines: the image (git hash, branch, dirty flag, build
-timestamp), the compiler and target triple, the section sizes and what is left of
-the 63 KiB image region, the boot status the bootloader left behind, `misa`
-decoded, `mstatus`/`mtvec`, the controller's pending and enables, and the gateware.
+### `info`
 
-**Firmware and bitstream are built separately and need never have been built
-together** — `load` replaces the firmware over the console without rebuilding the
-bitstream, which is the point of it. Which pair is running is the HOST's
-question, because the identity is the ECP5's USERCODE and only JTAG reads it:
+- Eight lines: image (git hash, branch, dirty flag, build time); compiler and target triple; section sizes and what is left of the image region; boot status left by the bootloader; `misa` decoded; `mstatus`/`mtvec`; controller pending/enables; gateware.
+- Image region and linker layout: [`firmware/cynthion-soc/memory.x`](../firmware/cynthion-soc/memory.x) (RAM 31 KiB at `0x400`, above the 492-byte bootloader; `.text`/`.rodata` in flash at `0x100B0000`). `.stack` is whatever RAM nothing else claimed; check headroom after any firmware change: `llvm-objdump -h firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/cynthion-soc`.
+- Firmware and bitstream are built separately (`load` replaces firmware without a bitstream rebuild). Which pair runs is the HOST's question: identity is the ECP5 USERCODE, readable only over JTAG.
+  - [`gateware/build_helpers.py`](../gateware/build_helpers.py) stamps it at pack time (`ecppack --usercode`): short hash, bit 31 set for a dirty tree.
+  - [`gateware/usercode_map.py`](../gateware/usercode_map.py) resolves the 32 bits to commit, variant, source digest, part, declared clocks, cache and ISA. One record per bitstream, one index across all.
+  - `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names `stale-bitstream`, `wrong-part`, `declared-clock`; `scripts/soc/soc_probe.py` asserts the same two.
+- The `fabric` line is what only the CPU sees: die temperature and bus fault counters. Its clock check is `sync` COUNTED against the 60 MHz oscillator against `target::TIME_HZ`; `CLOCK MISMATCH` means every derived interval is wrong by that ratio.
+- `misa` reports `rv32im` though the core is generated `--with-rva --with-rvc`: VexiiRiscv hardwires the register. `selftest` runs C and A instructions as counter-evidence; `target::CPU_HAS_*` (generated into the PAC from `cpu/cpu.py` flags) is the other account.
+- `die N C` is a DTR reading, not a measurement: 6-bit code, non-linear code-to-degrees table (FPGA-TN-02210 Table 4.3); the data sheet says "not specifically calibrated for absolute accuracy", no tolerance published.
+- ECP5 gives the firmware no identity: USERCODE, IDCODE and 64-bit TraceID are JTAG-only (no primitive in Lattice `ecp5u.v`, yosys, prjtrellis or nextpnr). IDCODE distinguishes 12F (`0x21111043`) from 25F (`0x41111043`) and is Apollo's to read.
+- Soft-error detection exists in silicon and prjtrellis, but yosys has no `SEDGA` cell and nextpnr never emits the SED config. PLL lock needs no register: `sync` is held in reset until lock.
 
-* `gateware/build_helpers.py` stamps it at pack time (`ecppack --usercode`) —
-  short hash, bit 31 set for a dirty tree.
-* `gateware/usercode_map.py` resolves those 32 bits to the commit, the variant,
-  the source digest, the part, the declared clocks and the cache and ISA the core
-  was generated with. One record beside each bitstream, one index across all.
-* `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names
-  `stale-bitstream`, `wrong-part` or `declared-clock`. `scripts/soc/soc_probe.py`
-  asserts the same two.
+### `selftest`
 
-The `fabric` line of `info` is what only the CPU can see: the die's temperature
-and the bus fault counters. The clock check beside it is `sync` COUNTED against
-the 60 MHz oscillator against `target::TIME_HZ` — `CLOCK MISMATCH` means every
-interval derived from it is wrong by that ratio.
+- One line per item plus a summary. Items: base integer set on non-foldable operands; `M` (signed division, divide by zero); `C` (three compressed instructions, checked to occupy six bytes); `A` (lr/sc, three `amo` forms); block RAM address/data walk between `.bss` and the stack; `rdtime` advances; each 16550 scratch register; fabric window DTR bit; flash known first word; TARGET PHY identity.
+- `A` has its own item because atomics make the cached CPU configuration mandatory: the cacheless Wishbone bridge asserts `!withAmo`; symptom is an illegal instruction from a line that looks like arithmetic.
+- Does not: touch I2C (`power`/`typec` report their cached values), write flash (**bitstream at offset 0**), read side-effect registers (would take an interrupt and never complete it), walk the PHY scratch register (`phy` does, and writes).
+- Only write: block RAM between this image's `.bss` and its stack; never the bootloader's kilobyte at `0x0`. Items a target cannot answer report `skip`, counted apart from passes.
 
-Two lines are worth reading carefully:
+### `board`
 
-* **`misa` reports `rv32im`** on this core while it is generated `--with-rva
-  --with-rvc`. VexiiRiscv hardwires the register; the compressed and atomic
-  instructions the shell executes on every line are the counter-evidence, and
-  `selftest` runs them. `target::CPU_HAS_*`, generated into the PAC from
-  `cpu/cpu.py`'s flags, is the other account.
-* **`die N C` is a DTR reading, not a measurement.** The ECP5's temperature block
-  emits a 6-bit code, and the code-to-degrees table (FPGA-TN-02210 Table 4.3) is
-  not linear. The data sheet says the block "is not specifically calibrated for
-  absolute accuracy" and publishes no tolerance.
-
-**What the ECP5 will not tell the firmware**, each checked rather than assumed:
-USERCODE, IDCODE and the 64-bit TraceID are reachable over JTAG and from nowhere
-in the fabric — there is no primitive for any of them in Lattice's `ecp5u.v`, in
-yosys, in prjtrellis or in nextpnr. **The chip cannot tell the CPU which chip it
-is**, and IDCODE — the field that distinguishes a 12F (`0x21111043`) from a 25F
-(`0x41111043`), which is the question this board raises — is Apollo's to read,
-not the SoC's. Soft-error detection exists in silicon and in prjtrellis, but
-yosys has no `SEDGA` cell and nextpnr's bitstream writer never emits the SED
-configuration, so it cannot be enabled from this flow. PLL lock needs no
-register: the domain generator holds `sync` in reset until the PLL locks, so a
-CPU that is executing has already answered.
-
-**`selftest`** reports one line per item and one summary. It runs the base
-integer set on operands the compiler cannot fold, `M` (including signed division
-and division by zero), `C` (three compressed instructions, checked to occupy six
-bytes — the same answer from 32-bit encodings would prove nothing), `A` (lr/sc
-and three `amo` forms), a block RAM address and data walk over the free space
-between `.bss` and the stack,
-that `rdtime` advances, each 16550's scratch register, the fabric window's DTR
-bit, the flash's known first word, and the TARGET PHY's identity.
-
-`A` has an item of its own because atomics are why the cached CPU configuration
-is mandatory: the cacheless Wishbone bridge asserts `!withAmo`. That is a
-gateware decision the firmware cannot see, and its symptom is an illegal
-instruction from a line that looks like arithmetic.
-
-It deliberately does **not** touch I2C (one owner per device protocol — `power`
-and `typec` report what their drivers cached), does not write flash (**the
-bitstream is at offset 0**), reads no register with a side effect (that would
-take an interrupt from the handler and never complete it), and does not walk the
-PHY's scratch register (`phy` does that, and it writes). The one thing it writes
-is block RAM between this image's `.bss` and its stack, which nothing owns — and
-never the bootloader's kilobyte at `0x0`, which is what recovers a board. Items it
-cannot answer for on a given target report `skip`, and the summary counts them
-separately from the passes.
-**`board`** is the whole board on one screen, so the *relationships* are visible:
-a connector, the rail feeding it, the PD controller watching it and its PHY are
-one branch rather than four unrelated lines.
+One screen so relationships show: connector, rail, PD controller, PHY.
 
 ```
 board  cynthion r1.4  three usb ports, four rails, three phys
@@ -812,104 +453,32 @@ power  pac1954 @10 on the power bus, polled every 50 ms  [sampled 61 ms ago]
      phy        0424:0009 usb3343    linestate se0      [live]
 ```
 
-That capture is kept as it was read. The `typec` rows have since gained a `cc`
-column between the status and the date — `cc none`, `cc cc1`, `cc cc2`, `cc both`
-or `cc ?` for a port whose CC pins were not measured. **The orientation behind it
-is unvalidated on hardware**; see
-[the FUSB302B note](chips/fusb302b-type-c.md#orientation--read-and-not-yet-validated).
+- `typec` rows now carry a `cc` column (`cc none|cc1|cc2|both|?`); orientation is unvalidated on hardware: [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#orientation--read-and-not-yet-validated).
+- Reads no bus: numbers come from caches the 50 ms poller / Type-C interrupt path filled (a live sweep is a dozen I2C transactions and risks the PAC1954 REFRESH window). One live read: TARGET's ULPI window `[live]` (single user, gateware-bounded at 68 µs).
+- Ages: rails are polled, so an old sample means the poller stopped; controllers interrupt on change, so an old confirmation means the port has not moved.
+- Absent is never a number: rail below vSafe0V (800 mV) prints `--` and `off` with the measured mV; current below the port floor prints `--` `no load`; unsampled prints `NOT SAMPLED`; absent PHY reports the gateware timeout. An unplugged rail measures 0.76–0.92 mA of ADC offset.
+- CONTROL is a row shorter (no FUSB302B; PHY is Apollo's). `scripts/soc_test.py` drives `board` under QEMU, which works because it reads no bus.
 
-**It reads no bus.** Every number comes from a cache the 50 ms poller or the
-Type-C interrupt path already filled — a live sweep here would be a dozen I2C
-transactions from the command that touches every device, which is the single most
-likely way to land inside the PAC1954's REFRESH window. The one live read is
-TARGET's ULPI window, marked `[live]`, because "is the PHY there *now*" is what a
-cache cannot answer; it is not the shared bus, it has one user, and the gateware
-bounds it at 68 µs.
+### `power`
 
-**The two ages mean opposite things**, which is why the tree ends by saying so.
-The rails are polled, so an old sample means the *poller* stopped. The
-controllers interrupt on a change, so an old confirmation means the *port* has
-not moved — a value minutes old is still current.
+- Per port: bus volts, current in mA, above/below its own floor. Floor is set in mA, stored in µA; current is signed, the floor compares absolute magnitude.
+- Background poll every 50 ms; prints only when a rail moves by **100 mA or more** or crosses its floor. Background lines go to the **USB console only** (the second port's TX pin is JTAG TMS; firmware never transmits there unbidden).
+- Ports are named (`target_a`, `target_c`, `aux`, `control`), never numbered: PAC channel order is not port order.
 
-**Absent is never printed as a number.** A rail below vSafe0V (800 mV) reads
-`--` and `off`, with the millivolts it measured in brackets; a current below that
-port's floor reads `--` and `no load`; an unsampled rail reads `NOT SAMPLED`; an
-absent PHY reports the gateware's timeout. An unplugged rail on this board
-measures 0.76–0.92 mA of ADC offset, so a small number is exactly what absence
-looks like — which is why absence has to be a word.
+### `irq` and `log`
 
-**CONTROL is a row shorter, and says why.** It has a Type-C connector and no
-FUSB302B — the board fits those to AUX and TARGET only — so its VBUS and CC are
-not visible from the CPU, and its PHY is Apollo's. `scripts/soc_test.py` drives
-this command under QEMU, where every leaf reports what it does not have; that
-works only because the command reads no bus, so the rendering under the emulator
-is the rendering on the board with nothing fed into it.
+- Lists pending/enabled words, a line per source and per Type-C source (per controller, so a climbing `target` with `aux` at zero names the connector). A source missing from `enabled` is masked by the handler and not yet serviced by the main loop.
+- Ends `log  waiting N dropped M`: the deferred log. Handlers record a code and two words; the main loop formats and prints (a printing handler spins on a UART FIFO inside an interrupt: a hang on a level-sensitive source).
+- `dropped`: the ring is bounded and push wait-free, so a storm loses lines rather than stalling. A climbing count means continuous loss; the shell prints `irq log: N event(s) LOST` on noticing.
+- `log [n]` pushes *n* test records (fill/wrap/drop counting, driven under QEMU by `scripts/soc_test.py`); the ring holds 15 records, so `log 20` reports `pushed 15 of 20` (ring is 16 slots in [`events.rs`](../firmware/cynthion-soc/src/events.rs); 15 usable UNVERIFIED).
+- Printing from a handler is a compile error: [`firmware/cynthion-soc/src/irq.rs`](../firmware/cynthion-soc/src/irq.rs) holds a `UartRx` with no transmit method and no `core::fmt::Write`. `scripts/soc/soc_irq_log_check.py` (the `irqlog` check in `scripts/check.py`) covers a sibling module naming `Uart`.
 
-**`power`** reads all four rails on demand and prints, per port, bus volts,
-current in milliamps, and whether that port is above its own floor. Units are
-volts and milliamps throughout; the floor is set in milliamps and stored in
-microamps. Current is signed on every channel; the floor compares its absolute
-magnitude, so equal source and sink currents have the same connected state.
+### `cpu stats`
 
-Separately, the firmware **polls the monitor every 50 ms in the background** and
-prints a line only when a rail moves by **100 mA or more**, or crosses its floor
-in either direction. That threshold is why the console is not a wall of text at
-twenty samples a second, and the floor is why an unplugged port — which measures
-0.76–0.92 mA of ADC offset — does not emit events from noise. Background lines go
-to the **USB console only**: the second port's TX pin is JTAG TMS and this
-firmware never transmits there unbidden.
-
-Ports are named — `target_a`, `target_c`, `aux`, `control` — and never numbered,
-because the PAC's channel order is not the port order anyone would guess.
-
-**`irq`** lists the controller's pending and enabled words, then a line per source and
-a line per Type-C source. The Type-C lines are per controller, not one total: a
-`target` count that climbs while `aux` stays at zero says which connector
-something is happening on. A source missing from `enabled` is one the handler has
-masked and the main loop has not finished servicing.
-
-It ends with `log  waiting N dropped M`. That is the deferred log an
-interrupt handler writes to instead of printing — a handler that prints spins on
-a UART FIFO inside an interrupt, which on a level-sensitive source is a
-hang that presents as a dead CPU. Handlers record a code and two words; the main
-loop formats and prints them.
-
-**`dropped` is the number that matters.** The ring is bounded and the push is
-wait-free, so a storm degrades to lost lines rather than a stalled handler — and
-a queue that quietly discards under exactly the conditions you most want to see
-is worse than no queue. A nonzero count is not by itself a fault (a burst outran
-the shell once); a count that keeps climbing means events are being lost
-continuously. The shell also prints `irq log: N event(s) LOST` when it notices,
-so a loss does not wait for someone to type `irq`.
-
-`log [n]` pushes *n* test records through the same path, which is how fill, wrap
-and drop counting are exercised — including under QEMU, where
-`scripts/soc_test.py` drives it. The ring holds 15 records, so `log 20` reports
-`pushed 15 of 20`.
-
-Printing from a handler is a **compile error**, not a convention:
-`firmware/cynthion-soc/src/irq.rs` holds a `UartRx`, which has no transmit
-method and no `core::fmt::Write`. `scripts/soc/soc_irq_log_check.py` (the `irqlog`
-check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
-cannot stop a sibling module naming `Uart`.
-
-**`cpu stats`** is what the machine is *doing*, where `info` is what it *is*. Three
-lines, from the CPU's own counters and one `rdtime` read:
+What the machine is doing (three lines, from the CPU's own counters and one `rdtime` read):
 
 ```bash
-python3 scripts/soc_shell.py "cpu stats"                 # the USB console
-# The Apollo console, by id. NEVER by ttyACM number: those are assigned in
-# enumeration order and move when anything else is plugged in, so a command
-# naming one addresses whichever device happens to hold that number today.
-python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> "cpu stats"
-```
-
-The shape of it — **numbers illustrative, none of them measured on the board**:
-
-```
-cycles   window 1073741824  busy 0.15%  ipc 0.412
-loop     turns 1874233  mean 572 cycles  worst 141202 cycles
-poll     every 50 ms  polls 24019  worst gap 61 ms
+python3 scripts/soc_shell.py "cpu stats"
 ```
 
 | field | from | says |
@@ -918,135 +487,55 @@ poll     every 50 ms  polls 24019  worst gap 61 ms
 | `busy` | those deltas, split | fraction that did work rather than asked |
 | `ipc` | `minstret` / `mcycle` | instructions per cycle on an in-order cached core |
 | `mean`, `worst` | one turn of the main loop | how long a poller can be kept waiting |
-| `worst gap` | `rdtime` at each poll | the largest interval the 50 ms poll achieved |
+| `worst gap` | `rdtime` at each poll | largest interval the 50 ms poll achieved |
 
-**"% CPU" had to be defined before it could be measured.** There is no scheduler
-and nothing is ever descheduled, so a utilisation figure taken the usual way
-reads 100% forever. The split here is *useful work against spinning*: a turn of
-the main loop is **busy** if something during it called `metrics::busy`, and
-**idle** otherwise — an idle turn is one that polled `irq::pop`, found nothing,
-and came back. Marked busy by `irq::pop` (a byte arrived), the 50 ms power poll,
-`events::drain`, `typec::service`, `uart::report_errors`, and the idle
-re-banner.
-
-**The 1 ms tick is deliberately not one of them.** Its cycles land in the idle
-column, because the question this number exists to answer is whether an RTOS
-would fit — and an RTOS brings its own tick. The amount is not unaccounted for:
-`time` prints the handler's worst cost and its rate.
-
-**Measured under QEMU: an untouched shell is 0.15% busy.** 99.85% of cycles are
-`irq::pop` returning `None`. That is the figure to weigh against RTIC or Zephyr,
-with the caveat that TCG is not the board — `mcycle` there advances once per
-instruction, so IPC reads 1.000 and means nothing, and the board's cache misses
-and Wishbone stalls are absent by construction. `scripts/soc_test.py` asserts the
-split attributes work to busy and that the poll is meeting its interval; the
-numbers it prints are on its own transcript.
-
-The counters accumulate into a **window** that is halved when it reaches 2^30
-cycles — 17.9 s at 60 MHz. Halving preserves every ratio exactly, so what is
-reported is a lifetime figure weighting the recent past. The alternative was a
-64-bit divide, which on rv32 is `__udivdi3`: 912 bytes, and the same reason
-`time` prints a raw `mtime`.
-
-**What the core has, checked against the generated Verilog rather than assumed**
-— an undecoded CSR read traps rather than reading zero, so this is not a
-detail:
+- No scheduler, so usual utilisation reads 100%. Split here is useful work against spinning: a main-loop turn is **busy** if something called `metrics::busy`, else **idle** (it polled `irq::pop`, found nothing).
+- Marked busy by: `irq::pop` (a byte arrived), the 50 ms power poll, `events::drain`, `typec::service`, `uart::report_errors`, the idle re-banner.
+- The 1 ms tick is not marked busy: its cycles land in idle (the question is whether an RTOS would fit, and an RTOS brings its own tick). `time` prints the handler's worst cost and rate.
+- The window is halved at 2^30 cycles (17.9 s at 60 MHz): ratios preserved, lifetime figure weighting the recent past.
+- Core CSRs, checked against the generated Verilog (an undecoded CSR read traps):
 
 | CSR | in this core | why |
 |---|---|---|
 | `mcycle`, `minstret`, and high halves | **yes** | `--with-rdtime` adds `zicntr`, which instantiates `PerformanceCounterPlugin` |
 | `mcountinhibit` | yes | same plugin; unused here |
-| `mhpmcounter3..31`, `mhpmevent3..31` | **decode, read hardwired zero** | allocated as WARL-zero dummies while `additionalCounterCount` is 0 |
+| `mhpmcounter3..31`, `mhpmevent3..31` | **decode, read hardwired zero** | WARL-zero dummies while `additionalCounterCount` is 0 |
 
-So `--with-rdtime` in `gateware/soc/cpu/cpu.py` gates `rdtime` and these
-counters together, and `info`'s `NO RDTIME` line is the one warning for both.
-**Cache miss counts are not available**: they would live in the HPM counters,
-and reaching them needs `--performance-counters N` added to `GENERATE_FLAGS`, a
-new bitstream, and a board to check it on. Reading one today is not a trap and
-not a measurement.
+- `--with-rdtime` in [`gateware/soc/cpu/cpu.py`](../gateware/soc/cpu/cpu.py) gates `rdtime` and these counters together; `info`'s `NO RDTIME` line warns for both.
+- Cache miss counts are unavailable: they need `--performance-counters N` in `GENERATE_FLAGS`, a new bitstream, and a board. Not built (each a counter + CSR): Wishbone stall cycles, UART FIFO high-water marks, I2C bus occupancy, assert-to-handler-entry latency.
 
-Still only gateware can answer these, and none of them is built: Wishbone stall
-cycles (what the response register in `18c1fa5` costs in service), UART FIFO
-high-water marks, I2C bus occupancy, and assert-to-handler-entry latency.
-Each is a counter and a CSR.
+### `i2c <bus>`
 
-**`i2c <bus>`** names the bus rather than remembering one. There is a single I2C
-controller behind a two-bit select driving three pin-sets — forced by both
-FUSB302Bs answering `0x22` — and nothing in a reply says which bus it came from,
-so a stale select gives a plausible answer from the wrong chip rather than an
-error. The select resets to the power monitor, so the rails are readable before
-firmware writes anything.
+Names the bus rather than remembering one: one controller, 2-bit select, three pin-sets; replies do not say which bus answered, so a stale select gives a plausible answer from the wrong chip. Select resets to the power monitor.
 
-**`typec`** reports both controllers live: device id, VBUS, the CC voltage band,
-and the raw `int`/`fault` lines, and how many interrupts each port has been
-serviced for. A state change is *not* polled — the controllers are configured at
-boot to interrupt, and **each `int` line has its own source**, so the pending bit
-says which controller asserted. The lines are levels, so the handler masks that
-one source and records which port; the main loop clears that one device and
-re-enables that one source. Clearing is a millisecond of I2C, which is why the
-handler defers rather than doing it. A `type-c <port>: vbus …, <cc>` line means
-that port's state changed and what it changed to. `fault` is deliberately outside
-the interrupt and polled at 50 ms: it means something different, and nothing here
-can clear it — it drops when the device's fault does.
+### `typec`
 
-**The shell is an image, not the resident half, and that is what its budget
-rests on.** `memory.x` puts it at `0x0400` with 63 KiB, above the 492-byte
-bootloader that owns the reset vector. A command is still not free — it is `.text`,
-its format strings are `.rodata`, and what is left over is the *stack*, which the
-linker sizes last and silently — but it costs space in the half that is meant to
-grow rather than in the half a board is recovered with.
+- Both controllers live: device id, VBUS, CC voltage band, raw `int`/`fault`, serviced-interrupt counts.
+- State changes are interrupt-driven, not polled; **each `int` line has its own source**. The handler masks that source and records the port; the main loop clears that device (~1 ms of I2C, hence deferred) and re-enables the source. A `type-c <port>: vbus …, <cc>` line reports a change.
+- `fault` is polled at 50 ms and outside the interrupt; it clears when the device's fault does.
 
-With `board`, `info`, `selftest`, `time` and `stats` all present it measures
-`.text` 25,996 + `.rodata` 9,976 + `.bss` 1,460 = 37,432 bytes, leaving **27,048
-free** of 64,512. `stats` and the collection behind it account for 1,088 of
-that — 772 of code, 260 of format strings and 48 of counters.
-Under the previous 32 KiB split the same firmware was over by 3,748 bytes with no
-stack at all and did not link. Two reclamations from that period stay because they
-were genuine deletions of waste: `.eh_frame`, ~1800 bytes of unwind tables lld was
-placing in RAM for a target that cannot unwind (`/DISCARD/` in both linker
-scripts), and `opt-level = "z"` in place of `"s"`, another 1612.
+### `phy`
 
-Check the headroom after any firmware change with:
-
-```bash
-llvm-objdump -h firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/cynthion-soc
-```
-
-`.stack` is the number that matters — it is whatever RAM nothing else claimed.
-
-**`phy`** reports the TARGET PHY's vendor and product IDs, function and OTG
-control, line state, and a walking-bit test across the scratch register. It reads
-**`target_phy` only**: AUX carries the USB console the answer travels over and
-CONTROL is shared with Apollo, so a register master on either would corrupt a
-link something else is using. An absent PHY reports `no answer from the PHY`
-after a 68 µs gateware timeout, not zeros.
+TARGET PHY vendor/product IDs, function and OTG control, line state, walking-bit test over the scratch register. **`target_phy` only** (AUX carries the console; CONTROL is shared with Apollo). Absent PHY reports `no answer from the PHY` after a 68 µs gateware timeout.
 
 ## Also worth knowing
 
-- **`int` (T6)** is the FPGA_ADV keepalive and sideband line, not a
-  general-purpose interrupt. It is declared `PULLMODE="UP"` because the ECP5
-  defaults to pull-*down*, which fights Apollo's PA09 pull-up —
-  [`chips/cynone-sideband.md`](chips/cynone-sideband.md#1-the-wire).
-- **D+/D- are swapped on the board** and corrected inside the PHYs by a vendor
-  register write the platform performs. See
-  [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md).
-- **UTi261M** — UNI-T thermal imaging camera, `0bda:5830` (Realtek UVC), the target
-  device used for facedancer proxy work: attached to TARGET-C, proxied out through
-  TARGET-A.
+- **`int` (T6)** is the FPGA_ADV keepalive and sideband line, `PULLMODE="UP"` (ECP5 defaults pull-*down*, which fights Apollo's PA09 pull-up): [`chips/cynone-sideband.md`](chips/cynone-sideband.md#1-the-wire).
+- **D+/D- are swapped on the board**, corrected inside the PHYs by a vendor register write the platform performs: [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md).
+- **UTi261M** — UNI-T thermal camera, `0bda:5830` (Realtek UVC), the facedancer proxy target: TARGET-C in, TARGET-A out.
 
 ## Where else to look
 
 | topic | doc |
 |---|---|
-| every alternative weighed, and why, in tables | [`architecture.md`](architecture.md) |
-| the FPGA_ADV wire — protocol, rate, port ownership | [`chips/cynone-sideband.md`](chips/cynone-sideband.md) |
-| what we take from upstream and what we replaced | [`upstream-boundary.md`](upstream-boundary.md) |
-| making the test gateware reusable by the CPU | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
-| how fast the soft CPU can be clocked on this part | [`soc-clocking.md`](soc-clocking.md) |
-| flash, HyperRAM, USB and BRAM in depth | [`chips/ecp5/`](chips/ecp5/) |
-| Apollo firmware — reviews, races, DFU, serial, configure speed | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
-| the soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
+| alternatives weighed | [`architecture.md`](architecture.md) |
+| FPGA_ADV wire | [`chips/cynone-sideband.md`](chips/cynone-sideband.md) |
+| upstream vs replaced | [`upstream-boundary.md`](upstream-boundary.md) |
+| reusable test gateware | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
+| clock plan | [`soc-clocking.md`](soc-clocking.md) |
+| flash, HyperRAM, USB, BRAM | [`chips/ecp5/`](chips/ecp5/) |
+| Apollo firmware | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
+| soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |
 | workspace CLI | `./dev.py --help`, or `./dev.py describe` for JSON |
-
-- [Handing work to Codex](codex-agent.md) — project-specific clauses and track record; canonical setup and brief rules live in `awto-dan/docs/codex/`
+| Codex | [`codex-agent.md`](codex-agent.md) |

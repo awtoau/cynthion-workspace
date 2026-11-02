@@ -606,15 +606,10 @@ deliberate exception and §8 states what it costs and what bounds it.
 **Leaving either driver permanently enabled.** Both ends enable their driver only
 while pulling low (§1).
 
-## 13. Where earlier documents were wrong
+## 13. Settled facts
 
-Recorded so a reader who finds the old text elsewhere — in git history, in a
-docstring, in an issue — knows which way it was settled.
-
-| claim | where it appeared | settled |
-|---|---|---|
-| Push-pull while driving; open drain rejected because the RC would set the rate ceiling | `debris/docs/fpga-adv-sideband.md` §1 and §11 | **Wrong.** Open drain shipped at both ends ([#88](https://github.com/awtoau/cynthion-workspace/issues/88)) and the soak refuted the RC argument. §1. |
-| `ApolloAdvertiser` is a **25 Hz** square wave | `sideband_advertise.py` docstring, `architecture.md` 25, `upstream-boundary.md` | **50 Hz.** `repos/apollo/apollo_fpga/gateware/advertiser.py:42-48` sets `half_period` to 10 ms and toggles each time, so the period is 20 ms. The accompanying "low for half of every 20 ms" was always right, and so is `hardware.md`'s "50 Hz, toggles every 10 ms". |
-| `fpga_adv_transceive()` at `fpga_adv.c:437` | `debris/docs/fpga-adv-sideband.md` §3.3, `architecture.md` 24 | The function is `fpga_adv_command()` at `:418`; `:437` is the mode guard. |
-| `scripts/sideband_soak.py` and `sideband_contention_probe.py` are not in the tree | `debris/docs/sideband-review.md` §5 | They were retired to `debris/scripts/` in `25087b8`, not lost. The measurements they produced remain reproducible from there. |
-| Baud is 115200 | [#209](https://github.com/awtoau/cynthion-workspace/issues/209), describing firmware `a7b8283` | Correct **for that firmware**. `b48d4bf` raised both ends to 230400; the two must move together. |
+- `ApolloAdvertiser` is a **50 Hz** square wave (`repos/apollo/apollo_fpga/gateware/advertiser.py:42-48`: `half_period` 10 ms, toggles each time).
+- Open drain shipped at both ends ([#88](https://github.com/awtoau/cynthion-workspace/issues/88)); see §1.
+- The Apollo-side command function is `fpga_adv_command()` at `fpga_adv.c:418` (`:437` is the mode guard).
+- `sideband_soak.py` and `sideband_contention_probe.py` live in `debris/scripts/` (retired in `25087b8`).
+- Baud is 230400 at both ends since `b48d4bf` (115200 in firmware `a7b8283`, [#209](https://github.com/awtoau/cynthion-workspace/issues/209)); the two must move together.
