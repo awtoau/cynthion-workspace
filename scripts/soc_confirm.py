@@ -34,7 +34,7 @@ is the whole value.
 | `ok`                | the shell answered                            | a reply to a CR |
 | `blank-fpga`        | configure left no design                      | ECP5 on the chain, status DONE clear |
 | `stolen-port`       | another process is eating the console         | /proc holders of the tty, named |
-| `wrong-port`        | design running, its console is on no bus      | DONE set (or the JTAG-pin UART answers) with `1d50:6180` absent |
+| `wrong-port`        | design running, its console is on no bus      | DONE set (or the JTAG-pin UART answers while DONE is unread) with `1d50:6180` absent |
 | `control-unplugged` | console on the bus, Apollo is not             | `6180` present, `615c` absent |
 | `board-absent`      | nothing of this board is on USB               | neither ID present |
 | `stock-apollo`      | Apollo runs upstream's firmware, not the fork | firmware string is a bare release tag |
@@ -404,7 +404,11 @@ def diagnose(ev: Evidence) -> Verdict:
             "  and the CONTROL cable before blaming anything that was changed.",
         ])
 
-    if ev.jtag_console and ev.jtag_console.strip():
+    # The part's own DONE outranks the UART: a reply can echo for ~2 s after the
+    # FPGA is forced offline (#434).
+    part_blank = (ev.status is not None and ev.idcode not in (None, 0, 0xFFFFFFFF)
+                  and not ev.status & STATUS_DONE)
+    if ev.jtag_console and ev.jtag_console.strip() and not part_blank:
         return Verdict("wrong-port", "a design is running; its console is on no bus", [
             "  the JTAG-pin UART (Apollo's own CDC node) answered, so the design",
             "  is alive -- but 1d50:6180 is absent, so nothing can read AUX:",
@@ -418,6 +422,8 @@ def diagnose(ev: Evidence) -> Verdict:
             "  but 1d50:6180 is not on the bus. The AUX cable is unplugged, is in",
             "  TARGET, or this bitstream presents on another port. Apollo is",
             "  CONTROL; the console is AUX (gateware/usb_ids.py).",
+            "  Or the part fell back to its flash gateware, which presents no",
+            "  1d50:6180 either; only USERCODE against the build tells (#398).",
         ]))
 
 
@@ -639,10 +645,10 @@ def gather(*, node=None, jtag=True, expect="shell", expected=None):
         if (ev.reply and ev.reply.strip()) or ev.thieves:
             return ev
     if not ev.console_usb and ev.apollo and jtag:
-        if expect == "shell":
+        # DONE first (#434); the UART only when the part would not answer.
+        ask_jtag(ev)
+        if expect == "shell" and ev.status is None:
             ask_jtag_console(ev)
-        if not (ev.jtag_console and ev.jtag_console.strip()):
-            ask_jtag(ev)
     return ev
 
 

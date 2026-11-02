@@ -127,7 +127,7 @@ GATEWARE_BUILT = BUILD / "gateware-digest.txt"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
-from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
+from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS, nextpnr_opts  # noqa: E402
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E402
                                              run_bounded)
@@ -137,7 +137,7 @@ from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E4
 # identical without it (#361) -- so a build whose Fmax is evidence drops it.
 # `fast_build_env` documents an `AMARANTH_nextpnr_opts` override that never
 # worked from here: the build command below sets that variable itself (#429).
-PNR_OPTS = NEXTPNR_OPTS
+PNR_OPTS = nextpnr_opts()
 
 # The recorder every build goes through. Area, timing and the full configuration
 # land in Postgres from one unconditional call below, so there is no way to
@@ -691,7 +691,7 @@ def main():
     # visible only in the environment of whoever started it.
     # Before the digest is taken, because it is one of the digest's inputs.
     global PNR_OPTS
-    PNR_OPTS = NEXTPNR_OPTS
+    PNR_OPTS = nextpnr_opts()
     if args.no_parallel_refine:
         PNR_OPTS = " ".join(opt for opt in PNR_OPTS.split()
                             if opt != "--parallel-refine")

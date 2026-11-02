@@ -33,11 +33,31 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-HISTORY = ROOT / "tmp" / "build_times.json"
 
-# Fraction added to the slowest observed run. 25% absorbs ordinary variation --
-# a loaded machine, a cold cache -- without tolerating a genuine hang.
-MARGIN = 0.25
+
+def main_tree(root=ROOT):
+    """The MAIN working tree, so every worktree shares one history (#435).
+
+    A per-worktree history leaves every family at FIRST_RUN_LIMIT forever.
+    """
+    try:
+        common = subprocess.run(
+            ("git", "rev-parse", "--path-format=absolute", "--git-common-dir"),
+            cwd=root, capture_output=True, text=True, check=True, timeout=10)
+        main = Path(common.stdout.strip()).parent
+        if (main / "scripts").is_dir():
+            return main
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        pass
+    return Path(root)
+
+
+HISTORY = main_tree() / "tmp" / "build_times.json"
+
+# Fraction added to the slowest observed run: limit = 3x the slowest. History is taken on an
+# idle box; the shared dev box runs several agents, and 25% killed healthy sims. A hang is
+# caught by the stall timeout, not by this backstop (house rule, awto-dan#53).
+MARGIN = 2.0
 
 # Ceiling for a family with no recorded history, in seconds. Generous because
 # nothing is known yet; it is replaced by measurement after one successful run.
@@ -60,7 +80,10 @@ def _load():
 
 def _save(history):
     HISTORY.parent.mkdir(parents=True, exist_ok=True)
-    HISTORY.write_text(json.dumps(history, indent=2, sort_keys=True))
+    # Atomic: worktrees now share this file, and a torn read discards it all.
+    scratch = HISTORY.with_name(f"{HISTORY.name}.{os.getpid()}")
+    scratch.write_text(json.dumps(history, indent=2, sort_keys=True))
+    os.replace(scratch, HISTORY)
 
 
 def limit_for(family, floor=None):
