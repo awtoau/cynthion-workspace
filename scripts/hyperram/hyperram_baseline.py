@@ -265,11 +265,29 @@ def main():
     pr.add_argument("--tap-step", type=int, default=4)
     pr.add_argument("--direction", type=int, default=0)
     sub.add_parser("clocks")
+    pc = sub.add_parser("case", help="one run on what is loaded: MODE:BURST:TOTAL[:START[:WAIT[:XOR]]] ...")
+    pc.add_argument("--ck", type=float, required=True)
+    pc.add_argument("--tap", type=int)
+    pc.add_argument("--direction", type=int, default=0)
+    pc.add_argument("specs", nargs="+")
     args = ap.parse_args()
     LOG.parent.mkdir(parents=True, exist_ok=True)
 
     if args.cmd == "clocks":
         print(reachable(50, 200))
+        return 0
+    if args.cmd == "case":
+        b = Board()
+        if b.rd_stable("ID") != APPLET_ID:
+            say("wrong applet loaded")
+            return 1
+        if args.tap is not None:
+            set_delay(b, args.tap, args.direction)
+        for spec in args.specs:
+            given = [int(x, 0) for x in spec.split(":")]
+            mode, burst, total, start, wait, xor = given + [0, None, 0][len(given) - 3:]
+            run_case(b, args.ck, mode=mode, burst=burst, total=total, start_addr=start,
+                     wait=wait, xor=xor, label=f"case {spec}")
         return 0
     if args.cmd == "build":
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:

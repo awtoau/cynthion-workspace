@@ -67,7 +67,7 @@ class Device:
         self.cs_low = 0
         self.cs_low_max = 0
 
-    def step(self, cs, ck_en, dq_o, rwds_o, rwds_oe):
+    def step(self, cs, ck_en, dq_o, rwds_o):
         """One CK cycle; returns the two half-cycle (dq, rwds) samples the device drives."""
         quiet = [(0, 0), (0, 0)]
         if not cs:
@@ -99,7 +99,7 @@ class Device:
                 else self.mem.get(self.addr, 0x5A5A)
             self.addr += 1
             return [(word >> 8, 1), (word & 0xFF, 0)]
-        if rwds_oe and rwds_o == 0:
+        if rwds_o == 0:
             self.mem[self.addr] = dq_o
         self.addr += 1
         return quiet
@@ -116,17 +116,19 @@ def simulate(cases, r_halves):
     results = []
 
     async def board(ctx):
-        out_q = collections.deque([(0, 0, 0, 0, 0)] * LP)
-        cs_q = collections.deque([0] * LCS)
+        out_q = collections.deque([(0, 0, 0)] * LP)
+        cs_q = collections.deque([(0, 0, 0)] * LCS)
         ret_q = collections.deque([(0, 0)] * r_halves)
         in_q = collections.deque([((0, 0), (0, 0))] * LI)
         while True:
-            out_q.append((ctx.get(p.cs), ctx.get(p.ck_en), ctx.get(p.dq_o),
-                          ctx.get(p.rwds_o), ctx.get(p.rwds_oe)))
-            cs_q.append(ctx.get(p.cs))
-            _, ck_en, dq_o, rwds_o, rwds_oe = out_q.popleft()
-            cs = cs_q.popleft()
-            for half in dev.step(cs, ck_en, dq_o, rwds_o, rwds_oe):
+            out_q.append((ctx.get(p.ck_en), ctx.get(p.dq_o), ctx.get(p.rwds_o)))
+            cs_q.append((ctx.get(p.cs), ctx.get(p.dq_oe), ctx.get(p.rwds_oe)))
+            ck_en, dq_o, rwds_o = out_q.popleft()
+            cs, dq_oe, rwds_oe = cs_q.popleft()
+            # Undriven pins read 0; an undriven RWDS is a mask (worst case).
+            dq_o = dq_o if dq_oe else 0
+            rwds_o = rwds_o if rwds_oe else 3
+            for half in dev.step(cs, ck_en, dq_o, rwds_o):
                 ret_q.append(half)
             sample = (ret_q.popleft(), ret_q.popleft())
             in_q.append(sample)
@@ -147,6 +149,7 @@ def simulate(cases, r_halves):
             ctx.set(eng.xor, case.get("xor", 0))
             ctx.set(eng.wait, case.get("wait", WAIT_DEFAULT))
             ctx.set(eng.reg_addr, 0x800)
+            ctx.set(eng.start_addr, case.get("start", 0))
             ctx.set(eng.go, 1)
             await ctx.tick("sync")
             ctx.set(eng.go, 0)
@@ -206,6 +209,7 @@ def main():
         dict(mode=MODE_READ, burst=mb, total=TOTAL, tag="read after wrong-latency write"),
         dict(mode=MODE_WRITE, burst=mb, total=TOTAL, tag="rewrite"),
         dict(mode=MODE_READ, burst=16, total=TOTAL, tag="read burst 16"),
+        dict(mode=MODE_READ, burst=350, total=1024, start=6, tag="read unaligned start"),
     ]
     for r_halves in (6, 7):
         log.info("round trip %d half-cycles (%s)", r_halves,
