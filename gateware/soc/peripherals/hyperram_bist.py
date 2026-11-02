@@ -23,8 +23,7 @@ counters and prints a row. That removes three defect classes by construction:
   * no host in the measurement loop -- the CPU commands the pass and prints
     per cell, at ~2 ms each;
   * no Wishbone decoder, cache, arbiter or `RegisteredResponse` bubble between
-    the engine and the part -- so the unfinished SoC DQS write path (#186, #212)
-    is not in the way and the matrix can be produced without fixing it first;
+    the engine and the part;
   * the CPU can print per cell, so a hang names the cell it hung on. The
     gateware sweep died at cell 0 with no way to see why (#210).
 
@@ -66,13 +65,7 @@ class HyperRAMBist(wiring.Component):
     Parameters
     ----------
     ck_mhz : float
-        The **device** clock, not the fabric one. The DQS PHY emits two CK per
-        `hr` cycle, so the domain generator halves it; taking the device number
-        here means a caller cannot get that factor of two wrong.
-    dqs : bool
-        Which PHY. Also selects the comparator width -- 32 bits on the DQS path,
-        16 on the other -- because a 16-bit comparator on a 32-bit path scores
-        half of every word as correct by not looking at it.
+        The **device** clock, which is `hr`.
     negative_control : bool
         Build the deliberately-wrong variant. A cell that passes without its
         control having fired is recorded as *no result*, not as a pass.
@@ -81,10 +74,9 @@ class HyperRAMBist(wiring.Component):
         controller. The engine requests no pins of its own.
     """
 
-    def __init__(self, *, ck_mhz, port, dqs=True, negative_control=False,
+    def __init__(self, *, ck_mhz, port, negative_control=False,
                  addr_width=7, domain="hr"):
         self.ck_mhz = ck_mhz
-        self.dqs = dqs
         self.negative_control = negative_control
         self._domain = domain
 
@@ -114,8 +106,7 @@ class HyperRAMBist(wiring.Component):
         # `port`: the pins, the PHY and the controller are the SoC's, behind a
         #   mode mux.
         self._engine = HyperRAMCeiling(
-            sync_mhz=ck_mhz / 2 if dqs else ck_mhz,
-            dqs=dqs, negative_control=negative_control,
+            sync_mhz=ck_mhz, negative_control=negative_control,
             transport=self._transport, own_clocks=False, own_leds=False,
             own_dtr=False, port=port)
 

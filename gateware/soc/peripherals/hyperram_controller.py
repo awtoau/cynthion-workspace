@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# HyperBus controller, non-DQS: luna's, vendored, with two defects fixed.
+# HyperBus controller: luna's, vendored, with two defects fixed.
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # Vendored from luna-usb 0.2.3, luna/gateware/interface/psram.py, which is
@@ -10,18 +10,10 @@
 """
 `HyperRAMInterface`, vendored so the two defects in it can be fixed.
 
-## Why this one too
+## What this is
 
-`hyperram_dqs_controller.py` was vendored first, for the same two defects. This
-is the OTHER path -- 2:1 gearing, 16 bits per `sync` cycle, upstream's
-`HyperRAMPHY` beneath it -- and it matters more than the order suggests:
-
-  * **It is what the SoC ships.** `bootram.py` builds the non-DQS path by
-    default, so the fixes were in the experimental controller and not in the one
-    the board runs.
-  * **It is the baseline every DQS result is read against.** #205 puts the two
-    side by side, and a comparison in which only one side keeps tCSHI is not a
-    comparison of the two paths. The instrument has to be the same on both.
+2:1 gearing, 16 bits per `sync` cycle, upstream's `HyperRAMPHY` beneath it.
+`bootram.py` builds it, so the fixes below are in the controller the board runs.
 
 Four harnesses drive it as well -- `stress`, `identify`, `regfuzz` and `fifo` --
 and `docs/chips/hyperram/bist-plan.md` names `stress` as the validated
@@ -59,7 +51,7 @@ strobe over a tristate bus. The LONG count is floored at
 `min_read_latency_clocks` on reads; writes are untouched. (#353)
 
 `HIGH_LATENCY_CLOCKS` is a constructor argument rather than a class constant, so
-the count can be swept without a source edit, as it can on the DQS side.
+the count can be swept without a source edit.
 
 **Every timing parameter is a runtime input.** `latency_clocks`,
 `low_latency_clocks`, `fixed_latency`, `recovery_cycles`, `burst_cycles`,
@@ -80,17 +72,14 @@ Everything else is upstream's, deliberately:
 
   * The **clock-inversion path** -- `last_half_rwds`/`last_half_dq`, and the
     `Cat(rwds.i[1], last_half_rwds) == 0b10` branch that reassembles a word split
-    across two cycles. It is the thing this controller does that the DQS one
-    does not, it is untouched, and nothing here has measured which of the two
-    branches the board takes.
+    across two cycles. It is untouched, and nothing here has measured which of the two branches the
+    board takes.
   * The **`- 2`** on both latency loads. Upstream writes
     `HIGH_LATENCY_CLOCKS - 2` and gives no reason; every figure this project has
-    recorded on the non-DQS path was taken with it, so changing it would move the
+    recorded was taken with it, so changing it would move the
     baseline in the same commit that fixes it. `high_latency_clocks` is the knob
     for anyone who wants to sweep it.
-  * The **PHY**. `HyperRAMPHY` elaborates on r1.4 and works, which is why
-    `docs/upstream-boundary.md` splits the DQS path at the PHY and this one does
-    not.
+  * The **PHY**. `HyperRAMPHY` elaborates on r1.4 and works.
 """
 
 import math
@@ -213,7 +202,7 @@ class HyperRAMController(Elaboratable):
                                    wrong. `HyperRAMPHY` emits one CK per `sync` cycle, so
                                    on this path it is also CK.
             high_latency_clocks -- Override the fixed-latency count. Upstream's constant
-                                   is 14 and every non-DQS measurement in this repository
+                                   is 14 and every measurement in this repository
                                    was taken with it, so it is the default. It is the
                                    RESET value of `latency_clocks`, not a hard wiring.
             max_latency_clocks  -- Ceiling for `latency_clocks`, which sizes the signal
@@ -267,10 +256,7 @@ class HyperRAMController(Elaboratable):
         # a CS# that falls at 4 -- a deselected, undriven bus. (#338)
         self._rwds_sample_cycle = phy_round_trip_cycles + 2
         # WHICH cycle takes the sample, at run time, and whether it ever found
-        # RWDS asserted. The DQS twin grew both for #540; this one needs them
-        # for the same reason and on the same board -- the shipping variant is
-        # `dqs0`, so a bit that only exists on the DQS path reports nothing
-        # where it is actually being read.
+        # RWDS asserted (#540).
         self.rwds_sample_at = Signal(4, init=self._rwds_sample_cycle)
         self.rwds_asked     = Signal()
         # Floor on the LONG count, for READS only -- see `min_read_latency_clocks`.
@@ -473,7 +459,7 @@ class HyperRAMController(Elaboratable):
         xact_age = Signal(4)
         sample_now = Signal()
         rwds_asks  = Signal()
-        # Registered where it arrives, as the DQS twin: it comes from a CSR in
+        # Registered where it arrives: it comes from a CSR in
         # another domain and is a configuration, never moved inside a pass.
         sample_at  = Signal(4)
         m.d.sync += sample_at.eq(self.rwds_sample_at)

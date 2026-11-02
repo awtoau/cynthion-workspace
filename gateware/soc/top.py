@@ -126,7 +126,7 @@ from peripherals.stream_buffer import StreamBuffer
 from bus.wishbone_pipe import RegisteredResponse
 from bus.fault         import BusFault, worst_ack_cycles
 from peripherals.flash_cdc import ClockCrossedPHY
-from bootram import BootRAM, HYPERRAM_LATENCY_CLOCKS
+from bootram import BootRAM
 from peripherals.hyperram_probe import HyperRAMProbe
 from peripherals.flash import (FairSPIControlPortCrossbar, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
@@ -722,31 +722,6 @@ FLASH_PHY_FAST = False
 # has run byte-exact at 144 MHz SCK on this board (#100).
 FLASH_FULL_SCK = False
 
-# Use the DQS HyperRAM PHY rather than the non-DQS one. See #92.
-#
-# ONE FLAG FOR ONE PHY. The staging path and the BIST engine share the pins, the
-# PHY and the controller (`hyperram_share.py`), so this is the whole design's
-# choice and #431's instrument/product mismatch cannot exist.
-#
-# THE ONLY ROUTE PAST ~52 MB/s. `HyperRAMPHY` makes double-rate output from its
-# own domain, so CK is `hr` there; `HyperRAMDQSPHY` uses the ECP5's gearing
-# primitives with an ECLK at twice `hr`, so the same fabric closure buys twice
-# the CK.
-#
-#   * DQS needs an ECLK at 2x, which `hyperram_clocks.py` supplies as `hr_fast`;
-#   * its data path is 32 BITS per beat where the non-DQS one is 16, and
-#     `bootram.py`'s `wide`/`second_word` assembly follows this flag.
-#
-# DEFAULTS OFF, and that is about booting. One bitstream stages firmware through
-# this path, and the SoC-side DQS write path has never been on silicon (#186,
-# #212) while the non-DQS one is what every boot to date has used. The ceiling
-# work sets `CYNTHION_HYPERRAM_DQS=1`, which is also #432's definition of done:
-# DQS at CK 160 with the same bitstream able to boot a staged image.
-#
-# DQS also needs READCLKSEL calibrated (#148); the sweep harness exists and has
-# never been run on silicon.
-HYPERRAM_DQS = variant.flag("CYNTHION_HYPERRAM_DQS")
-
 # Device CK, in MHz. Independent of SYNC_MHZ: the part runs off the second PLL
 # (`hyperram_clocks.py`), which refuses a value it cannot reach exactly rather
 # than silently rounding to one it can.
@@ -756,8 +731,8 @@ HYPERRAM_DQS = variant.flag("CYNTHION_HYPERRAM_DQS")
 #
 # COMMA-SEPARATED for a runtime-selectable rung -- `CYNTHION_HYPERRAM_CK_MHZ=100,120`
 # builds both into one bitstream and the CPU picks one through
-# `peripherals/hyperram_ck.py`. Two is the ceiling and the DQS path takes one;
-# `hyperram_clocks.py` argues both limits and refuses the rest.
+# `peripherals/hyperram_ck.py`. Two is the ceiling; `hyperram_clocks.py` argues
+# the limit and refuses the rest.
 HYPERRAM_CK_RUNGS = [float(ck) for ck in
                      variant.value("CYNTHION_HYPERRAM_CK_MHZ").split(",")]
 
@@ -767,7 +742,7 @@ HYPERRAM_CK_RUNGS = [float(ck) for ck in
 # direction, and the reason rung 0 should be the FASTEST of a pair.
 HYPERRAM_CK_MHZ = HYPERRAM_CK_RUNGS[0]
 
-# The highest CK the HyperRAM fabric has been measured to CLOSE at, per path.
+# The highest CK the HyperRAM fabric has been measured to CLOSE at.
 # Not the PLL's limit -- `hyperram_clocks.py` covers that -- and not the
 # part's, which is 166 MHz.
 #
@@ -778,24 +753,22 @@ HYPERRAM_CK_MHZ = HYPERRAM_CK_RUNGS[0]
 # an environment variable rather than an edit, and is visible in the command
 # that did it. It does not change what elaborates, so it is not in VARIANT_ENV.
 #
-# Rungs, conditions and the builds behind these two numbers: #410.
-HYPERRAM_CK_CEILING_MHZ = {True: 180.0, False: 84.0}
+# Rungs, conditions and the builds behind this number: #410.
+HYPERRAM_CK_CEILING_MHZ = 84.0
 
 
 def _refuse_ck_past_the_fabric():
     ceiling = float(os.environ.get("CYNTHION_HYPERRAM_CK_CEILING_MHZ")
-                    or HYPERRAM_CK_CEILING_MHZ[HYPERRAM_DQS])
+                    or HYPERRAM_CK_CEILING_MHZ)
     over = [ck for ck in HYPERRAM_CK_RUNGS if ck > ceiling]
     if not over:
         return
     from hyperram_clocks import reachable_ck
 
-    path = "DQS" if HYPERRAM_DQS else "non-DQS"
-    fits = [ck for ck in reachable_ck(ceiling / 2, ceiling,
-                                      dqs=HYPERRAM_DQS) if ck <= ceiling]
+    fits = [ck for ck in reachable_ck(ceiling / 2, ceiling) if ck <= ceiling]
     raise SystemExit(
         f"CYNTHION_HYPERRAM_CK_MHZ={','.join(f'{ck:g}' for ck in over)} is past "
-        f"the {path} fabric ceiling of {ceiling:g} MHz, so place-and-route will "
+        f"the fabric ceiling of {ceiling:g} MHz, so place-and-route will "
         f"fail on hr_clk after ~200 s (#410).\n"
         f"  rungs that close, top of the ladder: "
         f"{', '.join(f'{ck:g}' for ck in fits[-6:])}\n"
@@ -834,7 +807,7 @@ class AwtoSoc(Elaboratable):
         #
         # SCK is derived from the PHY's domain, so a flash PHY in `sync` makes the
         # flash rate a function of the CPU clock -- and the CPU clock is chosen
-        # for the CPU. HyperRAMPHY needs no `fast`; the flash does.
+        # for the CPU. The flash needs `fast`; the HyperRAM does not.
         #
         # SYNC_MHZ 72 with FLASH_FAST_RATIO 2 solves to exactly 144.000 MHz, which is
         # the fastest rung on the measured table (71.70 MB/s, `0xEB` continuous) and
@@ -844,8 +817,6 @@ class AwtoSoc(Elaboratable):
         # CLKOP_DIV forced even, which restricts which sync frequencies are
         # reachable. 72 is reachable and is inside the 72-91 MHz nextpnr already
         # estimates for this design.
-        # The DQS PHY's ECLK is `hr_fast`, off the second PLL, so it does not
-        # ask this one for a `fast`.
         # `usb` comes from the 60 MHz oscillator directly, not from this PLL --
         # the FPGA sources the ULPI clock, so it is exactly 60.000 by
         # construction. That is what frees `sync`: it does not share a VCO with
@@ -1264,21 +1235,16 @@ class AwtoSoc(Elaboratable):
         from peripherals.hyperram_bist import HyperRAMBist
         from peripherals.hyperram_ck import HyperRAMClockSelect
 
-        # The DEVICE number goes in, not the fabric one: the DQS PHY emits two
-        # CK per `hr` cycle, so `hr = ck / 2` there, and taking `ck_mhz` here
-        # means a caller cannot get that factor of two wrong.
-        m.submodules.hr_car = hr_car = HyperRAMDomains(
-            ck_mhz=HYPERRAM_CK_RUNGS, dqs=HYPERRAM_DQS)
+        m.submodules.hr_car = hr_car = HyperRAMDomains(ck_mhz=HYPERRAM_CK_RUNGS)
         # `usb` rather than `clk_60MHz`: the SoC's own generator has already
         # requested that resource, and Amaranth allows one requester. `usb`
         # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
         # so the two PLLs see the same rate, if not the same net.
         m.d.comb += hr_car.clki.eq(ClockSignal("usb"))
 
-        hr_domains = DomainRenamer({"sync": "hr", "fast": "hr_fast"})
+        hr_domains = DomainRenamer({"sync": "hr"})
         m.submodules.hyper_ram = hyper_ram = hr_domains(HyperRAMShared(
-            dqs=HYPERRAM_DQS, ck_mhz=HYPERRAM_CK_MHZ,
-            latency_clocks=HYPERRAM_LATENCY_CLOCKS))
+            ck_mhz=HYPERRAM_CK_MHZ))
 
         # `sustained` is left at its default of False, and that is a decision
         # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
@@ -1302,7 +1268,7 @@ class AwtoSoc(Elaboratable):
             port=hyper_ram.stage, width=hyper_ram.width)
         # Register space is the CPU's to ask for: `hyperram_ck.ctrl.regs`.
         m.submodules.bootram = bootram = BootRAM(
-            dqs=HYPERRAM_DQS, ck_mhz=HYPERRAM_CK_MHZ,
+            ck_mhz=HYPERRAM_CK_MHZ,
             interface=hyper_handover.interface)
         bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
         m.submodules.bootram_bridge = bootram_bridge
@@ -1317,19 +1283,10 @@ class AwtoSoc(Elaboratable):
         # signals `BootRAM` already computes, so this cannot alter the timing of
         # the thing it measures.
         m.submodules.hyper_probe = hyper_probe = HyperRAMProbe()
-        # The PHY's three status bits are `hr`; the probe counts in `sync`.
-        # Levels, and nothing acts on them, so two flops each is the whole
-        # crossing.
-        dll_locked = Signal()
-        dll_ready = Signal()
-        burstdet = Signal()
+        # `rwds_ask` is `hr`; the probe counts in `sync`. A level, and nothing
+        # acts on it, so two flops is the whole crossing.
         rwds_ask = Signal()
-        m.submodules += [
-            FFSynchronizer(hyper_ram.stage.dll_locked, dll_locked),
-            FFSynchronizer(hyper_ram.stage.dll_ready, dll_ready),
-            FFSynchronizer(hyper_ram.stage.burstdet, burstdet),
-            FFSynchronizer(hyper_ram.stage.rwds_ask, rwds_ask),
-        ]
+        m.submodules += FFSynchronizer(hyper_ram.stage.rwds_ask, rwds_ask)
         m.d.comb += [
             hyper_probe.start_transfer.eq(bootram.probe_start),
             hyper_probe.beat.eq(bootram.probe_beat),
@@ -1339,22 +1296,12 @@ class AwtoSoc(Elaboratable):
             hyper_probe.want.eq(bootram.probe_want),
             hyper_probe.arming.eq(bootram.probe_arming),
             hyper_probe.cyc.eq(bootram.probe_cyc),
-            hyper_probe.dll_locked.eq(dll_locked),
-            hyper_probe.dll_ready.eq(dll_ready),
-            hyper_probe.burstdet.eq(burstdet),
             hyper_probe.rwds_ask.eq(rwds_ask),
             hyper_probe.stall.eq(bootram.probe_stall),
         ]
-        # The DQS tap, out to the PHY through the staging side of the mux. Two
-        # flops for metastability, not for coherence: the bits are a
-        # configuration this firmware changes between passes, and a change is
-        # already a step nothing is timed across.
-        m.submodules += FFSynchronizer(hyper_probe.sel[:4],
-                                       Cat(hyper_ram.stage.readclksel,
-                                           hyper_ram.stage.read_phase),
-                                       o_domain="hr")
-        # The extra-latency sample cycle, the same way and for the same reason:
-        # a configuration the firmware moves between passes, never timed across.
+        # The extra-latency sample cycle. Two flops for metastability, not for
+        # coherence: a configuration the firmware moves between passes, never
+        # timed across.
         m.submodules += FFSynchronizer(hyper_probe.rwds_at,
                                        hyper_ram.stage.rwds_at, o_domain="hr")
 
@@ -1369,8 +1316,7 @@ class AwtoSoc(Elaboratable):
         # engine-driven register is shown to survive unequal clocks -- in 1.4 s,
         # against three failures on the retired branch that each cost a ~90 s
         # synthesis and a reconfigure to diagnose.
-        hyper_bist = HyperRAMBist(ck_mhz=HYPERRAM_CK_MHZ, dqs=HYPERRAM_DQS,
-                                  port=hyper_ram.bist)
+        hyper_bist = HyperRAMBist(ck_mhz=HYPERRAM_CK_MHZ, port=hyper_ram.bist)
         m.submodules.hyper_bist = hyper_bist
         hyper_bist_bridge = WishboneCSRBridge(hyper_bist.bus, data_width=32)
         m.submodules.hyper_bist_bridge = hyper_bist_bridge
@@ -1401,8 +1347,7 @@ class AwtoSoc(Elaboratable):
         # part went variable, the controller kept counting fixed, and reads came
         # back wrong with no way to see why (#540).
         #
-        # Two flops each, same as the DQS tap above and for the same reason:
-        # a configuration firmware moves between passes, never inside one.
+        # Two flops each, for the same reason as `rwds_at` above.
         hr_fixed = Signal()
         hr_latency = Signal(6)
         hr_low_latency = Signal(6)
