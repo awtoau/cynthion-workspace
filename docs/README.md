@@ -90,6 +90,7 @@ in its §13 got there in the first place.
 * [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
 * [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
+* [`data-path.md`](data-path.md) — USB data path, PC blocks <-> phone through the host engine, payload never via the CPU: block header, register map, RV sequence
 
 ### Per-chip notes
 
