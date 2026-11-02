@@ -8,7 +8,7 @@ use crate::sideband::*;
 use crate::shell::console::board_absent;
 use crate::{ target};
 
-/// `sideband`, `sideband <ctrl>`, or `sideband <ctrl> <tx>`.
+/// `sideband` or `sideband <ctrl>`. `tx` belongs to the 1 ms tick (#554).
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
     let board = match target::BOARD {
         Some(board) => board,
@@ -18,24 +18,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
 
     let rest = trim(rest);
     if !rest.is_empty() {
-        // Split on the first space: the control register, then optionally the
-        // byte a PING returns. Two arguments rather than two commands because
-        // they are read back together and are usually set together.
-        let split = rest.iter().position(|&byte| byte == b' ');
-        let (first, second) = match split {
-            Some(at) => (&rest[..at], trim(&rest[at + 1..])),
-            None => (rest, &b""[..]),
-        };
-        match (parse_hex(first), second.is_empty()) {
-            (Some(value), true) => link.write(value as u8),
-            (Some(value), false) => match parse_hex(second) {
-                Some(message) => {
-                    link.write(value as u8);
-                    link.set_message(message as u8);
-                }
-                None => return sideband_usage(uart),
-            },
-            (None, _) => return sideband_usage(uart),
+        match parse_hex(rest) {
+            Some(value) => link.write(value as u8),
+            None => return sideband_usage(uart),
         }
     }
 
@@ -84,12 +69,11 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
 }
 
 pub(crate) fn sideband_usage(uart: &mut Uart) {
-    let _ = writeln!(uart, "usage: sideband [ctrl [tx]]");
+    let _ = writeln!(uart, "usage: sideband [ctrl]");
     let _ = writeln!(
         uart,
         "  ctrl bit 7 takes the link from the fabric, \
                             bit 5 asks for the CONTROL port"
     );
-    let _ = writeln!(uart, "  tx   the byte a PING returns");
 }
 

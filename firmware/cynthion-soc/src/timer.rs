@@ -243,7 +243,13 @@ fn tick() {
     set_mtimecmp(deadline + PERIOD as u64);
 
     MILLIS.fetch_add(PERIOD_MS, Ordering::Relaxed);
-    TICKS.fetch_add(1, Ordering::Relaxed);
+    let ticks = TICKS.fetch_add(1, Ordering::Relaxed);
+
+    // Apollo's liveness byte (#554): `PING` returns it, so a byte that stops
+    // moving proves the core, clock or interrupt path is dead. One store.
+    if let Some(board) = crate::target::BOARD {
+        crate::sideband::Sideband::new(board.sideband).set_message(ticks as u8);
+    }
 
     // The #115 workload's arrival generator. Here because a generator that ran
     // in the main loop would be stopped by the long turn it exists to measure.

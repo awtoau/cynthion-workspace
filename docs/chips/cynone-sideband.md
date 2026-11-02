@@ -326,9 +326,7 @@ link is bad", where a wrapped counter can read as healthy. Reading clears them.
 
 The FPGA exposes raw receive taps (`rx_strobe`, `rx_byte`) so a harness can tell
 "nothing arrived" from "something arrived that was not a valid command" — the
-responder's own state reflects only bytes it accepted. `fpga_adv_set_toggle()` drives
-FPGA_ADV as a raw 10 Hz square wave from the main loop, bypassing TC1 and the shift
-register, to separate transmit-path faults from pin or wiring faults.
+responder's own state reflects only bytes it accepted. The raw square-wave diagnostic (`fpga_adv_set_toggle()`) was removed in §14.
 
 *Test bitstream only:* its responder drives the six board LEDs from its own state, so
 a failing link is diagnosable by looking at the board — command arrived / transmitting
@@ -535,8 +533,7 @@ Everything host-side goes through vendor request `0xC3`
 |---|---|
 | `0xFFFF` | read the current mode back |
 | `0xFFFE` | issue a sideband command — `wIndex` low byte is the command, high byte the expected reply length |
-| `0xFFFD` | toggle the diagnostic square wave (`wIndex` 1 on, 0 off) |
-| `0xFFFC` | read link health `[ok, crc_fail, timeout]`, saturating, cleared by the read |
+| `0xFFFC` | read link health `[ok, crc_fail, timeout, watchdog]`; the counts saturate and clear on read, `watchdog` (§14) is a level |
 | anything else | **set the mode** (0 = EIC, 1 = UART) |
 
 **The default case is a write, and the trap is real**: a host probing with `wValue=0`
@@ -556,7 +553,7 @@ re-muxed, so a partial frame cannot raise RXC against a pin no longer wired to i
 
 ## 11. Settled — do not re-propose
 
-- **Purpose (Dan, 2026-11-02): Apollo as the independent watchdog and reporter.** Apollo owns the CONTROL port and polls the FPGA over this wire, so it can report an FPGA/SoC problem to the host over its own USB even when the SoC's USB, console or JTAG is dead. Stock FPGA_ADV (§8) already returns CONTROL to Apollo when the FPGA stops advertising; the sideband adds Apollo asking the FPGA how it is. The SoC console is on AUX, so the SoC does not need CONTROL. Not built yet: Apollo never polls ([#179](https://github.com/awtoau/cynthion-workspace/issues/179)); that is the work that delivers this purpose.
+- **Purpose (Dan, 2026-11-02): Apollo as the independent watchdog and reporter (built: §14, not run on a board).** Apollo owns the CONTROL port and polls the FPGA over this wire, so it can report an FPGA/SoC problem to the host over its own USB even when the SoC's USB, console or JTAG is dead. Stock FPGA_ADV (§8) already returns CONTROL to Apollo when the FPGA stops advertising; the sideband adds Apollo asking the FPGA how it is. The SoC console is on AUX, so the SoC does not need CONTROL. Delivered by [#179](https://github.com/awtoau/cynthion-workspace/issues/179) / [#554](https://github.com/awtoau/cynthion-workspace/issues/554).
 
 * **Open drain at both ends, and no external pull-up.** §1. The RC objection was
   measured and refuted; the contention hazard it replaced was measured at up to 30 µs
@@ -615,3 +612,39 @@ while pulling low (§1).
 - The Apollo-side command function is `fpga_adv_command()` at `fpga_adv.c:418` (`:437` is the mode guard).
 - `sideband_soak.py` and `sideband_contention_probe.py` live in `debris/scripts/` (retired in `25087b8`).
 - Baud is 230400 at both ends since `b48d4bf` (115200 in firmware `a7b8283`, [#209](https://github.com/awtoau/cynthion-workspace/issues/209)); the two must move together.
+## 14. Apollo watchdog poll ([#554](https://github.com/awtoau/cynthion-workspace/issues/554))
+
+Apollo polls `PING` in UART mode, decides link/CPU liveness, reports to the host and takes CONTROL. Nothing here has run on a board.
+
+**Change**
+- SoC: the 1 ms timer tick (`timer.rs` `tick()`) writes the low byte of `TICKS` to the sideband `tx` CSR. `PING` returns it. The shell `sideband <ctrl> <tx>` argument is removed (the tick owns `tx`).
+- Apollo (`fpga_adv.c`, logic in `fpga_adv_wd.h`): `fpga_adv_task()` sends `PING` every 10 ms when `adv_mode == UART`. A poll is OK iff 4 bytes arrive, CRC8 matches and status bit 0 is set.
+- Link dead: 3 consecutive not-OK polls. CPU dead: link alive and `tx` equal to the previous OK poll's `tx` on 2 consecutive OK polls (3 polls with the same byte). A not-OK poll clears the CPU count.
+- Report: `0xC3` `wValue 0xFFFC` returns `[ok, crc_fail, timeout, health]`, health bit 0 link dead, bit 1 CPU dead (level, not cleared by the read). Either bit set makes `fpga_adv_task()` call `take_over_usb()`; both clear returns to the existing rule.
+- No automatic FPGA reset. Not built: LED, console line, scheduler-stalled byte (flash budget, see Budget).
+- Removed to pay for it: `fpga_adv_set_toggle()` + `0xFFFD` (no live host user; `debris/scripts/sideband_read.py` only).
+- `fpga_adv_command()` refuses while a command is in flight (`response_want != 0`): its `tud_task()` can dispatch a host `0xFFFE` request inside a poll.
+
+**Periods**
+| period | waits for | expected, from | value, multiplier | on expiry |
+|---|---|---|---|---|
+| poll P | `tx` to change between polls | tick 1 ms (`timer.rs` PERIOD_MS); exchange 213.6 µs (§6) = 2.1% of P | 10 ms = 10 ticks, so `tx` moves by 10 per poll (never 0 mod 256) | next poll |
+| reply timeout | the 4-byte `PING` reply | cmd 43.4 µs + 40 µs turnaround + 4 x 43.4 µs = 0.26 ms; longest reply (18 B) 0.95 ms | `board_millis() + 3` = 2..3 ms (1 ms clock, so >= 2 ms), 2.1x on the longest reply, 7.7x on `PING`; was 6..7 ms for `PING` | miss++ , `stat_timeout++`, return 0 |
+| link dead | consecutive misses | 1 miss = 1 timeout | 3 misses: rejects one lost reply (CRC rejects corruption) | health bit 0 |
+| CPU dead | unchanged `tx` | changes every 1 ms | 3 polls = 30 ms | health bit 1 |
+| back-off | absent peer | miss costs up to 3 ms | 100 ms poll while link dead = 3% of the loop (vs 30% at P); first OK reply returns to P | n/a |
+| advert skip | predicted advertiser frame | frame every 100 ms (§8), stamped at its end | skip polls when `board_millis() - last_heartbeat` in [99, 102) ms: 3 ms covers the 174 µs frame plus clock skew | poll fires after the frame is stamped |
+
+**Detection bounds** (worst case, from the fault to the flag)
+- CPU dead: <= 3 x P + 1 tick = 31 ms (model worst 29.2 ms). The byte can stay unchanged-looking for up to P before the first stale poll, then 2 more polls.
+- Link dead: <= P + 2 x P + 3 ms = 33 ms (model worst 33.0 ms: three misses start P apart, the last takes the timeout).
+- Acceptance bound used by the tests: 1.25 x 30 ms = 37.5 ms.
+
+**Why the advert skip**: the FPGA advertises every 100 ms and defers while a poll is on the wire; a poll that starts inside the 174 µs frame corrupts both. P and the 100 ms interval are periodic, so a phase lock would repeat the collision every time; skipping the predicted slot removes it by construction.
+
+**Budget** (`apollo_budget_check.py`): 13,688 -> 13,724 B flash (+36; ceiling 13,748), RAM 3,552 -> 3,568 B (ceiling 3,584). Poll + decision + report + `take_over_usb` condition + skip, net of the toggle removal and the simpler timeout. 24 B left; the LED and console line do not fit and are not built.
+
+**Tests**
+- `repos/apollo/firmware/test/test_fpga_adv_wd.c` (host C, runs the real `fpga_adv_wd.h`): dead tick detected inside the bound for every fault phase; live link/CPU never flagged over 10 s; negative control with the poll disabled never flags.
+- `scripts/sideband/sideband_watchdog_sim.py` (in `soc_sims`): builds and runs the C test, and checks the tick writes `tx`. The gateware half (`PING` returns `tx`) is `sideband_link_sim.py`.
+- The C test also holds the advert-skip check: with the skip no poll lands in a frame over 10 s at every relative phase; without it, 294 do.
