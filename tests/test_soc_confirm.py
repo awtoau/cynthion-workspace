@@ -277,3 +277,49 @@ def test_every_verdict_the_module_can_return_is_covered():
     for test in sorted(Path(__file__).parent.glob("test_*.py")):
         covered |= set(re.findall(r'== "([a-z-]+)"', test.read_text()))
     assert not produced - covered, f"verdicts with no test: {sorted(produced - covered)}"
+
+
+def test_done_clear_outranks_a_jtag_pin_uart_reply():
+    """#434: a reply echoing for ~2 s after force-offline is not a live design."""
+    result = verdict(apollo=True, console_usb=False, idcode=ECP5_IDCODE,
+                     status=STATUS_BLANK, jtag_console=b"\r\n> ")
+    assert result.name == "blank-fpga"
+
+
+def test_wrong_port_names_the_flash_gateware_fallback():
+    """#398: DONE set with no console is also a board running its flash image."""
+    result = verdict(apollo=True, console_usb=False, idcode=ECP5_IDCODE,
+                     status=STATUS_RUNNING)
+    assert "flash gateware" in " ".join(result.lines)
+
+
+def _gather_with(monkeypatch, *, status):
+    import usb_ids
+
+    calls = []
+    monkeypatch.setattr(soc_confirm, "usb_present", lambda pid: pid == soc_confirm.APOLLO_PID)
+    monkeypatch.setattr(usb_ids, "find_tty", lambda *a, **k: None)
+    monkeypatch.setattr(soc_confirm, "say", lambda *a, **k: None)
+
+    def fake_jtag(ev):
+        calls.append("jtag")
+        ev.idcode, ev.status = ECP5_IDCODE, status
+
+    def fake_uart(ev):
+        calls.append("uart")
+        ev.jtag_console = b"\r\n> "
+
+    monkeypatch.setattr(soc_confirm, "ask_jtag", fake_jtag)
+    monkeypatch.setattr(soc_confirm, "ask_jtag_console", fake_uart)
+    return soc_confirm.gather(expect="shell"), calls
+
+
+def test_gather_reads_done_before_the_uart_and_skips_it_when_read(monkeypatch):
+    ev, calls = _gather_with(monkeypatch, status=STATUS_BLANK)
+    assert calls == ["jtag"]
+    assert soc_confirm.diagnose(ev).name == "blank-fpga"
+
+
+def test_gather_falls_back_to_the_uart_when_the_part_will_not_answer(monkeypatch):
+    ev, calls = _gather_with(monkeypatch, status=None)
+    assert calls == ["jtag", "uart"]
