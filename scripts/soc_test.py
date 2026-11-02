@@ -899,6 +899,25 @@ def main():
             command("i2c target", [absent],
                     "`i2c` takes a bus name on a boardless target too")
 
+        # `usb <port> <verb>` (the AOA bring-up console). The host engine is
+        # gateware QEMU lacks, so every verb must be REGISTERED, parse its
+        # arguments and answer `no host engine`, never fall to `usage:` or fault.
+        # Ports with no engine (aux, control) answer the same on the board.
+        command("usb", [b"usb <port> aoa", b"usb <port> role [mode]",
+                        b"usb <port> in <ep> <len>"],
+                "`usb` lists the host verbs")
+        usb_host_verbs = ("role", "role host", "reset", "desc",
+                          "setup 80 06 00 01 00 00 12 00", "in 0 8", "out 1 aa",
+                          "tx aa", "rx", "addr", "aoa")
+        for verb in usb_host_verbs:
+            command(f"usb aux {verb}", [b"no host engine on aux"],
+                    f"`usb aux {verb}` says aux has no host engine")
+            if not board:
+                command(f"usb target_c {verb}", [b"no host engine"],
+                        f"`usb target_c {verb}` is registered and reports no engine")
+        command("usb target_c bogus", [b"usage: usb target_c [status|"],
+                "an unknown `usb <port>` verb prints the usage line")
+
         # The monotonic clock, and the background poll built on it.
         #
         # `Monitor::poll` reads the `time` CSR every turn of the main loop on

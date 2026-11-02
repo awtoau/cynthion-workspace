@@ -31,6 +31,7 @@ pub(crate) mod rejoin;
 pub(crate) mod sideband;
 pub(crate) mod typec;
 pub(crate) mod usb;
+pub(crate) mod usb_host;
 pub(crate) mod vbus;
 
 use core::fmt::Write;
@@ -166,6 +167,16 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("usb control", "the host port, and apollo's"),
     ("usb target_a", "the USB-A side of the passthrough"),
     ("usb target_c", "the port under test"),
+    ("usb <port> role [mode]", "off|regs|host|raw; no argument reads"),
+    ("usb <port> reset", "host: bus reset, wait for the speed result"),
+    ("usb <port> desc", "host: device descriptor at the address"),
+    ("usb <port> setup <hex8>", "host: one SETUP stage"),
+    ("usb <port> in <ep> <len>", "host: one IN, NAK retried 100 ms"),
+    ("usb <port> out <ep> <hex..>", "host: one OUT packet"),
+    ("usb <port> tx <hex..>", "raw: queue one ULPI packet"),
+    ("usb <port> rx", "raw/host: drain the RX FIFO (c: = RXCMD)"),
+    ("usb <port> addr [n]", "device address the transfers use"),
+    ("usb <port> aoa", "enumerate, 51/52/53, re-attach, bulk pair"),
     ("usb3343", "the USB PHYs"),
     ("usb3343 status", "identity, line state and the data-line walk"),
     ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),

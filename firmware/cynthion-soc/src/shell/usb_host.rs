@@ -1,0 +1,190 @@
+//! `usb <port> role|reset|desc|setup|in|out|tx|rx|addr|aoa` -- syntax over `crate::usb_host`.
+//!
+//! No transfer logic here: parse, call the driver, print its `Error` as it displays.
+
+use core::fmt::Write;
+
+use crate::shell::parse::{parse_decimal, parse_hex, trim};
+use crate::uart::Uart;
+use crate::usb_host::{self, Error, Host};
+
+/// Verbs this module owns; `usb.rs` routes on them.
+pub(crate) const VERBS: [&[u8]; 10] = [
+    b"role", b"reset", b"desc", b"setup", b"in", b"out", b"tx", b"rx", b"addr", b"aoa",
+];
+
+fn fail(uart: &mut Uart, error: Error) {
+    let _ = writeln!(uart, "{}", error);
+}
+
+/// Up to 64 hex bytes from `text`; `None` on a bad token or none at all.
+fn hex_bytes(text: &[u8], out: &mut [u8; 64]) -> Option<usize> {
+    let mut n = 0;
+    for token in text.split(|&b| b == b' ').filter(|t| !t.is_empty()) {
+        let value = parse_hex(token)?;
+        if value > 0xff || n == out.len() {
+            return None;
+        }
+        out[n] = value as u8;
+        n += 1;
+    }
+    if n == 0 { None } else { Some(n) }
+}
+
+fn dump(uart: &mut Uart, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = write!(uart, "{:02x} ", byte);
+    }
+    let _ = writeln!(uart);
+}
+
+pub(crate) fn command(uart: &mut Uart, host: &mut Host, verb: &[u8], args: &[u8]) {
+    let args = trim(args);
+    let mut buf = [0u8; 64];
+    match verb {
+        b"role" => role(uart, host, args),
+        b"reset" => match host.reset() {
+            Ok(()) => {
+                let _ = writeln!(uart, "reset done");
+            }
+            Err(e) => fail(uart, e),
+        },
+        b"desc" => match host.device_descriptor() {
+            Ok(d) => {
+                let _ = writeln!(uart, "{:04x}:{:04x}", d[8] as u16 | (d[9] as u16) << 8,
+                                 d[10] as u16 | (d[11] as u16) << 8);
+                dump(uart, &d);
+            }
+            Err(e) => fail(uart, e),
+        },
+        b"setup" => match hex_bytes(args, &mut buf) {
+            Some(8) => {
+                let mut packet = [0u8; 8];
+                packet.copy_from_slice(&buf[..8]);
+                match host.setup(&packet) {
+                    Ok(()) => {
+                        let _ = writeln!(uart, "ack");
+                    }
+                    Err(e) => fail(uart, e),
+                }
+            }
+            _ => {
+                let _ = writeln!(uart, "usage: usb <port> setup <8 hex bytes>");
+            }
+        },
+        b"in" => {
+            let (ep, len) = match args.iter().position(|&b| b == b' ') {
+                Some(at) => (parse_decimal(&args[..at]), parse_decimal(&args[at + 1..])),
+                None => (None, None),
+            };
+            let (Some(ep), Some(len)) = (ep.filter(|&e| e < 16), len.filter(|&l| l <= 64)) else {
+                let _ = writeln!(uart, "usage: usb <port> in <ep 0-15> <len 0-64>");
+                return;
+            };
+            match host.bulk_in(ep as u8, &mut buf[..len as usize], usb_host::BULK_US) {
+                Ok(n) => {
+                    let _ = writeln!(uart, "{} bytes", n);
+                    dump(uart, &buf[..n]);
+                }
+                Err(e) => fail(uart, e),
+            }
+        }
+        b"out" => {
+            let at = args.iter().position(|&b| b == b' ').unwrap_or(args.len());
+            let ep = parse_decimal(&args[..at]).filter(|&e| e < 16);
+            let n = hex_bytes(&args[at..], &mut buf);
+            let (Some(ep), Some(n)) = (ep, n) else {
+                let _ = writeln!(uart, "usage: usb <port> out <ep 0-15> <hex bytes>");
+                return;
+            };
+            match host.bulk_out(ep as u8, &buf[..n], usb_host::BULK_US) {
+                Ok(()) => {
+                    let _ = writeln!(uart, "ack");
+                }
+                Err(e) => fail(uart, e),
+            }
+        }
+        b"tx" => match hex_bytes(args, &mut buf) {
+            Some(n) => match host.raw_tx(&buf[..n]) {
+                Ok(()) => {
+                    let _ = writeln!(uart, "queued {}", n);
+                }
+                Err(e) => fail(uart, e),
+            },
+            None => {
+                let _ = writeln!(uart, "usage: usb <port> tx <hex bytes> (raw role)");
+            }
+        },
+        b"rx" => rx(uart, host),
+        b"addr" => {
+            let result = match parse_decimal(args).filter(|&a| a < 128) {
+                Some(a) => host.set_addr(a as u8).and_then(|()| host.addr()),
+                None => host.addr(),
+            };
+            match result {
+                Ok(a) => {
+                    let _ = writeln!(uart, "addr {}", a);
+                }
+                Err(e) => fail(uart, e),
+            }
+        }
+        b"aoa" => match host.aoa(&usb_host::AOA_DJI) {
+            Ok(id) => {
+                let _ = writeln!(uart, "accessory {:04x}:{:04x} bulk in {} out {}", id.vid, id.pid,
+                                 host.ep_in, host.ep_out);
+            }
+            Err(e) => fail(uart, e),
+        },
+        _ => {}
+    }
+}
+
+fn role(uart: &mut Uart, host: &mut Host, args: &[u8]) {
+    let wanted = match args {
+        b"" => None,
+        b"off" => Some(usb_host::ROLE_OFF),
+        b"regs" => Some(usb_host::ROLE_REGS),
+        b"host" => Some(usb_host::ROLE_HOST),
+        b"raw" => Some(usb_host::ROLE_RAW),
+        _ => {
+            let _ = writeln!(uart, "usage: usb <port> role [off|regs|host|raw]");
+            return;
+        }
+    };
+    if let Some(role) = wanted {
+        if let Err(e) = host.set_role(role) {
+            return fail(uart, e);
+        }
+    }
+    match host.status() {
+        Ok(s) => {
+            let name = ["off", "regs", "host", "raw"][s.role as usize & 3];
+            let speed = ["HS", "FS", "LS", "?"][(s.link >> 2) as usize & 3];
+            let _ = writeln!(
+                uart,
+                "role {}  switching {}  timeout {}  link {:02x} ls {} {} up {} rx {} tx {}",
+                name, s.switching as u8, s.timeout as u8, s.link, s.link & 3, speed,
+                (s.link >> 7) as u8, s.rx_level, s.tx_level);
+        }
+        Err(e) => fail(uart, e),
+    }
+}
+
+/// Drain the RX FIFO: `c:xx` is an RXCMD entry, bare `xx` a data byte.
+fn rx(uart: &mut Uart, host: &mut Host) {
+    let mut count = 0;
+    loop {
+        match host.rx_pop() {
+            Ok(Some((cmd, byte))) => {
+                let _ = write!(uart, "{}{:02x} ", if cmd { "c:" } else { "" }, byte);
+                count += 1;
+                if count == 128 {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return fail(uart, e),
+        }
+    }
+    let _ = writeln!(uart, "[{}]", count);
+}

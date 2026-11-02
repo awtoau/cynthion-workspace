@@ -17,6 +17,8 @@ Groups:
 - raw: CPU writes TXCMD + SETUP token + DATA0, the model device answers, RX FIFO tags.
 - host: the usb_host_sie_sim scenarios through CSRs (enumeration, 512 B bulk IN).
 - fifos: overflow, underflow, the 512 B `rx_len` case.
+- aoa: the firmware's AOA sequence (docs/aoa-adaptor.md) against `usb_host/aoa_phone.py`:
+  enumerate, 51, 52 x6, 53, bus reset until it re-attaches as 18d1:2d00, bulk echo.
 
 Bench: shim + UlpiRegisters + `ulpi_phy.UlpiPhyModel` + LUNA `ModelDevice`; `sync` and
 `usb` are different frequencies. Not covered: silicon, bit-level framing, a real
@@ -55,6 +57,7 @@ from usb_host.model import (  # noqa: E402
     BULK_IN_ENDPOINT, BULK_MAX_PACKET_SIZE, CONTROL_MAX_PACKET_SIZE, PRODUCT_ID,
     VENDOR_ID, ModelDevice, Packet, connect_utmi,
     scale_timing_for_simulation)
+from usb_host.aoa_phone import AoaPhone, AOA_PROTOCOL, PID_AOA, PID_AOA_ADB  # noqa: E402
 from usb_host.ulpi_phy import UlpiPhyModel  # noqa: E402
 from soc_board_sim import ModelPhy, PHY_IDENTITY  # noqa: E402
 from usb_host_sie_sim import (  # noqa: E402
@@ -77,12 +80,12 @@ DONE_POLLS = 800          # x 16 sync ticks; one transaction is < 12k usb cycles
 class Wire(Elaboratable):
     """`model.connect_utmi` for a bench whose single clock is called `usb`."""
 
-    def __init__(self, a, b):
-        self.a, self.b = a, b
+    def __init__(self, a, b, present=None):
+        self.a, self.b, self.present = a, b, present
 
     def elaborate(self, platform):
         m = Module()
-        connect_utmi(m, self.a, self.b)
+        connect_utmi(m, self.a, self.b, present=self.present)
         return m
 
 
@@ -90,13 +93,16 @@ class Bench(Elaboratable):
     """UsbPort + UlpiRegisters + PHY model (+ optional device on its wire)."""
 
     def __init__(self, *, with_device=True, full_speed_only=False, func_ctrl=0x41,
-                 **port_kwargs):
+                 phone=None, **port_kwargs):
         self.port = UsbPort(**port_kwargs)
         self.regs = UlpiRegisters()
         self.phy = UlpiPhyModel(func_ctrl=func_ctrl)
         self.force_dir = Signal()
         self.with_device = with_device
-        if with_device:
+        self.phone = phone
+        if phone is not None:
+            self.device = phone
+        elif with_device:
             self.device = ModelDevice(full_speed_only=full_speed_only)
 
     def elaborate(self, platform):
@@ -110,7 +116,11 @@ class Bench(Elaboratable):
             p.regs_data_o.eq(r.data_o), p.regs_data_oe.eq(r.data_oe),
             p.regs_stp_o.eq(r.stp_o), p.regs_idle.eq(r.usb_idle),
         ]
-        if self.with_device:
+        if self.phone is not None:
+            m.submodules.device = self.phone
+            m.submodules.wire = DomainRenamer({"sync": "usb"})(
+                Wire(phy.utmi, self.phone.utmi, present=self.phone.present))
+        elif self.with_device:
             m.submodules.device = self.device
             m.submodules.wire = DomainRenamer({"sync": "usb"})(Wire(phy.utmi, self.device.utmi))
         return m
@@ -888,6 +898,162 @@ def group_fifos(checks, verbose=False):
         seen["rx_before_clear"] >= 3 and seen["rx_cleared"] == 0,
         f"before {seen['rx_before_clear']} after {seen['rx_cleared']}")
 
+# ---------------------------------------------------------------------------
+# aoa: the driver's sequence (firmware/cynthion-soc/src/usb_host.rs) in Python
+# ---------------------------------------------------------------------------
+
+AOA_STRINGS = ["DJI", "T600", "DJI", "v1.2.3.4", "www.dji.com", "12345678"]
+NAK_RETRIES = 40
+RESET_CLEAR_POLLS = 16     # reset_done clears ~6 sync cycles after the strobe; a read is 2
+ATTACH_ATTEMPTS = 8
+REQ_GET_DESCRIPTOR, REQ_SET_ADDRESS, REQ_SET_CONFIGURATION = 6, 5, 9
+RESP_NAK = 2
+
+
+async def xfer_retry(csr, **kw):
+    """host_transact, repeated while the device NAKs (bulk/control data stages)."""
+    result = None
+    for _ in range(NAK_RETRIES):
+        result = await host_transact(csr, **kw)
+        if not result["done"] or result["resp"] != RESP_NAK:
+            break
+    return result
+
+
+async def control(csr, addr, bm, req, value, index, *, out=b"", in_len=0,
+                  mps=CONTROL_MAX_PACKET_SIZE):
+    """SETUP + data + status. Returns (ok, data bytes)."""
+    setup = await host_transact(csr, type=TYPE_SETUP, address=addr, endpoint=0,
+                                payload=setup_packet(bm, req, value, index,
+                                                     in_len if in_len else len(out)))
+    if not setup["done"] or setup["resp"] != RESP_ACK:
+        return False, b""
+    data, toggle = [], 1
+    if in_len:
+        while len(data) < in_len:
+            got = await xfer_retry(csr, type=TYPE_IN, address=addr, endpoint=0, data_pid=toggle)
+            if not got["done"] or got["resp"] != RESP_ACK:
+                return False, bytes(data)
+            data += got["data"]
+            toggle ^= 1
+            if len(got["data"]) < mps:
+                break
+        status = await xfer_retry(csr, type=TYPE_OUT, address=addr, endpoint=0, data_pid=1)
+    else:
+        for off in range(0, len(out), mps):
+            sent = await xfer_retry(csr, type=TYPE_OUT, address=addr, endpoint=0,
+                                    data_pid=toggle,
+                                    payload=out[off:off + mps])
+            if not sent["done"] or sent["resp"] != RESP_ACK:
+                return False, b""
+            toggle ^= 1
+        status = await xfer_retry(csr, type=TYPE_IN, address=addr, endpoint=0, data_pid=1)
+    return bool(status["done"] and status["resp"] == RESP_ACK), bytes(data)
+
+
+async def enumerate_device(csr, address):
+    """The driver's order: 8 bytes at 0 for bMaxPacketSize0, SET_ADDRESS, 18 bytes, SET_CONFIGURATION 1."""
+    ok, head = await control(csr, 0, 0x80, REQ_GET_DESCRIPTOR, 0x0100, 0, in_len=8, mps=8)
+    if not ok or len(head) != 8 or head[7] != CONTROL_MAX_PACKET_SIZE:
+        return None
+    ok, _ = await control(csr, 0, 0x00, REQ_SET_ADDRESS, address, 0)
+    if not ok:
+        return None
+    ok, desc = await control(csr, address, 0x80, REQ_GET_DESCRIPTOR, 0x0100, 0, in_len=18)
+    if not ok or len(desc) != 18:
+        return None
+    ok, _ = await control(csr, address, 0x00, REQ_SET_CONFIGURATION, 1, 0)
+    if not ok:
+        return None
+    return desc[8] | desc[9] << 8, desc[10] | desc[11] << 8
+
+
+async def bus_reset(csr):
+    """CTRL.bus_reset, wait for reset_done to clear (CDC latency), then to set."""
+    await csr.write(REG_CTRL, CTRL_BUS_RESET)
+    if await poll(csr, REG_LINK, lambda v: not v & 0x80, RESET_CLEAR_POLLS) is None:
+        return None
+    return await poll(csr, REG_LINK, lambda v: v & 0x80, BRINGUP_POLLS, gap=64)
+
+
+def group_aoa(checks, verbose=False):
+    checks._emit("  aoa (phone model)")
+    phone = AoaPhone(detach_cycles=1500)
+    bench = Bench(phone=phone)
+    port = bench.port
+    seen = {}
+
+    async def testbench(ctx):
+        pc = Csr(ctx, port.bus)
+        seen["link"] = await host_up(pc)
+        if seen["link"] is None:
+            return
+        seen["before"] = await enumerate_device(pc, 1)
+        ok, proto = await control(pc, 1, 0xC0, 51, 0, 0, in_len=2)
+        seen["proto"] = (ok, proto)
+        seen["strings_ok"] = []
+        for index, text in enumerate(AOA_STRINGS):
+            ok, _ = await control(pc, 1, 0x40, 52, 0, index, out=text.encode() + b"\0")
+            seen["strings_ok"].append(ok)
+        seen["sums"] = [int(ctx.get(x)) for x in phone.vendor.string_sum]
+        seen["lens"] = [int(ctx.get(x)) for x in phone.vendor.string_len]
+        ok, _ = await control(pc, 1, 0x40, 53, 0, 0)
+        seen["start_ok"] = ok
+        seen["start_seen"] = int(ctx.get(phone.vendor.got_start))
+
+        # The phone detaches; reset the bus until something enumerates as the accessory.
+        seen["attempts"], seen["after"] = 0, None
+        for _ in range(ATTACH_ATTEMPTS):
+            seen["attempts"] += 1
+            await pc.idle(3000)
+            if await bus_reset(pc) is None:
+                continue
+            seen["after"] = await enumerate_device(pc, 2)
+            if seen["after"] in ((0x18D1, PID_AOA), (0x18D1, PID_AOA_ADB)):
+                break
+        if seen["after"] is None:
+            return
+        out = bytes(range(0x30, 0x30 + 31))
+        sent = await xfer_retry(pc, type=TYPE_OUT, address=2, endpoint=1, data_pid=0, payload=out)
+        seen["bulk_out"] = sent["resp"]
+        got = await xfer_retry(pc, type=TYPE_IN, address=2, endpoint=1, data_pid=0)
+        seen["bulk_in"] = got
+        seen["bulk_sent"] = list(out)
+
+    pk = []
+    run(bench, testbench, processes=(capture_usb(phone.utmi, pk),), platform=BoardPlatform())
+    if verbose:
+        for packet in (x for x in pk if len(x.data) < 40):     # skip the chirp runs
+            checks._emit(f"        {packet.cycle:7d}  " + " ".join(f"{b:02x}" for b in packet.data))
+
+    checks.check("aoa: the host reaches reset_done on the phone", seen.get("link") is not None,
+                 f"no reset_done within {BRINGUP_POLLS} polls")
+    if seen.get("link") is None:
+        return
+    checks.check("aoa: before AOA the phone enumerates as 18d1:4ee2",
+                 seen["before"] == (0x18D1, 0x4EE2), f"{seen['before']}")
+    ok, proto = seen["proto"]
+    checks.check("aoa: 51 GET_PROTOCOL returns 2 (little endian)",
+                 ok and proto == bytes([AOA_PROTOCOL, 0]), f"{ok} {proto!r}")
+    want = [sum(t.encode() + b"\0") for t in AOA_STRINGS]
+    checks.check("aoa: 52 SEND_STRING x6 are ACKed and the phone saw each string intact "
+                 "(byte sum and length per wIndex)",
+                 all(seen["strings_ok"]) and seen["sums"] == want
+                 and seen["lens"] == [len(t) + 1 for t in AOA_STRINGS],
+                 f"ok {seen['strings_ok']} sums {seen['sums']} want {want} lens {seen['lens']}")
+    checks.check("aoa: 53 START completes its status stage and the phone acts on it",
+                 seen["start_ok"] and seen["start_seen"] == 1,
+                 f"{seen['start_ok']} {seen['start_seen']}")
+    checks.check("aoa: after START the host re-attaches the phone as 18d1:2d00",
+                 seen["after"] == (0x18D1, PID_AOA),
+                 f"{seen['after']} after {seen['attempts']} attempts")
+    if seen["after"] is None:
+        return
+    echoed = seen.get("bulk_in", {}).get("data")
+    checks.check("aoa: bulk OUT 1 is ACKed and bulk IN 1 echoes the same bytes",
+                 seen.get("bulk_out") == RESP_ACK and echoed == seen["bulk_sent"],
+                 f"out resp {seen.get('bulk_out')} in {seen.get('bulk_in')}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -922,7 +1088,8 @@ def main():
 
 
 GROUPS = [("golden", group_golden), ("switching", group_switching), ("raw", group_raw),
-          ("host", group_host), ("host_fs", group_host_fs), ("fifos", group_fifos)]
+          ("host", group_host), ("host_fs", group_host_fs), ("fifos", group_fifos),
+          ("aoa", group_aoa)]
 
 if __name__ == "__main__":
     sys.exit(main())

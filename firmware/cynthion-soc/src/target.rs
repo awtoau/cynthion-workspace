@@ -288,6 +288,8 @@ pub struct Board {
     /// corrupt a link something else is using. See the module comment in
     /// `src/ulpi.rs`.
     pub ulpi: usize,
+    /// `usb_host.UsbPort`: role mux, host SIE and byte stream, on TARGET_PHY only.
+    pub usb_host: usize,
     /// PRER for the I2C bus, as the build computed it. The FALLBACK only:
     /// [`crate::bus::Bus::init`] re-derives from the clock the fabric counts,
     /// because this constant is generated against the DEFAULT variant's
@@ -302,6 +304,7 @@ pub const BOARD: Option<Board> = Some(Board {
     sideband: cynthion_soc_pac::base::BOARD_SIDEBAND,
     i2c_mux: cynthion_soc_pac::base::BOARD_I2C_MUX,
     ulpi: cynthion_soc_pac::base::BOARD_ULPI,
+    usb_host: cynthion_soc_pac::base::USB_HOST,
     i2c_prescale: cynthion_soc_pac::base::I2C_PRESCALE,
 });
 

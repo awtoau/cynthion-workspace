@@ -144,6 +144,7 @@ mod target;
 mod timer;
 mod typec;
 mod uart;
+mod usb_host;
 mod wire;
 mod ulpi;
 mod vbus;
@@ -198,6 +199,8 @@ pub struct Devices {
     bus: Option<Bus>,
     power: power::Monitor,
     type_c: typec::Controllers,
+    /// The one host engine (TARGET_PHY); `None` base on a target without it.
+    usb_host: usb_host::Host,
 }
 
 impl Devices {
@@ -209,6 +212,10 @@ impl Devices {
             },
             power: power::Monitor::new(),
             type_c: typec::Controllers::new(),
+            usb_host: usb_host::Host::new(match target::BOARD {
+                Some(board) => Some(board.usb_host),
+                None => None,
+            }),
         }
     }
 }

@@ -23,6 +23,7 @@ use core::fmt::Write;
 
 use crate::fusb302::Port;
 use crate::shell::parse::trim;
+use crate::shell::usb_host as host;
 use crate::uart::Uart;
 use crate::{power, target, typec::Controllers, vbus, Devices};
 
@@ -66,13 +67,25 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return crate::shell::list_family(uart, "usb");
     };
 
-    match verb {
+    let (word, args) = match verb.iter().position(|&b| b == b' ') {
+        Some(at) => (&verb[..at], &verb[at + 1..]),
+        None => (verb, &verb[..0]),
+    };
+    match word {
         b"" | b"status" => status(uart, index, devices),
-        verb => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
+        word if host::VERBS.contains(&word) => {
+            // One engine, on target_phy: only target_a / target_c reach it.
+            if index <= 1 {
+                host::command(uart, &mut devices.usb_host, word, args);
+            } else {
+                let _ = writeln!(uart, "no host engine on {}", PORTS[index].0);
+            }
+        }
+        _ => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
             Some((name, what, missing)) => planned(uart, index, name, what, missing),
             None => {
-                let _ = writeln!(uart, "usage: usb {} [status|disable|enable|device|host|reset]",
-                                 PORTS[index].0);
+                let _ = writeln!(uart, "usage: usb {} [status|disable|enable|role|reset|desc|\
+setup|in|out|tx|rx|addr|aoa]", PORTS[index].0);
             }
         },
     }
@@ -87,7 +100,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
 /// **None of them touch hardware.** A half-done `off` is worse than none: the
 /// first version opened EVERY VBUS switch, because there is no per-switch open
 /// in the driver -- so a command scoped to one port silently cut the other two.
-const VERBS: [(&str, &str, &str); 5] = [
+const VERBS: [(&str, &str, &str); 2] = [
     // DISABLED, not "off". Off is an action and says nothing about what is
     // still live; disabled is a state, and the state wanted here is inert --
     // the port draws nothing, sources nothing, raises no ALERT and answers no
@@ -97,12 +110,6 @@ const VERBS: [(&str, &str, &str); 5] = [
 disarm in `power.rs`, no write path to the FUSB302B's SWITCHES0/POWER"),
     ("enable", "the inverse: rail live, ALERT armed, CC pulls attached",
      "same three, and `vbus.rs` refuses source combinations by policy"),
-    ("device", "put this port in device mode",
-     "no role control -- the ULPI window is read-only in this SoC"),
-    ("host", "put this port in host mode",
-     "no role control -- the ULPI window is read-only in this SoC"),
-    ("reset", "pulse this port's PHY reset",
-     "only TARGET has a RESETB this SoC drives; see `usb3343 reset`"),
 ];
 
 /// A verb that exists in the vocabulary and not yet in the firmware.
