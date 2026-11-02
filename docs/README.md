@@ -86,6 +86,7 @@ in its §13 got there in the first place.
 * [`toolchain-simplification.md`](toolchain-simplification.md) — luna_soc dependency: what needs it, what does not
 * [`toolchain-versions.md`](toolchain-versions.md) — Toolchain versions (pinned vs installed vs latest) and the constraints on them
 * [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream and what we replaced; no-upstreaming policy; luna-soc fork pin; carried commits; upstream CI and clean-build traps
+* [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
 * [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers (`$scopeinfo`, vector ports, LPF `HZ`)
 * [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
