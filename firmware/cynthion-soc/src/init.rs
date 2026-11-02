@@ -440,6 +440,13 @@ fn hyperram_init(out: &mut Out) {
             ),
         );
     }
+    if let Some((address, wrote, seen)) = report.mismatch {
+        out.line(
+            "hyperram",
+            "FAIL",
+            format_args!("register {address:04x}: wrote {wrote:04x}, read back {seen:04x}"),
+        );
+    }
     out.line(
         "hyperram",
         if report.kept { "ok" } else { "WARN" },

@@ -252,7 +252,20 @@ pub struct Init {
     pub kept: bool,
     /// The build stamp found beside the canary, whatever it was.
     pub stamp: u32,
+    /// First register that did not take its configured value: (address, wrote,
+    /// read back). `None` means CR0 and CR1 hold what [`CR0_WANT`]/[`CR1_WANT`] say.
+    pub mismatch: Option<(u32, u16, u16)>,
 }
+
+/// Configured CR0/CR1, written and read back on every boot (#319). Both are
+/// the power-on defaults today, so applying them changes nothing; a sweep
+/// result replaces them here, in one place.
+#[cfg(feature = "image")]
+const CR0_WANT: u16 = 0x8f2f;
+#[cfg(feature = "image")]
+const CR1_WANT: u16 = 0xffc1;
+#[cfg(feature = "image")]
+const CR1_ADDR: u32 = 0x0801;
 
 /// `hyperram_init()` -- wake it, prove the path, and record whether it kept
 /// power. **It never asserts `RESET#`.**
@@ -300,7 +313,16 @@ pub fn init(stamp: u32) -> Init {
         }
     }
     if !alive {
-        return Init { pulses, alive, kept: false, stamp: 0 };
+        return Init { pulses, alive, kept: false, stamp: 0, mismatch: None };
+    }
+
+    // Verified by read-back, never assumed: a write that did not land is
+    // reported, not latched as success.
+    let mut mismatch = None;
+    for (address, want) in [(backend::CR0, CR0_WANT), (CR1_ADDR, CR1_WANT)] {
+        if let Err(seen) = backend::write_register(address, want) {
+            mismatch = mismatch.or(Some((address, want, seen)));
+        }
     }
 
     let found = read_u32(CANARY_WORD);
@@ -310,7 +332,7 @@ pub fn init(stamp: u32) -> Init {
     // idempotent.
     write_u32(CANARY_WORD, CANARY);
     write_u32(STAMP_WORD, stamp);
-    Init { pulses, alive, kept: found == CANARY, stamp: was }
+    Init { pulses, alive, kept: found == CANARY, stamp: was, mismatch }
 }
 
 use backend::seek;
