@@ -2249,6 +2249,10 @@ def main():
         usb_hz=round(solved.actual_usb_mhz * 1e6),
         cache_sets=CACHE_SETS, cache_ways=CACHE_WAYS,
         isa=vexii_cpu.isa_generated())
+    # The packed file must agree with the record on the part (cynthion#185).
+    problems = usercode_map.bitstream_problems(build_dir / "top.bit", record)
+    if problems:
+        raise SystemExit("bitstream/record part mismatch:\n  " + "\n  ".join(problems))
     beside, index = usercode_map.write(record, build_dir)
     print(f"usercode {code:#010x} -> {beside}")
 

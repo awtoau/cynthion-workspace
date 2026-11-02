@@ -39,6 +39,8 @@ vendor's own files say the dies are the same: byte-identical `.con` package
 files, identical `frames × bits_per_frame`, byte-identical Trellis
 `tilegrid.json`, IDCODEs differing only in the top nibble.
 
+- **Trap: the packed IDCODE follows the platform's `device` string, nothing else** ([cynthion#185](https://github.com/greatscottgadgets/cynthion/issues/185)). `LFE5U-12F` packs `0x21111043` (this board), `LFE5U-25F` packs `0x41111043`; the `.bit` is the same size either way, and an installed non-editable package keeps the old string. `usercode_map.bitstream_problems` compares the packed `.bit` with the build record at build time, and `soc_confirm.part_gate` checks both against the board's IDCODE before any configure or flash write.
+
 ## Performance
 
 Structure and rules: [`../../plans/performance-sections.md`](../../plans/performance-sections.md).

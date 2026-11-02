@@ -696,6 +696,83 @@ def stock_apollo_verdict(version):
     ])
 
 
+# The configuration flash this board is built with: Winbond W25Q32, JEDEC
+# manufacturer ef, type 40, capacity 16 (4 MiB). Anything else is not the part
+# the flash layout (bitstream at 0, rodata at 0xb0000) was made for.
+FLASH_JEDEC_OK = (0xEF4016,)
+
+
+def prewrite_verdict(*, board_idcode, want_idcode, want_device=None,
+                     problems=(), flash=False, jedec=None):
+    """Refuse a write to the wrong part. A Verdict, or None when it may proceed.
+
+    Runs BEFORE the first byte is written (apollo#15): `flash_program` and
+    `configure` check nothing about which die or flash they are talking to.
+    An unreadable ID refuses too -- "could not check" is not "checked".
+    """
+    if problems:
+        return Verdict("bitstream-mismatch",
+                       "the bitstream and its build record name different parts",
+                       [f"  {line}" for line in problems])
+    if board_idcode in (None, 0, 0xFFFFFFFF):
+        return Verdict("part-unverified", "the FPGA IDCODE could not be read", [
+            f"  IDCODE {'not read' if board_idcode is None else f'{board_idcode:08x}'}"
+            ": nothing is written to a part that has not identified itself."],
+            retry=True)
+    if want_idcode is None:
+        return Verdict("part-unverified", "no IDCODE to hold the board to", [
+            "  neither the build record nor the bitstream names one."])
+    if board_idcode != want_idcode:
+        return Verdict("wrong-part", "this is not the part the build was packed for", [
+            f"  IDCODE {board_idcode:08x} on the board, {want_idcode:08x} wanted"
+            + (f" ({want_device})" if want_device else ""),
+            "  refusing to write: see docs/chips/ecp5/lfe5u-12f.md."])
+    if flash and jedec not in FLASH_JEDEC_OK:
+        return Verdict("wrong-flash", "the configuration flash is not the expected part", [
+            f"  JEDEC {'not read' if jedec is None else f'{jedec:06x}'}, expected "
+            + " or ".join(f"{j:06x}" for j in FLASH_JEDEC_OK),
+            "  refusing to write: the layout (bitstream at 0, rodata at 0xb0000) "
+            "is for the W25Q32."])
+    return None
+
+
+def part_gate(bitstream, *, flash=False, read_idcode=None, read_jedec=None):
+    """The pre-write check for `bitstream`, against the board. Verdict or None.
+
+    The expectation is the build record's IDCODE (prjtrellis, from the
+    platform's `device`) and the `.bit`'s own packed VERIFY_ID, which must
+    agree with each other and with the board. Readers are injectable for tests.
+    """
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
+    import usercode_map
+
+    bitstream = Path(bitstream)
+    record = usercode_map.read_build_record(bitstream.parent)
+    packed = usercode_map.bitstream_idcode(bitstream) if bitstream.exists() else None
+    problems = []
+    if record is not None and bitstream.exists():
+        problems = usercode_map.bitstream_problems(bitstream, record)
+    want = (record or {}).get("idcode")
+    if want is None:
+        want = packed
+    if read_idcode is None:
+        def read_idcode():
+            from soc_usercode import read_identity
+            return read_identity()[0]
+    if flash and read_jedec is None:
+        from soc_usercode import read_flash_jedec as read_jedec
+    # IDs are read even when the files already disagree, so the log shows both.
+    verdict = prewrite_verdict(
+        board_idcode=read_idcode(), want_idcode=want,
+        want_device=(record or {}).get("device"), problems=problems,
+        flash=flash, jedec=read_jedec() if flash else None)
+    if verdict is not None:
+        say(f"REFUSING to write [{verdict.name}]: {verdict.headline}")
+        for line in verdict.lines:
+            say(line)
+    return verdict
+
+
 def precheck():
     """The gate BEFORE configuring: is the board there to configure at all?
 
@@ -773,6 +850,9 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
     if expected is None:
         say(f"  no {usercode_map.RECORD_NAME} beside {Path(bitstream).name}: "
             f"the identity of what is being loaded is not checkable")
+
+    if part_gate(bitstream) is not None:
+        return 1
 
     from subprocess_timeout_from_history import run_bounded
 

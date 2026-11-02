@@ -71,6 +71,36 @@ def read_identity(debugger=None):
     return idcode, usercode
 
 
+def read_flash_jedec(debugger=None):
+    """The configuration flash's JEDEC id as `0xMMTTCC`, or None if unread.
+
+    Unconfigure and read in separate JTAG sessions, as `flash_backup.py` does:
+    both in one session reads back all-0xff on a healthy flash. `debugger` is
+    injectable; the default opens Apollo with the FPGA forced offline.
+    """
+    if debugger is None:
+        import apollo_fpga
+
+        debugger = apollo_fpga.ApolloDebugger(force_offline=True)
+        close = True
+    else:
+        close = False
+    try:
+        with debugger.jtag as chain:
+            debugger.create_jtag_programmer(chain).unconfigure()
+        with debugger.jtag as chain:
+            _, full_id = debugger.create_jtag_programmer(chain).read_flash_id()
+        return full_id
+    except Exception:
+        return None
+    finally:
+        if close:
+            try:
+                debugger.close()
+            except Exception:
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
