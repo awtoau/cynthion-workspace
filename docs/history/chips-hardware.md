@@ -235,3 +235,31 @@ does not, so the absence is deliberate rather than an oversight.
 **The supporting argument was wrong.** Lattice Diamond 3.14 is installed
 locally, and its simulation libraries are the vendor's own declaration of what
 each family exposes. Comparing them:
+
+## docs/chips/ecp5/peripheral-clock-audit.md intro (removed)
+
+`usb` and `sync` used to come from one PLL and, in practice, ran at the same
+rate. [`gateware/soc/clocks.py`](../../../gateware/soc/clocks.py) now takes `usb`
+straight from the 60 MHz oscillator on A8, so `sync` has a PLL to itself and is a
+free parameter. Three assumptions that were safe under the old topology are not
+safe under this one:
+
+## docs/chips/ecp5/peripheral-clock-audit.md intro 2 (removed)
+
+This is the peripheral-by-peripheral review issue [#229](https://github.com/awtoau/cynthion-workspace/issues/229) asked for. Twenty-four
+modules and boundaries, nine findings. A module that turns out to be sound is
+recorded with the reason, because the point of the exercise is that none of them
+had been looked at since the topology changed.
+
+## docs/chips/ecp5/peripheral-clock-audit.md Defect 4 (removed)
+
+**And the rate was wrong for a second reason this section did not catch.** The
+argument below — that 100 kHz puts `t_SU;STA` inside a standard-mode minimum —
+is correct and answers the wrong question. **Every device on that bus is a
+Fast-mode Plus part**: two FUSB302Bs at 1 MHz and a PAC1954 at 1 MHz, which is in
+fact a 3.4 MHz part. The bus is at **1 MHz** now
+
+## docs/chips/ecp5/peripheral-clock-audit.md Defect 4 lead-in (removed)
+
+The original finding, kept because the mechanism it describes is the one that was
+fixed:
