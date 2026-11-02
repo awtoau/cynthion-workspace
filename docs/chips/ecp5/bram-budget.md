@@ -16,6 +16,7 @@ All built for r1.4, same device, package and speed grade.
 
 ## Current SoC count
 
+- Counts recorded before #441 came from non-reproducible builds; see [`lfe5u-12f.md`](lfe5u-12f.md#block-ram).
 - Count by mode, not one mode: `grep -cE "^enum: EBR[0-9]+\.MODE " top.config` (all modes) agrees with nextpnr's `N/56` line; a `DP16KD`-only grep undercounts `PDPW16KD` cells (details: [`lfe5u-12f.md`](lfe5u-12f.md#block-ram)).
 - Recorded counts: 44 of 56 (42 `DP16KD` + 2 `PDPW16KD`; [`lfe5u-12f.md`](lfe5u-12f.md)); 48 of 56 with 8 KiB caches, 49 for the shipping geometry in the 2026-08-12 sweep below (those builds differ).
 - UNVERIFIED: the current count. No build report exists under `tmp/` in this worktree; run `./dev.py metrics report`.

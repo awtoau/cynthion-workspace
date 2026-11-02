@@ -294,6 +294,21 @@ because the extra fabric was clocked slowly.
 `top.config` and finds logic in **44 of 47 tile rows** (R2–R48; the three empty
 rows are EBR/DSP rows on this die, not holes) across 69 columns, flatness 0.73.
 
+### Placement sweep: 24 seeds
+
+Measured 2026-08-03 (commit date) on the r1.4, commit
+[`2b4fb76`](https://github.com/awtoau/cynthion-workspace/commit/2b4fb76fc831b415b0c241d91fe066a513cc221e)
+(`fabric_build.py --seed N` looped by `fabric_sweep.py`; arcs counted by
+`fabric_arcs.py` from `top.config` `arc:` lines against the Trellis database mux list).
+- 24 configurations passed: 20,336 LUT4 each, 120,439 gateware-checked rounds, zero mismatches, no sticky flag.
+- Negative control rebuilt for the sweep (a different placement is a different design): 1,573 of 1,573 rounds mismatched, flag latched on all 200 reads.
+- Interconnect coverage: **35.8%** of 7,804,818 arcs, not the 97% [#116](https://github.com/awtoau/cynthion-workspace/issues/116) predicts for 24 configurations.
+- Why: a placer seed moves tile instances only; the design is 185 structurally identical blocks, so every build needs the same connection kinds and per-tile-type share saturates near 9.6%.
+- Marginal arcs per build fell 213,663 to 68,298, still falling; hundreds of seeds would be needed.
+- Site overlap 0.757 over all 276 pairs vs density floor 0.709: the seed moved about 83% of the movable sites.
+- Conclusion: seed variation cannot reach the coverage #116 assumes; that needs configurations built to select different sources per destination (a different generator).
+- Same result, pluribus side: its `docs/fabric-test.md:52-56`.
+
 ### What this does *not* establish
 
 **Intermittent defects.** This is one part and a single load-and-check, not a
@@ -301,6 +316,10 @@ soak. Binning for occasional wrongness is not excluded by a passing run. Treat
 the extra fabric as usable, not as guaranteed across parts.
 
 ## Block RAM
+
+LUT4 / `TRELLIS_COMB` counts recorded before [#441](https://github.com/awtoau/cynthion-workspace/issues/441) are not comparable across builds:
+- A build-time `datetime.now()` constant was folded by synthesis; four builds of identical source spanned 451 `TRELLIS_COMB` (commit [`04518d7`](https://github.com/awtoau/cynthion-workspace/commit/04518d74d7afa31b7aaab89526f6e42e494964b8)); the instrumentation figure read 714 unpinned vs 1,074 pinned.
+- Fixed: two elaborations now give one RTLIL digest (`scripts/soc/soc_repro_check.py`, [`check.py:328-343`](../../../scripts/check.py#L328-L343)); counts from builds after that are comparable. Also applies to [`bram-budget.md`](bram-budget.md).
 
 nextpnr reports **56 DP16KD** — the 25F figure, not the 12F's 32. The SoC build
 places **44** of them (42 `DP16KD` plus 2 `PDPW16KD`), carrying the CPU's
@@ -434,8 +453,21 @@ circumstances.
 
 `psram.py:779-782` hardcodes `READCLKSEL0=0, READCLKSEL1=1, READCLKSEL2=0` with
 upstream's *"TODO: may need to tune at runtime by trying different values &
-checking for BURSTDET high"*. It never was swept — but before anyone sweeps it,
-the semantics matter, and they are not what "read clock select" suggests.
+checking for BURSTDET high"*. It was swept on the parked DQS PHY and the
+result was negative (below); the semantics also matter, and they are not what
+"read clock select" suggests.
+
+**Swept result (DQS PHY, removed in `c3388ef`):** all eight taps showed the same
+read skew (address A returned `[A+1, A+2]`), which separates a phase error from a
+capture-point error. Source:
+[`hyperram_dqs_phy.py:244-253`](https://github.com/awtoau/cynthion-workspace/blob/8005a3be6aa293ab1258c10471b327dfeee63a70/gateware/soc/peripherals/hyperram_dqs_phy.py#L244-L253)
+at `c3388ef^`.
+- Cause: the device's fixed latency is an odd number of CK; the controller counts
+  whole `sync` cycles of 2 CK at 4:1 gearing, so one CK is not expressible.
+- Failed corrections: odd start address hangs the read path; even, two words back,
+  needs re-assembly across beats. Fix was moving the read window (`read_phase`).
+- Not established: whether a gating-pulse sweep with `PAUSE` and the
+  outer `READ1`/`READ0` loop below changes this.
 
 **Lattice FPGA-TN-02035-1.3, "ECP5 and ECP5-5G High-Speed I/O Interface", §6.2.4**
 ([mirror](https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02035-1-3-ECP5-ECP5-5G-HighSpeed-IO-Interface.pdf)):
