@@ -224,17 +224,16 @@ fn role(uart: &mut Uart, host: &mut Host, args: &[u8]) {
         Ok(s) => {
             let name = ["off", "regs", "host", "raw"][s.role as usize & 3];
             let speed = ["HS", "FS", "LS", "none"][(s.link >> 2) as usize & 3];
-            let line = ["SE0", "J", "K", "SE1"][s.link as usize & 3];
             let link = if s.link >> 7 != 0 { "up" } else { "down" };
-            let _ = write!(
-                uart,
-                "role {} | speed {} | line {} | link {} | rx {} tx {} | raw {:02x}",
-                name, speed, line, link, s.rx_level, s.tx_level, s.link);
+            let _ = write!(uart, "role {}  {}  {}", name, speed, link);
+            if s.rx_level != 0 || s.tx_level != 0 {
+                let _ = write!(uart, "  rx {} tx {}", s.rx_level, s.tx_level);
+            }
             if s.switching {
-                let _ = write!(uart, " | SWITCHING");
+                let _ = write!(uart, "  SWITCHING");
             }
             if s.timeout {
-                let _ = write!(uart, " | TIMEOUT");
+                let _ = write!(uart, "  TIMEOUT");
             }
             let _ = writeln!(uart);
         }
