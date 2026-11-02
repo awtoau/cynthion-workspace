@@ -95,8 +95,9 @@ def test_the_directory_and_the_cache_key_separate_the_same_things():
     for env in (DEFAULT, CK120, SYNC45, CK120_SYNC45):
         assert soc_run.variant_settings.__module__  # imported, not shadowed
     # Every entry in the table appears in the slug and in the settings list.
-    for name, _default, tag, _kind in variant.VARIANT_ENV:
-        assert tag in variant.slug(), name
+    for name, _default, tag, kind in variant.VARIANT_ENV:
+        if kind != variant.FLAG:    # a flag at its default adds no tag
+            assert tag in variant.slug(), name
         assert any(s.startswith(f"{name}=") for s in variant.settings()), name
     assert soc_run.VARIANT_ENV is variant.VARIANT_ENV
 
