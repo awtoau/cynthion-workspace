@@ -86,12 +86,14 @@
 ## Bring-up console: drive USB by hand from the RV shell
 - Goal: type host transactions on the AUX console to explore a device before any gateware host core exists. The RV is the software SIE.
 - Why it fits: ULPI is a byte stream at 60 MHz; the RV cannot bit-bang it live, but it can fill a TX FIFO and drain an RX FIFO through CSRs. That FIFO shim is the same shim topology A needs.
-- Missing piece (gateware): `target_phy` hand-over from `UlpiRegisters`, TX FIFO (TXCMD + bytes), RX FIFO (RXCMD + bytes + line-state events). ~200-400 LUT, 0 BRAM (LUTRAM FIFOs).
-- Proposed verbs (`usbh`, firmware only on top of the shim):
-  - `usbh power on|off` (VBUS via the existing gated `vbus control`), `usbh reset` (bus reset + speed), `usbh status` (line state, speed, VBUS mA)
-  - `usbh tx <hex..>` / `usbh rx` (raw packets), `usbh setup <8 bytes>` + `usbh in <ep> <len>` (control transfer by hand)
-  - `usbh desc` (GET_DESCRIPTOR device/config), `usbh aoa` (51, 52×6, 53, wait re-attach)
-- Exists today: `usb3343 status` (PHY registers, line state), `usb target_a` (rail), `vbus`, `pac1954`. No raw TX/RX.
+- **Port-generic, not host-only.** One ULPI stream engine per PHY, and a runtime **role** per PHY: `device` (today's CDC on AUX), `host`, `raw` (RV bit-bangs), `analyzer`, `off`. Any PHY can be used for anything; the verbs hang off the existing `usb <port>` command, not a new `usbh`.
+- Board limits to respect: three PHYs for four connectors. `target_phy` serves the TARGET-C/A pair (passthrough); `control_phy` is shared with Apollo; `aux_phy` carries the console. `usb3343` register access exists only on `target_phy` today. The console must stay reachable while AUX is re-roled (fallback: the Apollo UART path, which conflicts with JTAG).
+- Missing piece (gateware): per PHY, a mux between the LUNA device stack / host SIE / FIFO shim, plus TX FIFO (TXCMD + bytes) and RX FIFO (RXCMD + bytes + line-state events). ~200-400 LUT per PHY, 0 BRAM (LUTRAM FIFOs). `target_phy` first (hand-over from `UlpiRegisters`).
+- Proposed verbs (firmware on top of the shim; `<port>` = `aux|control|target_a|target_c`):
+  - `usb <port> role device|host|raw|off`, `usb <port> power on|off` (VBUS via the existing gated `vbus`), `usb <port> reset` (bus reset + speed), `usb <port>` (status: role, line state, speed, VBUS mA; exists in part)
+  - `usb <port> tx <hex..>` / `rx` (raw packets), `setup <8 bytes>` + `in <ep> <len>` (control transfer by hand)
+  - `usb <port> desc` (GET_DESCRIPTOR), `usb <port> aoa` (51, 52×6, 53, wait re-attach)
+- Exists today: `usb3343 status` (PHY registers, line state), `usb target_a` (rail), `vbus`, `pac1954`. No raw TX/RX, no role switch.
 - Prior art: LUNA has no host gateware (only `ulpi.py`). GSG's RV-plus-serial tool is Moondancer (GCP over USB), device-side emulation only. Only host reference: Tiliqua's USB MIDI host (apfaudio/tiliqua PR 65, closed 2024-11-05). Vendored GUH SIE is the sim-proven core.
 
 ## Pixel on TARGET-A, 2026-11-02
@@ -100,7 +102,16 @@
 - PHY line state stayed `dp 0 dm 0` (host pulldowns on, OTG control `06`): no D+ pull-up, so the phone is not attaching for data. Likely locked screen / charge-only; retry unlocked with USB set to File transfer (PTP/MTP) after `usbh`-level tooling exists, or first from the PC as Stage 0.
 - Console bug found on the way: `usb target_a` said "nothing drawing" while 450 mA flowed (signed compare) — [#551](https://github.com/awtoau/cynthion-workspace/issues/551), fixed in firmware, not yet flashed.
 
+## The phone side already exists: awto-dji
+- `/mnt/2tb/git/awto-dji` (Flutter app `au.awto.dji.awto_dji_app`, installed on the Pixel 3 XL; wireless adb at the Pixel's current `adb devices -l` address). It is the AOA **device**; the DJI RC is the accessory **host** (docs: `aoa-live-test-2026-10-23.md`, `-26.md`, `phone-bridge-operator-guide.md`).
+- Accessory filter ([`accessory_filter.xml`]): manufacturer `DJI`, model `T600`. The RC also sends description `DJI`, version `v1.2.3.4`, uri `www.dji.com`, serial `12345678` (read off a live phone with `dumpsys usb`). Source: `lib/transport/aoa_identity.dart`.
+- Driven over adb with no screen: `adb shell am start -a au.awto.dji.action.CONNECT --es relay <host>:<port>`; `adb shell dumpsys usb` shows `current_functions=ACCESSORY`, `current_accessory=...`; `adb logcat` shows `[transport:android-accessory] state=...`, `[link] rx`, `[link] packet`.
+- **Hazard:** a `CONNECT` intent does not carry the auto-grant. `AoaShim` waits on Android's "Allow AWTO DJI to access ...?" dialog; with nobody to answer it, it sat in `connecting` (60 s timeout added in `7385613`, unverified on hardware). Accept it with `adb shell input tap` (resolve coordinates from `uiautomator dump`, not hardcoded) or replug so `USB_ACCESSORY_ATTACHED` launches it with the grant.
+- So with Cynthion as accessory host (topology A) and this app on the Pixel, one session controls both ends: the RV sends 51/52×6/53 and then DUML-style bytes; adb reads what the phone saw. The Pixel being wireless-adb means its USB port is free for the Cynthion.
+- Scope (awto-dji CLAUDE.md): interoperability with an owned aircraft; no geofence defeat. Test traffic here is handshake plus loopback, not flight commands.
+
 ## Plan
+0. **Stage 0 tool:** [`scripts/tools/aoa_probe.py`](../scripts/tools/aoa_probe.py) plays the accessory from the PC with the DJI identity above, then lists the `18d1:2d00/2d01` endpoints. Needs the Pixel on a PC USB port (not the Cynthion) and the permission dialog answered. Its `usbmon` capture is the byte-exact target for the RV.
 1. **Stage 0, PC only:** libusb script as accessory against a phone: 51, 52×6, 53, wait for `18d1:2d00`, bulk echo with an Android test app. Capture with usbmon. Pin the DJI RC's exact behaviour first (Q1).
 2. **Stage 1, simulation:** AOA model device on `model.py`'s `USBDevice` in `usb_host_sie_sim.py`; build the shim; keep `soc_sims.py` green.
 3. **Stage 2, board:** re-parent `target_phy` → VBUS to TARGET-A → print a phone's device descriptor → run the sequence → bridge to ACM. Pass: PC reads the test app's bytes from `/dev/ttyACM*`, SoC log shows `18d1:2d00`.
