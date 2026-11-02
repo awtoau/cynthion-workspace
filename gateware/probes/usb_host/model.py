@@ -48,7 +48,7 @@ being checked leaves nothing that is ours to disagree with upstream.
 
 from typing import NamedTuple
 
-from amaranth import Elaboratable, Module, Mux, Signal
+from amaranth import Const, Elaboratable, Module, Mux, Signal
 
 from luna.gateware.interface.utmi import UTMIInterface, UTMIOperatingMode
 from luna.gateware.usb.usb2.control import USBControlEndpoint
@@ -126,12 +126,12 @@ def scale_timing_for_simulation():
     USBSOFController._SOF_TX_TO_RX_MAX_HS = USBSOFController._SOF_CYCLES_HS - 60
 
 
-def connect_utmi(m, host_utmi, device_utmi):
+def connect_utmi(m, host_utmi, device_utmi, present=None):
     """Face two UTMI interfaces at each other. Returns the shared line state.
 
     Each direction is a byte pipe with a three-cycle lead-in on `rx_active`,
     standing in for the SYNC pattern that LUNA's depacketiser waits for before
-    the first data byte.
+    the first data byte. `present` low (a detached device) holds the line at SE0.
     """
 
     def bridge(source, sink):
@@ -164,7 +164,10 @@ def connect_utmi(m, host_utmi, device_utmi):
         return Mux(tx_data == 0x00, 0b10, 0b01)
 
     line_state = Signal(2)
-    with m.If((device_utmi.op_mode == UTMIOperatingMode.CHIRP) & device_utmi.tx_valid):
+    absent = ~present if present is not None else Const(0)
+    with m.If(absent):
+        m.d.comb += line_state.eq(0b00)  # nothing attached: SE0
+    with m.Elif((device_utmi.op_mode == UTMIOperatingMode.CHIRP) & device_utmi.tx_valid):
         m.d.comb += line_state.eq(chirped(device_utmi.tx_data))
     with m.Elif((host_utmi.op_mode == UTMIOperatingMode.CHIRP) & host_utmi.tx_valid):
         m.d.comb += line_state.eq(chirped(host_utmi.tx_data))
