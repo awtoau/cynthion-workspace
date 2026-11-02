@@ -36,6 +36,13 @@ cd cynthion-workspace
 Nothing else needs to be memorised, and `./dev.py audit` says what every other
 script in `scripts/` is and whether anything still reaches it.
 
+`scripts/` layout:
+- top level: entry points and shared libraries (`dev.py`, `check.py`, `soc_run.py`, `soc_test.py`, `tio_user.py`, `devlog.py`, ...)
+- subdirectories: `hyperram/` `soc/` `riscv/` `fabric/` `apollo/` `sideband/` `issues/` `board/` `tools/` `diamond/`
+- scripts import each other by bare module name; `import _paths` puts every subdirectory on `sys.path`
+- a script in a subdirectory first inserts `scripts/` (its `ROOT / "scripts"` line), then imports `_paths`
+- `dev.py` finds a script by bare name (`script("hyperram_verify.py")`); `_paths.find_script(name)` does the same
+
 No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 [Python strategy](#python-strategy).
