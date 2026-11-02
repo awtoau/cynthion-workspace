@@ -137,8 +137,12 @@ def wait_for_new_accessory(phone, gen_before):
     return False
 
 
-def run_cycle(cycle, args, events, log):
-    """-> (ok, why). `why` names the first thing that failed, with the app's side of it."""
+def attach(args, events, log):
+    """Fresh AOA attach: role off, settle, host, reset, aoa, wait for the app's new generation.
+
+    -> (ok, why). Every test starts here so no data left in the phone's buffers by an earlier
+    run can be read as part of the next one.
+    """
     out = shell(["usb target_a role off"])
     # Android tears its gadget down ~1 s after the bus loss and re-presents it ~1.7 s after; a reset
     # or aoa inside that window is undone by it. 2.5 s = 1.5x the measured re-present time.
@@ -156,25 +160,34 @@ def run_cycle(cycle, args, events, log):
     if not wait_for_new_accessory(args.phone, gen_before):
         return False, (f"app accessory_gen never rose above {gen_before} with the accessory open; "
                        f"saw: {events.since(mark)[-4:]}")
+    return True, ""
 
+
+def run_cycle(cycle, args, events, log):
+    """-> (ok, why). `why` names the first thing that failed, with the app's side of it."""
+    ok, why = attach(args, events, log)
+    if not ok:
+        return ok, why
     mode = reply(ctl(args.phone, "mode", "echo", f"test={cycle}"))
     log.write(json.dumps(mode) + "\n")
     if not (mode.get("ok") and mode.get("accessory_open")):
         return False, f"app refused echo mode or reports the accessory closed: {mode}"
 
     quiet = events.mark()
-    text = shell([f"usb target_a echo 1 {size} 1" for size in args.sizes])
-    log.write(text)
-    results = {size: echo_ok(text, size) for size in args.sizes}
-    state = app_state(args.phone, log, "after echo")
-    errors = [t for t in events.since(quiet) if APP_ERROR.search(t)]
-    expected = sum(args.sizes)
-    if errors:
-        return False, f"app error during echo: {errors[0][:160]}"
-    if not all(results.values()):
-        return False, f"Cynthion echo failed {results}; app received {state['bytes']} of {expected} B"
-    if state["bytes"] != expected:
-        return False, f"app received {state['bytes']} B, Cynthion sent {expected} B"
+    sent = 0
+    for size in args.sizes:
+        text = shell([f"usb target_a echo 1 {size} 1"])
+        log.write(text)
+        sent += size
+        state = app_state(args.phone, log, f"after echo {size}")
+        errors = [t for t in events.since(quiet) if APP_ERROR.search(t)]
+        if errors:
+            return False, f"app error during echo {size}: {errors[0][:160]}"
+        if not echo_ok(text, size):
+            return False, f"Cynthion echo {size} failed; app received {state['bytes']} of {sent} B"
+        if state["bytes"] != sent:
+            return False, f"after echo {size} app received {state['bytes']} B, Cynthion sent {sent} B"
+    expected = sent
     if not state["accessory_open"]:
         return False, "app reports the accessory closed after echo"
     return True, f"app received {state['bytes']} B in {state['frames']} frames"
