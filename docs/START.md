@@ -54,7 +54,7 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 - Apollo flags: LTO is load-bearing; `verify_vectors.py` catches a binary that links and does nothing ([samd11-apollo.md](chips/samd11-apollo.md)).
 
 ## 4. Test
-- Fast gate: `./dev.py gate` = `test` (QEMU) -> `lint` (`check.py --parallel`) -> `sim-once` -> `build`. Fail-fast, no board. Run before every commit.
+- Fast gate: `./dev.py gate` = `worktree-gate` (submodule pins; vendor model only warns) -> `test` (QEMU) -> `lint` (`check.py --parallel`) -> `sim-once` -> `build`. Fail-fast, no board. Run before every commit.
 - `./dev.py ci` = `test lint build sim docs`, runs all, one GO/NO-GO.
 - [`check.py`](../scripts/check.py) (`--list`, `--fast` skips slow, `--parallel`, `--verbose`): `rust socfw apollo python freethreading amaranthsoc featureiso socmap review repro irqlog paths doclinks`. Each logs `tmp/logs/check-<name>.log`. Skips (not fails) when a tool is absent; fails on an unpopulated submodule.
 - QEMU shell tests: `./dev.py test` = [`soc_test.py`](../scripts/soc_test.py) (`--no-build`, `-v`, `--features`); builds into `tmp/qemu-build`. `./dev.py test-board` runs the same on hardware.
@@ -76,7 +76,7 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 ```
 git worktree add .claude/worktrees/<name> -b <branch>
 cd .claude/worktrees/<name>
-./dev.py worktree-setup      # = scripts/worktree_setup.py setup [--prune]; then runs check
+./dev.py worktree-setup      # = scripts/worktree_setup.py setup (always prunes stale registrations); then runs check
 ./dev.py worktree-check      # non-zero + fix if not buildable
 ```
 - `git worktree add` populates no submodules. Setup links each (recursively, incl. `ext/SpinalHDL`) as a linked worktree of `.git/modules/<path>`: shared objects, own HEAD/index. No network. Never copy submodule trees ([git.md](git.md)).

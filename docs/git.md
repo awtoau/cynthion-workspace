@@ -59,6 +59,18 @@ gh api repos/greatscottgadgets/<repo>/compare/<upstream-sha>...<fork-sha> \
 - No network: the pins are already in the shared object store.
 - `sources/**` is gitignored and has no pin; `scripts/shared_paths.py:resolve_shared()` finds it: env override, this checkout, then the main checkout behind it.
 
+- `setup` always prunes registrations left by deleted worktrees (names otherwise gain numeric suffixes, [#375](https://github.com/awtoau/cynthion-workspace/issues/375)).
+- `./dev.py gate` starts with `worktree-gate` = `worktree-check` where a missing vendor model only warns. `scripts/merge_gate.py` skips worktrees, so it does not run it.
+
+## Stash is shared across worktrees
+
+- One stash stack per repo, not per worktree: a bare `git stash pop` can take another agent's entry ([#369](https://github.com/awtoau/cynthion-workspace/issues/369)).
+- Preferred: commit WIP to your own branch; do not stash.
+- Enforced for Claude sessions: [`scripts/stash_guard.py`](../scripts/stash_guard.py), a `PreToolUse` hook in the tracked [`.claude/settings.json`](../.claude/settings.json). No install step.
+  - denies `clear`; `pop|apply|drop|branch` with no ref; any ref whose entry is not `On <current branch>`.
+  - prefer the entry's SHA over `stash@{N}`: indexes shift when another worktree stashes.
+- Not covered: stashes run outside Claude Code (plain terminal). Git has no stash hook.
+
 ## Notes
 
 - `repos/cynthion` and `repos/apollo` carry local work and are intentionally ahead of upstream: not fast-forwarded in routine syncs (merge or rebase deliberately).

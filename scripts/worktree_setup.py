@@ -8,7 +8,9 @@
 
     python3 scripts/worktree_setup.py check     # is THIS checkout buildable?
     python3 scripts/worktree_setup.py setup     # make it buildable
-    python3 scripts/worktree_setup.py setup --prune   # also drop stale registrations
+    python3 scripts/worktree_setup.py check --gate   # as check; a missing vendor model only warns
+
+`setup` always prunes registrations left by deleted worktrees (#375).
 
 Both are reachable as `./dev.py worktree-check` and `./dev.py worktree-setup`.
 `check` exits non-zero on anything a build would trip over, and names the fix.
@@ -237,7 +239,7 @@ def unfetchable_report(name: str, url: str, mod: Path, pin: str) -> list[str]:
 # check
 # ---------------------------------------------------------------------------
 
-def check(verbose: bool = False) -> int:
+def check(verbose: bool = False, gate: bool = False) -> int:
     failures: list[str] = []
     warnings: list[str] = []
 
@@ -288,9 +290,12 @@ def check(verbose: bool = False) -> int:
     model = resolve_shared(ROOT, VENDOR_MODEL)
     label = str(VENDOR_MODEL.parent)
     if model is None:
-        failures.append(f"{VENDOR_MODEL} found in neither this checkout nor the "
-                        f"main one -- the vendor-model simulations cannot run")
-        emit(f"  {label:<{width}}  FAIL  {VENDOR_MODEL.name} not found")
+        # Gitignored vendor IP a machine may lack: advisory in the gate (#375).
+        (warnings if gate else failures).append(
+            f"{VENDOR_MODEL} found in neither this checkout nor the "
+            f"main one -- the vendor-model simulations cannot run")
+        emit(f"  {label:<{width}}  {'WARN' if gate else 'FAIL'}  "
+             f"{VENDOR_MODEL.name} not found")
     else:
         where = "here" if model.is_relative_to(ROOT) else "main checkout"
         emit(f"  {label:<{width}}  ok    {model.name} ({where})")
@@ -337,7 +342,7 @@ def clone_module(sub: Sub) -> bool:
     return r.returncode == 0
 
 
-def setup_one(sub: Sub, width: int, prune: bool) -> tuple[int, list[str]]:
+def setup_one(sub: Sub, width: int) -> tuple[int, list[str]]:
     """Materialise one submodule. Returns (changes made, problems)."""
     if not sub.pin:
         return 0, [f"{sub.label}: no gitlink recorded; nothing to check out"]
@@ -348,8 +353,8 @@ def setup_one(sub: Sub, width: int, prune: bool) -> tuple[int, list[str]]:
             return 0, [f"{sub.label}: could not create an object store"]
         acted += 1
 
-    if prune:
-        git(["--git-dir", str(sub.mod), "worktree", "prune"])
+    # Deleted worktrees' registrations collide on name (#375): always prune.
+    git(["--git-dir", str(sub.mod), "worktree", "prune"])
 
     head = head_of(sub.work)
     if head == sub.pin:
@@ -366,9 +371,6 @@ def setup_one(sub: Sub, width: int, prune: bool) -> tuple[int, list[str]]:
                 timeout=CHECKOUT_TIMEOUT_S)
         what = f"moved {head[:8]} -> {sub.pin[:8]}"
     else:
-        # A registration left by a deleted worktree at this path makes
-        # `worktree add` refuse; prune first so setup is re-runnable.
-        git(["--git-dir", str(sub.mod), "worktree", "prune"])
         if sub.work.exists() and not any(sub.work.iterdir()):
             sub.work.rmdir()
         r = git(["--git-dir", str(sub.mod), "worktree", "add", "--detach",
@@ -382,7 +384,7 @@ def setup_one(sub: Sub, width: int, prune: bool) -> tuple[int, list[str]]:
     return acted + 1, []
 
 
-def setup(prune: bool = False) -> int:
+def setup() -> int:
     acted = 0
     problems: list[str] = []
 
@@ -401,7 +403,7 @@ def setup(prune: bool = False) -> int:
         width = max(len(s.label) for s in pending)
         for sub in pending:
             done.add(sub.label)
-            changes, trouble = setup_one(sub, width, prune)
+            changes, trouble = setup_one(sub, width)
             acted += changes
             problems += trouble
 
@@ -437,13 +439,13 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?", default="check",
                         choices=("check", "setup"))
-    parser.add_argument("--prune", action="store_true",
-                        help="drop registrations left by deleted worktrees")
+    parser.add_argument("--gate", action="store_true",
+                        help="check: a missing vendor model warns instead of failing")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     if args.action == "setup":
-        return setup(prune=args.prune)
-    return check(verbose=args.verbose)
+        return setup()
+    return check(verbose=args.verbose, gate=args.gate)
 
 
 if __name__ == "__main__":
