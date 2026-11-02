@@ -31,6 +31,7 @@ because zero errors and a comparator that never fired produce the same number.
 ## Where the code is
 
     gateware/soc/peripherals/hyperram*.py    the controller and the DQS PHY
+    gateware/soc/peripherals/hyperram_init.py  CR0/CR1 init sequencer (#319), sim-only: scripts/soc/soc_hyperram_init_sim.py
     gateware/probes/hyperram/                the standalone harnesses
     scripts/hyperram_*.py                    the host-side drivers
 
