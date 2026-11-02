@@ -6,8 +6,8 @@
 """
 One process owns the board -- the tty, Apollo JTAG, and what is configured.
 
-    ./scripts/board.py run --variant <slug> "bist smoke"     # the client
-    ./scripts/board_arbiter.py --serve                       # the server
+    ./scripts/board/board.py run --variant <slug> "bist smoke"     # the client
+    ./scripts/board/board_arbiter.py --serve                       # the server
 
 ## THE RULE
 
@@ -91,7 +91,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -945,7 +945,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.serve:
         parser.error("nothing to do without --serve; the client is "
-                     "scripts/board.py, which starts this itself")
+                     "scripts/board/board.py, which starts this itself")
     return serve()
 
 

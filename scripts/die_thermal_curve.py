@@ -41,7 +41,7 @@ heating says so rather than merely getting hot.
 `info` between batches for the reading. It costs ~40 ms against 2 s of load, so
 the duty cycle is above 98%.
 
-Through `scripts/board.py` only. Logs to ./tmp/logs/die_thermal_curve.log,
+Through `scripts/board/board.py` only. Logs to ./tmp/logs/die_thermal_curve.log,
 samples to ./tmp/die_thermal_curve.json.
 """
 
@@ -62,7 +62,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 from soc import variant  # noqa: E402
 
-BOARD = ROOT / "scripts" / "board.py"
+BOARD = ROOT / "scripts" / "board" / "board.py"
 
 # The firmware's own ceiling on one `cpu stress` call, from
 # `shell/cpu.rs:STRESS_MAX_MS`. The run length is a count of these.

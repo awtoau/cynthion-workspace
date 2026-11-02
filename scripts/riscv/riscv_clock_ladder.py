@@ -43,7 +43,7 @@ reachable neighbours named, never built and rounded.
 
 ## The board
 
-Through `scripts/board.py` only -- one shared, stateful resource, and a
+Through `scripts/board/board.py` only -- one shared, stateful resource, and a
 transcript with the bitstream digest that produced it. Never the tty directly.
 
 Logs to ./tmp/logs/riscv_clock_ladder.log, results to
@@ -71,7 +71,7 @@ import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from soc_sync_ladder import parse_spec, timing  # noqa: E402
 
 SOC_RUN = ROOT / "scripts" / "soc_run.py"
-BOARD = ROOT / "scripts" / "board.py"
+BOARD = ROOT / "scripts" / "board" / "board.py"
 
 # The shell commands, in order.
 #

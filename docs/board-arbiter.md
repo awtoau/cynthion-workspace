@@ -8,13 +8,13 @@ Submit a job.
 ./dev.py board status
 ```
 
-- Server: [`scripts/board_arbiter.py`](../scripts/board_arbiter.py), HTTP on
+- Server: [`scripts/board/board_arbiter.py`](../scripts/board/board_arbiter.py), HTTP on
   127.0.0.1:9100.
-- Client: [`scripts/board.py`](../scripts/board.py), which **starts the server**
+- Client: [`scripts/board/board.py`](../scripts/board/board.py), which **starts the server**
   if the port is down. No `daemon start` step.
 - Records: `tmp/board-arbiter/jobs/<id>.json`, log `tmp/logs/board-arbiter.log`.
 - Proof harness against real hardware:
-  [`scripts/board_arbiter_proof.py`](../scripts/board_arbiter_proof.py).
+  [`scripts/board/board_arbiter_proof.py`](../scripts/board/board_arbiter_proof.py).
 
 ## Why
 
@@ -92,7 +92,7 @@ each leg to a failure.
 ## Going around it
 
 - The tty's holders are read from `/proc`
-  ([`board_holders.py`](../scripts/board_holders.py)). Anything but
+  ([`board_holders.py`](../scripts/board/board_holders.py)). Anything but
   [`tio_user.py`](../scripts/tio_user.py) — which owns the tty by design and
   fans it out on 9000 — is a refusal naming the pid and command line.
 - An interactive session stays possible: run `tio_user.py`, and the arbiter

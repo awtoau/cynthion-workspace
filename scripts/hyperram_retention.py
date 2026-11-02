@@ -47,7 +47,7 @@ here, whatever job 1 said.
 Run it against a bitstream built before the #479 fix: job 2's ramp comes back
 `255/256 wrong`. The negative control is the point of the script.
 
-Through `scripts/board.py` only. Log `./tmp/logs/hyperram_retention.log`,
+Through `scripts/board/board.py` only. Log `./tmp/logs/hyperram_retention.log`,
 record `./tmp/hyperram_retention.json`.
 """
 
@@ -67,7 +67,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 from soc import variant  # noqa: E402
 
-BOARD = ROOT / "scripts" / "board.py"
+BOARD = ROOT / "scripts" / "board" / "board.py"
 
 OUTPUT = []
 

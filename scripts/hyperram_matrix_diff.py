@@ -323,7 +323,7 @@ def load(path):
             f"{path.name} is an IDLE OBSERVATION, not a measurement. Idle jobs "
             "are preempted mid-sweep and their board state is unattributable; "
             "they report events, never rows. Take a real run with "
-            "`./scripts/board.py run` behind it. (#430)")
+            "`./scripts/board/board.py run` behind it. (#430)")
     return data
 
 

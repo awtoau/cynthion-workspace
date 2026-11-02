@@ -6,14 +6,14 @@
 """
 The client for the board arbiter. Starts the server itself if it is not up.
 
-    ./scripts/board.py run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \\
+    ./scripts/board/board.py run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \\
                            "bist smoke" "bist latency 8"
-    ./scripts/board.py shell "info"          # no configure; whatever is loaded
-    ./scripts/board.py confirm               # is a design running, and which
-    ./scripts/board.py configure --variant <slug>
-    ./scripts/board.py idle --variant <slug> --repeat 20 --budget 40 "bist all 8"
-    ./scripts/board.py status
-    ./scripts/board.py stop
+    ./scripts/board/board.py shell "info"          # no configure; whatever is loaded
+    ./scripts/board/board.py confirm               # is a design running, and which
+    ./scripts/board/board.py configure --variant <slug>
+    ./scripts/board/board.py idle --variant <slug> --repeat 20 --budget 40 "bist all 8"
+    ./scripts/board/board.py status
+    ./scripts/board/board.py stop
 
 ## THE RULE
 
@@ -51,7 +51,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
@@ -90,7 +90,7 @@ def ensure_server(quiet: bool = False) -> None:
     log.parent.mkdir(parents=True, exist_ok=True)
     handle = log.open("a", encoding="utf-8")
     subprocess.Popen(
-        [sys.executable, str(ROOT / "scripts" / "board_arbiter.py"), "--serve"],
+        [sys.executable, str(ROOT / "scripts" / "board" / "board_arbiter.py"), "--serve"],
         cwd=str(ROOT), stdout=handle, stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL, start_new_session=True)
     deadline = time.monotonic() + arbiter.SERVER_START_S

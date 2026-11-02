@@ -5,8 +5,8 @@
 
 """Drive the board arbiter against real hardware and check what it claims.
 
-    ./scripts/board_arbiter_proof.py            # all four
-    ./scripts/board_arbiter_proof.py --only preempt
+    ./scripts/board/board_arbiter_proof.py            # all four
+    ./scripts/board/board_arbiter_proof.py --only preempt
 
 | proof     | what it demonstrates                                            |
 |-----------|-----------------------------------------------------------------|
@@ -33,7 +33,7 @@ import threading
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import board as client  # noqa: E402

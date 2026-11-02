@@ -35,7 +35,7 @@ Every item is a string the firmware itself prints. Nothing here decides a pass
 from "the command returned" -- a shell that answers `unknown` fails the item it
 was asked, which is what caught a board running another worktree's firmware.
 
-Through `scripts/board.py` only. Logs to ./tmp/logs/one_gateware_board_check.log
+Through `scripts/board/board.py` only. Logs to ./tmp/logs/one_gateware_board_check.log
 and the record to ./tmp/one_gateware_board_check.json.
 """
 
@@ -56,7 +56,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 from soc import variant  # noqa: E402
 
-BOARD = ROOT / "scripts" / "board.py"
+BOARD = ROOT / "scripts" / "board" / "board.py"
 
 # Boot status the bootloader reports. 7 is `Owned` -- it asked for STAGE and the
 # mux did not follow, which is the merge's own new failure mode.
