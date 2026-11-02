@@ -6,24 +6,9 @@ the same reason the flash and the HyperRAM do — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
 somewhere they can be found.
 
-> **Read every number here as provisional.**
->
-> - **The core has changed repeatedly and most figures do not say which one they
->   were taken on.** The L1s have been 4 KiB direct-mapped, 8 KiB direct-mapped
->   and 8 KiB 2-way ([#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292)); the dispatcher has been a superloop and RTIC
->   ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)); `opt-level` was chosen against a cache that no longer exists ([#167](https://github.com/awtoau/cynthion-workspace/issues/167)).
-> - **A measurement without its configuration cannot be judged**, only believed.
->   Where the configuration is stated, it is stated. Where it is not, assume the
->   figure predates the current core.
-> - **Verifying any assertion here needs the full matrix**, not one build: cache
->   geometry x opt-level x dispatcher x clock. No such sweep has been run.
->   [#277](https://github.com/awtoau/cynthion-workspace/issues/277) is that work; [#291](https://github.com/awtoau/cynthion-workspace/issues/291) is making a regression explain itself.
-> - **Fmax figures need repeats.** One identical design has closed at 62.81,
->   67.76, 75.30, 77.39, 78.32, 79.58 and 81.12 MHz across builds -- a ~15 MHz
->   placement spread, wider than most differences anyone wants to rank.
->
-> Numbers with a stated date, commit and configuration are the trustworthy ones.
-> Treat the rest as a starting point for a re-measurement.
+> Provisional numbers: the core has changed (L1s were 4 KiB direct, 8 KiB direct, now 8 KiB 2-way: [#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292); dispatcher superloop then RTIC: [#245](https://github.com/awtoau/cynthion-workspace/issues/245); `opt-level` chosen against a cache that no longer exists: [#167](https://github.com/awtoau/cynthion-workspace/issues/167)).
+> - Trust figures that state date, commit and configuration; assume the rest predate the current core.
+> - Full verification needs the cache geometry x opt-level x dispatcher x clock matrix: [#277](https://github.com/awtoau/cynthion-workspace/issues/277); [#291](https://github.com/awtoau/cynthion-workspace/issues/291) makes a regression explain itself.
 
 **Index:** [`../hardware.md`](../hardware.md)
 
@@ -310,8 +295,8 @@ chain.
 |---|---|
 | ISA | RV32IMAC, `--with-rdtime` |
 | issue width | 1 lane, 1 decoder |
-| I-cache | **8 KiB** — 64 sets × 2 ways × 64 B line |
-| D-cache | **8 KiB** — 64 sets × 2 ways × 64 B line |
+| I-cache | **8 KiB** — 64 sets × 2 ways × 64 B line (`CACHE_SETS`/`CACHE_WAYS` in `gateware/soc/top.py`; the 128×1 literals in `cpu.py` `GENERATE_FLAGS` are overridden) |
+| D-cache | **8 KiB** — 64 sets × 2 ways × 64 B line (same) |
 | buses | three masters: `ibus`, `dbus` (cached), `iobus` (uncached, for peripherals) |
 | interrupts | one machine-external wire; concentration is the [controller](../soc-interrupts.md)'s job |
 | debug | `--debug-jtag-instruction`, ER1/ER2 on the TAP Apollo already owns |
