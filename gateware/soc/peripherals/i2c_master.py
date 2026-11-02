@@ -558,10 +558,12 @@ class I2CMaster(wiring.Component):
             #   slot 3  SCL high, SDA low      -- t_SU;STO is slots 2..3
             #   slot 4  SCL high, SDA released <-- the STOP condition
             #   slot 5  SCL high, SDA released
+            # From IDLE (~busy) the bus is already free: hold both lines
+            # released, as a slot-0 SDA fall would be a START (#382).
             with engine.State("STOP"):
                 engine.d.comb += [
-                    scl_high.eq(slot >= 2),
-                    sda_low.eq(slot < 4),
+                    scl_high.eq((slot >= 2) | ~busy),
+                    sda_low.eq((slot < 4) & busy),
                 ]
                 with engine.If(tick):
                     engine.d.sync += slot.eq(slot + 1)

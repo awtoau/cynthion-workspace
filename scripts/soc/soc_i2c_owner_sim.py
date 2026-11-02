@@ -712,6 +712,46 @@ def run_select_checks(checks, verbose):
         f"been talked to.")
 
 
+# --- 3b. a bare STOP from idle must not put a START on the wire ---------------
+
+def run_stop_from_idle_checks(checks, verbose):
+    pac = ModelPac1954()
+    dut, build = make_sim(buses(pac=pac), verbose)
+    seen = {"edges": 0}
+
+    async def monitor(ctx):
+        # SDA falling in a cycle where SCL was high before it is a START or
+        # skew-decided: SCL falling in the same cycle does not make it safe.
+        prev = (1, 1)
+        while True:
+            await ctx.tick()
+            k = BUS_POWER_MONITOR
+            scl = ctx.get(dut.scl_o[k])
+            sda = 0 if ctx.get(dut.sda_oe[k]) else 1
+            if prev == (1, 1) and sda == 0:
+                seen["edges"] += 1
+            prev = (scl, sda)
+
+    async def testbench(ctx):
+        driver = Controller(ctx, dut, verbose)
+        await driver.setup()
+        await driver.select(BUS_POWER_MONITOR)
+        await driver.idle(50)
+        seen["edges"] = 0
+        await driver._command(CR_STO)          # bare STOP, bus idle
+        await driver.idle(50)
+
+    sim = build(testbench)
+    sim.add_testbench(monitor, background=True)
+    sim.run()
+
+    checks.check(
+        "a bare STOP from idle puts no START edge on the bus",
+        seen["edges"] == 0,
+        f"SDA fell from an idle-high bus {seen['edges']} time(s); STOP slot 0 "
+        f"drops SDA as SCL falls, from IDLE (#382).")
+
+
 # --- 4. the firmware has the structure the sections above require ------------
 
 def source(root, name):
@@ -905,6 +945,10 @@ def main():
 
     emit("3. the mux select, not remembered across transactions")
     run_select_checks(checks, args.verbose)
+    emit()
+
+    emit("3b. a bare STOP from idle")
+    run_stop_from_idle_checks(checks, args.verbose)
     emit()
 
     emit(f"4. the firmware structure ({args.firmware})")
