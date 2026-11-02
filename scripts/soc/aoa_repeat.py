@@ -4,6 +4,7 @@
 """
     ./scripts/soc/aoa_repeat.py [--cycles 10] [--sizes 1 64 512 4096] [--phone IP]
 
+Stops at the first failing cycle (--keep-going to run on): fix the error, rerun.
 Per cycle: role off/host, reset, aoa, wait for the app to report the accessory open, set echo
 mode, echo each size. The app's event log is followed the whole time and
 `ctl get` is read after each phase: a cycle fails on any app error after the accessory is open,
@@ -162,6 +163,8 @@ def main():
     parser.add_argument("--sizes", type=int, nargs="+", default=[1, 64, 512, 4096])
     parser.add_argument("--phone", default="192.168.25.125")
     parser.add_argument("--app-log", default=str(DEFAULT_APP_LOG))
+    parser.add_argument("--keep-going", action="store_true",
+                        help="do not stop at the first failing cycle (default: stop, fix, rerun)")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -178,7 +181,10 @@ def main():
                           "\n".join("  " + t for t in events.since(mark)) + "\n")
                 say(f"cycle {cycle}: {'PASS' if ok else 'FAIL'}  {why}  "
                     f"{time.monotonic() - started:.0f} s", log)
-            say(f"{passed}/{args.cycles} cycles passed", log)
+                if not ok and not args.keep_going:
+                    say(f"stopped at the first failure; details in {LOG.relative_to(ROOT)}", log)
+                    break
+            say(f"{passed}/{cycle} cycles passed", log)
     finally:
         events.close()
     return 0 if passed == args.cycles else 1
