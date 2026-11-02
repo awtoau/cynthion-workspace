@@ -442,7 +442,7 @@ Synthesis-only knob table (`scripts/soc/soc_cpu_knobs.py`, `synth_ecp5` of the c
 | **applied: 64x1 caches, no BTB** | **-1090** | **-587** | **-8** | 5728 / 3219 / 6 |
 
 - Mapper noise exceeds the cache-size trend (128x1 below 64x1); the BTB, and the cache ways via DP16KD, are the clear savings.
-- Whole-SoC numbers come from the build, not this table.
+- Whole-SoC build of the applied config (2026-11-02, `ck80-dqs0-sync60`, `--no-parallel-refine`): bitstream produced; LUT4 16,087/24,288, DP16KD 28/56, PFUMX 2,893, L6MUX21 647.
 
 ## Regenerating and reading the core
 
