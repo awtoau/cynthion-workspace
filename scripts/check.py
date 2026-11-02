@@ -256,7 +256,7 @@ def build_checks() -> List[Check]:
         # could go red was `pub get`. It reported green for months over 6
         # analyzer warnings and a failing smoke test -- the same
         # `continue-on-error` failure the hosted workflows had, carried into the
-        # local runner. See docs/github_actions.md.
+        # local runner. Nothing runs on GitHub Actions: docs/START.md.
         Check(
             name="amaranthsoc",
             description="amaranth_soc is the real package, not luna_soc's vendored copy",

@@ -112,7 +112,7 @@ def emit_from_rtlil(il_path, outdir, yosys="yosys", extra_v=()):
     #
     # $scopeinfo is a debug-only annotation that records where hierarchy used
     # to be; it has no ports and no logic, so deleting it changes nothing
-    # electrically. See docs/upstream-yosys-write-edif-hierarchy.md -- the
+    # electrically. See docs/upstream-yosys-edif-notes.md -- the
     # real fix is for write_edif to skip these itself.
     edif = outdir / "structural.edf"
     ys2 = outdir / "emit_structural.ys"

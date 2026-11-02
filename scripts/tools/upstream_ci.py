@@ -22,9 +22,8 @@ Usage:
 
 Exit code is 0 only if every selected job passes.
 
-See docs/upstream-ci-workflow.md for how this fits the submission process, and
-docs/upstream-patch-process.md for the rules a patch must satisfy before it goes
-anywhere near a fork.
+See docs/upstream-boundary.md for how this fits the submission process and the
+rules a patch must satisfy before it goes anywhere near a fork.
 """
 
 import argparse
