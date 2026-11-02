@@ -258,7 +258,7 @@ words either way.
 
 **Cost.** 512 bits fits in ECP5 distributed LUT RAM: 16 × 32 needs 8 `DPR16X4`
 plus pointers and an FSM. **Inferred**, ~150–300 LUTs, no block RAM — which
-matters: 49 of 56 are used at the shipped 64x2 cache geometry ([bram-budget.md](chips/ecp5/bram-budget.md); earlier text said 42, `d440f03`). Read latency to the first beat is
+matters: 49 of 56 are used at the shipped 64x2 cache geometry ([bram-budget.md](chips/ecp5/bram-budget.md)). Read latency to the first beat is
 unchanged (17 CK + 2 words either way); write latency gains one line-fill time
 before the transaction starts.
 

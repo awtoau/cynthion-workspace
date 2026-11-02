@@ -70,7 +70,7 @@
 - Both 512x8 FIFOs land in LUT RAM (96 of 3036 `TRELLIS_RAMW`).
 - Whole GUH examples for comparison: `keyboard_host` 2184 LUT, `midi_host` 2244, `msc_host` (HS) 4103 LUT / 1 BRAM.
 - SoC today (`top.tim`, LFE5U-12F, CABGA256, speed 8): 12201 LUT4 (50%), 159 LUTRAM. BRAM: see [chips/ecp5/bram-budget.md](chips/ecp5/bram-budget.md).
-  - Earlier draft said 42 of 56. `gateware/soc/top.py` (comment above `CACHE_SETS`) lists 49 blocks for the current 64x2 cache geometry (43 for 64x1, 47 for 128x1). No build report under `tmp/` to confirm: UNVERIFIED.
+  - BRAM: 49 blocks for the current 64x2 cache geometry per the `gateware/soc/top.py` comment above `CACHE_SETS` (43 for 64x1, 47 for 128x1), and `DP16KD` 49 in [soc-review-baseline.json](soc-review-baseline.json) (`432d29b`). No recent build report under `tmp/`: current figure UNVERIFIED.
   - Cache geometry: 64 sets x 2 ways x 64 B = 8 KiB per cache in `top.py` `CACHE_SETS`/`CACHE_WAYS` (applies); `cpu.py` literal defaults are 128x1. Canonical: [chips/vexiiriscv-cpu.md](chips/vexiiriscv-cpu.md).
   - + SIE: ~14300 LUT (59%); + SIE and enumerator ~15100 (62%); + 200-400 LUT CSR/FIFO shim. BRAM untouched.
 - fmax (SoC): `sync` 71.58 MHz (constraint 60), `usb` 94.30 MHz (60), `jtck` 161.08 MHz (20). Host belongs in `usb`. Clock plan: [soc-clocking.md](soc-clocking.md).
