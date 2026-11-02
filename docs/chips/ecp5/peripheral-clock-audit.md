@@ -1,10 +1,6 @@
 # Every peripheral against the new clock topology
 
-`usb` and `sync` used to come from one PLL and, in practice, ran at the same
-rate. [`gateware/soc/clocks.py`](../../../gateware/soc/clocks.py) now takes `usb`
-straight from the 60 MHz oscillator on A8, so `sync` has a PLL to itself and is a
-free parameter. Three assumptions that were safe under the old topology are not
-safe under this one:
+[`gateware/soc/clocks.py`](../../../gateware/soc/clocks.py) takes `usb` straight from the 60 MHz oscillator on A8; `sync` has a PLL to itself and is a free parameter (clock plan: [`../../soc-clocking.md`](../../soc-clocking.md)). Assumptions to avoid:
 
 1. **`sync == usb`.** Every crossing between them was degenerate and correct by
    accident. They are independent by construction now.
@@ -13,10 +9,7 @@ safe under this one:
 3. **`usb` has no reset.** `ResetSignal("usb")` is tied to 0 — the oscillator
    runs before any PLL is asked for anything, so there is nothing to gate on.
 
-This is the peripheral-by-peripheral review issue [#229](https://github.com/awtoau/cynthion-workspace/issues/229) asked for. Twenty-four
-modules and boundaries, nine findings. A module that turns out to be sound is
-recorded with the reason, because the point of the exercise is that none of them
-had been looked at since the topology changed.
+Peripheral-by-peripheral review for [#229](https://github.com/awtoau/cynthion-workspace/issues/229): 24 modules and boundaries, nine findings; sound modules are recorded with the reason.
 
 Related: [`../../soc-clocking.md`](../../soc-clocking.md) §2, the withdrawn
 "CPU corrupts above 60 MHz" result whose signature was a `SyncFIFOBuffered`
@@ -190,19 +183,14 @@ from the gateware's own `prescale_for(sync_hz, I2C_SCL_HZ)`, exactly as this
 section proposed, so the two dead references in `top.py` are live and a `sync`
 change rescales nothing silently.
 
-**And the rate was wrong for a second reason this section did not catch.** The
-argument below — that 100 kHz puts `t_SU;STA` inside a standard-mode minimum —
-is correct and answers the wrong question. **Every device on that bus is a
-Fast-mode Plus part**: two FUSB302Bs at 1 MHz and a PAC1954 at 1 MHz, which is in
-fact a 3.4 MHz part. The bus is at **1 MHz** now
+The bus is **1 MHz** (every device on it is a Fast-mode Plus part: two FUSB302Bs at 1 MHz and a PAC1954, a 3.4 MHz part)
 ([`d820d9e`](https://github.com/awtoau/cynthion-workspace/commit/d820d9e)) and
 the CPU spent on the power poll fell from 6.34% to 2.70%. The audit trail is
 [`../bus-speed-audit.md`](../bus-speed-audit.md); the per-part figures are in
 [`../fusb302b-type-c.md`](../fusb302b-type-c.md) and
 [`../pac1954-power-monitor.md`](../pac1954-power-monitor.md).
 
-The original finding, kept because the mechanism it describes is the one that was
-fixed:
+Original finding (the mechanism that was fixed):
 
 `i2c_master.py` derives everything from `PRER`: one slot per `PRER + 1` `sync`
 cycles, five slots per bit, so `f_SCL = f_sync / (5 · (PRER + 1))`. The module is
@@ -428,8 +416,8 @@ power-up with no JTAG attached.
 `sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`, `bootram.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
 invariants they depend on are worth writing down because nothing enforces them:
-every PLIC source must be driven in `sync` (the PLIC has no synchroniser and
-treats sources as combinational levels), and `Clint.mtime` must be driven in
+every interrupt-controller line (`intc.lines[...]`) must be driven in `sync` (the controller has no synchroniser and
+treats lines as combinational levels), and `Clint.mtime` must be driven in
 `sync` (it is a bare 64-bit assignment, and a cross-domain one would be
 catastrophic). Both hold today.
 

@@ -117,13 +117,13 @@ These five are mutually exclusive: at most one may be requested in a design.
 |---|---|---|---|---|
 | `target_type_c` 0 | `scl` | A4 | used | I2C mux segment `TARGET`, `R98` 2.2 kΩ pull-up |
 | | `sda` | C4 | used | `R97` 2.2 kΩ |
-| | `int` | A3 | used | → `i2c_mux.target_int` → CSR **and** `plic.sources[4]`. `R37` 2.2 kΩ, FUSB302B `U2` pin 5 |
+| | `int` | A3 | used | → `i2c_mux.target_int` → CSR **and** `intc.lines[IRQ_TYPE_C_TARGET]`. `R37` 2.2 kΩ, FUSB302B `U2` pin 5 |
 | | `fault` | D4 | used | → `i2c_mux.target_fault` → CSR. `R100` 10 kΩ; source is `U13` pin 6 `FAULTB`, open-collector, on the DPO2036 — **not** the FUSB302B |
 | | `sbu1` | A2 | **requested-unused** | net `TARGET_C.SBU1S` → `U13` pin 10 → `J4` A8 |
 | | `sbu2` | E4 | **requested-unused** | net `TARGET_C.SBU2S` → `U13` pin 9 → `J4` B8 |
 | `aux_type_c` 0 | `scl` | H12 | used | `R38` 2.2 kΩ |
 | | `sda` | G14 | used | `R33` 2.2 kΩ |
-| | `int` | H14 | used | → `plic.sources[5]`. `R39` 2.2 kΩ, FUSB302B `U12` pin 5 |
+| | `int` | H14 | used | → `intc.lines[IRQ_TYPE_C_AUX]`. `R39` 2.2 kΩ, FUSB302B `U12` pin 5 |
 | | `fault` | J14 | used | `R99` 10 kΩ, from `U14` |
 | | `sbu1` | H13 | **requested-unused** | net `AUX_TYPE_C.SBU1S` → `U14` pin 9 → `J1` A8 |
 | | `sbu2` | K14 | **requested-unused** | net `AUX_TYPE_C.SBU2S` → `U14` pin 10 → `J1` B8 |
@@ -149,7 +149,7 @@ Detail on the parts: [`../fusb302b-type-c.md`](../fusb302b-type-c.md).
 | | `sda` | C7 | used | `R84` 2.2 kΩ |
 | | `pwrdn` | D5 | used | GPIO pin 6. `R87` 5.1 kΩ pull-up, PAC1954 `U1` pin 16 |
 | | `slow` | C6 | **requested-unused** | PAC1954 `U1` pin 1 = SLOW/ALERT1. **`R85`, 10 kΩ to +3V3, is fitted** |
-| | `gpio` | D6 | used | PAC1954 `U1` pin 15 = GPIO/ALERT2 → `plic.sources[IRQ_POWER_ALERT]`, inverted. **`R86`, 10 kΩ to +3V3, is fitted**. The source is not in the firmware's enable mask — see [`../../soc-interrupts.md`](../../soc-interrupts.md) |
+| | `gpio` | D6 | used | PAC1954 `U1` pin 15 = GPIO/ALERT2 → `intc.lines[IRQ_POWER_ALERT]`, inverted. **`R86`, 10 kΩ to +3V3, is fitted**. The source is not in the firmware's enable mask — see [`../../soc-interrupts.md`](../../soc-interrupts.md) |
 
 Part detail: [`../pac1954-power-monitor.md`](../pac1954-power-monitor.md).
 
@@ -261,11 +261,11 @@ That is true of the probes and false of the SoC, which is the design that ships.
 
 ### 3. PAC1954 `gpio` (D6) — wired to the interrupt controller, not enabled by the firmware
 
-**State:** `plic.sources[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)` in
+**State:** `intc.lines[IRQ_POWER_ALERT].eq(~power_monitor.gpio.i)` in
 `gateware/soc/top.py`. `R86`, 10 kΩ to +3V3, is fitted — what the datasheet
 requires for the ALERT function, since the pin is open-drain (§3.9).
 
-The firmware's enable mask is `0000003e`, bits 1–5, so nothing listens yet.
+The firmware's enable mask is `0000003e`, bits 1–5 (UNVERIFIED), so nothing listens yet.
 Whether that is deliberate is unrecorded — [`../../soc-interrupts.md`](../../soc-interrupts.md).
 
 **What the part can do with it** (DS20006539B §5.16, Registers 7-2, 7-20, 7-22,
@@ -290,11 +290,8 @@ complete does not latch and sets no status bit, so it must be caught as an edge.
 
 **What it would take:**
 
-1. `top.py`: read `power_monitor.gpio.i` through an `FFSynchronizer` (the same
-   shape `i2c_mux` already uses for `int`/`fault`), plus an edge detector for the
-   5 µs pulse.
-2. `Plic(sources=5)` → `6`, one new `IRQ_*` constant, one `plic.sources[...]`
-   line. The pattern is already there twice for the two Type-C `int` lines.
+1. `top.py`: `power_monitor.gpio.i` already reaches `intc.lines[IRQ_POWER_ALERT]` through an `FFSynchronizer`; still needed: an edge detector for the 5 µs pulse.
+2. Interrupt controller: `IRQ_POWER_ALERT = 6` is already defined and wired (no PLIC; see [`../../soc-interrupts.md`](../../soc-interrupts.md)).
 3. Firmware: write `CTRL` (`0x01`) with `GPIO_ALERT2 = 0b00`, enable the wanted
    alerts in `ALERT_ENABLE` (`0x49`), route them to the pin in `GPIO_ALERT2`
    (`0x28`), and read `ALERT STATUS` (`0x26`) in the handler.
