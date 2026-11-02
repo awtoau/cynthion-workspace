@@ -61,3 +61,61 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 ## Not upstream
 - GUH (the vendored host SIE): [apfaudio/guh](https://github.com/apfaudio/guh), BSD-3-Clause, pushed 2026-10-26, 8 commits past our vendored `923c8490` (mostly mass-storage engines). Tiliqua: [apfaudio/tiliqua](https://github.com/apfaudio/tiliqua) (the only working LUNA-lineage host).
 - LiteDRAM [`ecp5ddrphy.py`](https://github.com/enjoy-digital/litedram/blob/master/litedram/phy/ecp5ddrphy.py): per-group bitslip knob, DDRDLLA init order, IOLOGIC reset with ECLK stopped (DQS reference, parked).
+
+## Second sweep: older items and open issues of any age (2026-11-02)
+First sweep covered May 2025 on. This one read every open issue/PR of any age and sampled closed items before 2025-05 on our topics. Closed items were keyword-sampled, not exhaustively read; UNSURE = title only. Repos: luna, facedancer, cynthion, apollo, cynthion-hardware, saturn-v, luna-soc, packetry.
+
+### luna: device-stack items that matter for the AOA test rig (ZLPs, stalls, descriptors)
+| item | state | why it matters to us | verdict |
+|---|---|---|---|
+| [#127](https://github.com/greatscottgadgets/luna/issues/127) `USBInTransferManager` does not toggle DATA on a ZLP | closed 2021-08 (fix PR #128 closed unmerged) | ZLP DATA-toggle bug in the bulk IN path; mainline status UNSURE | USE: verify the toggle in our fork |
+| [#137](https://github.com/greatscottgadgets/luna/issues/137) descriptor request of exactly N*MPS stalls instead of a ZLP | closed 2021-11 | direct ZLP test case; final fix UNSURE ([#264](https://github.com/greatscottgadgets/luna/pull/264) merged 2024-06 passes MPS to GetDescriptor) | USE: ZLP test |
+| [#143](https://github.com/greatscottgadgets/luna/issues/143) `usb_device_connect=0` does not disconnect | closed 2024-06 (fixed by [#212](https://github.com/greatscottgadgets/luna/pull/212)) | soft-disconnect for re-enumeration | USE: confirm #212 in fork |
+| [#166](https://github.com/greatscottgadgets/luna/issues/166) `CLEAR_FEATURE(ENDPOINT_HALT)` not implemented | closed 2024-07 ([#266](https://github.com/greatscottgadgets/luna/pull/266)) | stall recovery, toggle reset | USE: confirm #266 in fork |
+| [#163](https://github.com/greatscottgadgets/luna/issues/163) ECP5 descriptors > 128 B truncated | closed 2024-11 | our composite descriptor may exceed 128 B; gateware fix UNSURE | WATCH |
+| [#32](https://github.com/greatscottgadgets/luna/issues/32) wrong `bInterfaceProtocol` for ACM | closed 2020-07 | CDC descriptor pitfall; check our protocol byte | reference |
+| [#125](https://github.com/greatscottgadgets/luna/issues/125) internal speed signal never updated in `USBDevice` | open 2021-07 | speed/chirp logic; check our fork | WATCH |
+| [#145](https://github.com/greatscottgadgets/luna/issues/145) some ULPI register-write aborts not handled | closed 2021-11 | workaround was writing twice; fix UNSURE | WATCH |
+| [#224](https://github.com/greatscottgadgets/luna/issues/224) CDC ACM orphaned packets in the analyzer | closed 2023-11 | resolution UNSURE | reference |
+| [#281](https://github.com/greatscottgadgets/luna/issues/281) USB example without `submodules.car` / platform support | open 2024-11 | clock/platform requirements for a custom device | reference |
+| [#141](https://github.com/greatscottgadgets/luna/issues/141) Microsoft OS descriptors for WinUSB ([#251](https://github.com/greatscottgadgets/luna/pull/251), [#256](https://github.com/greatscottgadgets/luna/pull/256)) | closed 2021-10 | WinUSB for our vendor bulk interface; UNSURE | USE |
+| [#248](https://github.com/greatscottgadgets/luna/pull/248) ULPI waits min Tstart before bus use | merged 2024-05 | ULPI bring-up timing; UNSURE | WATCH |
+
+### facedancer
+| item | state | why it matters to us | verdict |
+|---|---|---|---|
+| [#152](https://github.com/greatscottgadgets/facedancer/issues/152) `USBConfiguration` parse fails with an IAD | open 2025-02 | composite CDC + vendor needs an IAD; BOS also unsupported | AVOID facedancer for IAD composite tests |
+| [#157](https://github.com/greatscottgadgets/facedancer/issues/157) cancelled control transfer returns stale data | open 2025-04 | stale response can leak into the next control IN; Cynthion-specific per reporter | WATCH |
+| [#114](https://github.com/greatscottgadgets/facedancer/issues/114) control IN limited to libgreat max command size | open 2024-08 | long control IN fails at 4096 B | WATCH |
+| [#115](https://github.com/greatscottgadgets/facedancer/pull/115) ZLP bug on CONTROL IN | merged 2024-09 | reference for expected ZLP behaviour | reference |
+| [#156](https://github.com/greatscottgadgets/facedancer/issues/156) `max_packet_size_ep0=32` ignored | closed 2025-05 | EP0 sizing | WATCH |
+| [#74](https://github.com/greatscottgadgets/facedancer/issues/74) GreatFET One host mode: failed read on endpoint 1 | open 2023-10 | only host-mode reference; unresolved | WATCH |
+| [#133](https://github.com/greatscottgadgets/facedancer/issues/133) descriptor redesign in 3.0.5 broke a keyboard | closed 2024-11 | pin versions if facedancer drives tests | WATCH |
+
+### cynthion, apollo, saturn-v, hardware (older)
+| item | state | why it matters to us | verdict |
+|---|---|---|---|
+| cynthion [#185](https://github.com/greatscottgadgets/cynthion/issues/185) LFE5U-25F instead of 12F on r1.4 | closed 2024-09 | changing the device in the platform did not change the bitstream part string | AVOID blind part swap |
+| cynthion [#184](https://github.com/greatscottgadgets/cynthion/issues/184) `aux_vbus_en` power routing | closed 2024-08 | `aux_vbus_en` alone feeds TARGET A; AUX to another port needs a second switch | USE (VBUS tree) |
+| cynthion [#216](https://github.com/greatscottgadgets/cynthion/issues/216) CLI soft reset | open 2025-03 | maintainer: `apollo reconfigure` does this | USE |
+| apollo [#15](https://github.com/greatscottgadgets/apollo/issues/15) `flash_program` does not check part IDs | open 2023-02 | check the part ID ourselves before flashing | AVOID |
+| apollo [#18](https://github.com/greatscottgadgets/apollo/pull/18) auto-convert 12F/25F bitstreams | open 2023-06 | bitstreams identical except VERIFY_ID; unmerged | USE manually |
+| apollo [#21](https://github.com/greatscottgadgets/apollo/issues/21) sideband PHY unusable on older Cynthions | closed 2024-05 | Apollo cannot regain USB once the FPGA uses the shared PHY | AVOID relying on takeover |
+| saturn-v [#15](https://github.com/greatscottgadgets/saturn-v/issues/15) FPGA interferes with bootloader USB (older Cynthions) | open 2024-05 | bootloader/FPGA contention | WATCH |
+| hardware [#15](https://github.com/greatscottgadgets/cynthion-hardware/issues/15) r1.3 leaks 1.1 V to TARGET A VBUS | closed 2023-12 | r1.3 only; fix is 0 ohm at R114 | reference |
+
+### packetry (older), and capture size / compression
+| item | state | why it matters to us | verdict |
+|---|---|---|---|
+| [#284](https://github.com/greatscottgadgets/packetry/issues/284) queue worker ENOMEM | open 2026-02 | long HS captures hit the usbfs 16 MB cap; raise `usbfs_memory_mb` (reporter got ~700 MB vs ~180 MB) | USE |
+| [#175](https://github.com/greatscottgadgets/packetry/issues/175) record overwrites an unsaved capture without warning | open 2024-08 | save before re-recording | AVOID |
+| [#174](https://github.com/greatscottgadgets/packetry/issues/174) low speed selected on a full-speed device panics | closed 2024-08 | choose the device's real speed | AVOID |
+| [#114](https://github.com/greatscottgadgets/packetry/issues/114) gateware older than Packetry | closed 2024-07 | gateware protocol must match; check `cynthion info` and reflash | USE |
+| [#154](https://github.com/greatscottgadgets/packetry/pull/154) `packetry-cli` | merged 2024-07 | headless capture path (`src/cli.rs`) | USE |
+| [#185](https://github.com/greatscottgadgets/packetry/pull/185) PcapNG export | merged 2024-09 | one USB_2_0 interface, ns timestamps | USE |
+| [#171](https://github.com/greatscottgadgets/packetry/pull/171) faster pcap save | merged 2024-08 | 371 MB: 4 s to 1.7 s | reference |
+| [#136](https://github.com/greatscottgadgets/packetry/issues/136) / [#271](https://github.com/greatscottgadgets/packetry/issues/271) CLI capture / Wireshark extcap | open | no live pcap streaming; pcap written after capture | WATCH |
+
+- **Compression: none anywhere between the analyzer and the file.** Analyzer to host: raw 16 KiB reads (`src/backend/cynthion.rs`, `READ_LEN=0x4000`, 4 transfers in flight); no compression in the host reader (gateware side not read: UNSURE, but `repos/cynthion` analyzer sources contain no compression or filtering code).
+- Database: `src/database/compact_index.rs` delta-encodes the index with checkpoints; packet bytes are stored raw. pcap/pcapng export is uncompressed (`src/file.rs`).
+- Limits in practice: usbfs memory (#284) and the analyzer buffer filling at a saturated bus ([#233](https://github.com/greatscottgadgets/packetry/issues/233)), plus disk space. No hard size cap seen in source (UNSURE).
