@@ -9,8 +9,8 @@ use crate::uart::Uart;
 use crate::usb_host::{self, Error, Host};
 
 /// Verbs this module owns; `usb.rs` routes on them.
-pub(crate) const VERBS: [&[u8]; 10] = [
-    b"role", b"reset", b"desc", b"setup", b"in", b"out", b"tx", b"rx", b"addr", b"aoa",
+pub(crate) const VERBS: [&[u8]; 11] = [
+    b"trace", b"role", b"reset", b"desc", b"setup", b"in", b"out", b"tx", b"rx", b"addr", b"aoa",
 ];
 
 fn fail(uart: &mut Uart, error: Error) {
@@ -116,6 +116,7 @@ pub(crate) fn command(uart: &mut Uart, host: &mut Host, verb: &[u8], args: &[u8]
             }
         },
         b"rx" => rx(uart, host),
+        b"trace" => trace(uart, host, args),
         b"addr" => {
             let result = match parse_decimal(args).filter(|&a| a < 128) {
                 Some(a) => host.set_addr(a as u8).and_then(|()| host.addr()),
@@ -187,4 +188,58 @@ fn rx(uart: &mut Uart, host: &mut Host) {
         }
     }
     let _ = writeln!(uart, "[{}]", count);
+}
+
+/// `trace <mode hex 0-f>` arms (1 incl. reset, 2 drop repeats, 4 now, 8 stop);
+/// `trace dump [first] [n]` prints entries: idx delta data flags ls.
+fn trace(uart: &mut Uart, host: &mut Host, args: &[u8]) {
+    if let Some(rest) = args.strip_prefix(b"dump") {
+        let rest = trim(rest);
+        let at = rest.iter().position(|&b| b == b' ').unwrap_or(rest.len());
+        let first = parse_decimal(&rest[..at]).unwrap_or(0) as u16;
+        let n = parse_decimal(trim(&rest[at..])).unwrap_or(48) as u16;
+        match host.trace_status() {
+            Ok((state, present, count)) => {
+                let _ = writeln!(uart, "trace state {} present {} entries {}", state, present as u8, count);
+                for i in first..count.min(first.saturating_add(n)) {
+                    match host.trace_entry(i) {
+                        Ok(e) => {
+                            let w = e[0] as u64 | (e[1] as u64) << 8 | (e[2] as u64) << 16
+                                | (e[3] as u64) << 24 | (e[4] as u64) << 32 | (e[5] as u64) << 40;
+                            let _ = writeln!(uart, "{} +{} d{:02x} f{:02x} ls{} q{:02x}", i,
+                                             (w >> 18) & 0x3ffff, w & 0xff, (w >> 8) & 0xff,
+                                             (w >> 16) & 3, (w >> 36) & 0x1f);
+                        }
+                        Err(e) => return fail(uart, e),
+                    }
+                }
+            }
+            Err(e) => fail(uart, e),
+        }
+        return;
+    }
+    if args == b"reset" {
+        // Arm now (incl. reset period, drop repeats), then reset: the capture spans it.
+        let t0 = crate::clock::now();
+        let r = host.trace_ctrl(0x7).and_then(|()| host.reset());
+        let us = crate::clock::to_micros(t0.elapsed(crate::clock::now()));
+        match r {
+            Ok(()) => {
+                let _ = writeln!(uart, "reset done in {} us (incl. 10 ms recovery), trace armed", us);
+            }
+            Err(e) => fail(uart, e),
+        }
+        return;
+    }
+    match parse_hex(args) {
+        Some(v) if v < 16 => match host.trace_ctrl(v as u8) {
+            Ok(()) => {
+                let _ = writeln!(uart, "trace mode {:x}", v);
+            }
+            Err(e) => fail(uart, e),
+        },
+        _ => {
+            let _ = writeln!(uart, "usage: usb <port> trace <mode 0-f> | dump [first] [n]");
+        }
+    }
 }

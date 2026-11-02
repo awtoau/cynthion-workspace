@@ -810,8 +810,27 @@ def group_host_fs(checks, verbose=False):
         fs["setup"] = await host_transact(
             pc, type=TYPE_SETUP, address=0, endpoint=0, payload=GET_DESCRIPTOR_DEVICE)
         fs["descriptor"] = await host_transact(pc, type=TYPE_IN, address=0, endpoint=0)
+        # A SECOND bus reset (the SIE FSM is no longer in RESET) must still drive the
+        # PHY into reset mode, else no SE0 reaches the device (real-phone failure).
+        fs["writes"].clear()
+        await pc.write(REG_CTRL, CTRL_BUS_RESET)
+        await poll(pc, REG_LINK, lambda v: not v & 0x80, 40, gap=1)   # reset_done clears
+        fs["again"] = await poll(pc, REG_LINK, lambda v: v & 0x80, BRINGUP_POLLS, gap=64)
+        fs["setup2"] = await host_transact(
+            pc, type=TYPE_SETUP, address=0, endpoint=0, payload=GET_DESCRIPTOR_DEVICE)
 
-    run(bench, fs_testbench)
+    fs["writes"] = []
+
+    async def watch_phy(ctx):
+        last = int(ctx.get(bench.phy.func_ctrl))
+        while True:
+            await ctx.tick("usb")
+            now = int(ctx.get(bench.phy.func_ctrl))
+            if now != last:
+                fs["writes"].append(now)
+                last = now
+
+    run(bench, fs_testbench, extra=(watch_phy,))
     desc = fs.get("descriptor", {}).get("data", [])
     checks.check(
         "host: a full-speed-only device is reported as FULL and enumerates its descriptor",
@@ -819,6 +838,11 @@ def group_host_fs(checks, verbose=False):
         and fs["setup"]["resp"] == RESP_ACK and len(desc) == 18
         and desc[8] | (desc[9] << 8) == VENDOR_ID,
         f"{fs}")
+    checks.check(
+        "host: a second bus reset drives the PHY into reset mode (op_mode RAW_DRIVE) and recovers",
+        any(v & 0x18 == 0x10 for v in fs.get("writes", [])) and fs.get("again") is not None
+        and fs.get("setup2", {}).get("resp") == RESP_ACK,
+        f"writes {[hex(v) for v in fs.get('writes', [])]} again {fs.get('again')}")
 
 
 # ---------------------------------------------------------------------------

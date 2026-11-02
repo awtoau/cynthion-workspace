@@ -67,6 +67,8 @@ VARIANT_ENV = (
     # Flash pad electricals; defaults are board.cynthion_r1_4's. #459.
     ("CYNTHION_FLASH_DRIVE",        "8",    "fdrive",   TEXT),
     ("CYNTHION_FLASH_SLEWRATE",     "SLOW", "fslew",    TEXT),
+    # Debug: 1024-entry ULPI trace in the usb_host shim. Off = shipping image.
+    ("CYNTHION_USB_TRACE",          "0",    "utrace",   FLAG),
 )
 
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
@@ -105,7 +107,9 @@ def settings(env=None):
 def slug(env=None):
     """The variant as one filesystem-safe directory name."""
     parts = []
-    for name, _default, tag, _kind in VARIANT_ENV:
+    for name, _default, tag, kind in VARIANT_ENV:
+        if kind is FLAG and _resolve(name, env) == "0":
+            continue    # a flag at its default adds no tag: shipping slugs unchanged
         # A comma (two CK rungs in one bitstream) and a decimal point both reach
         # here; keep the point, which reads, and flatten the rest.
         parts.append(tag + re.sub(r"[^A-Za-z0-9.]", "_", _resolve(name, env)))

@@ -962,7 +962,7 @@ class AwtoSoc(Elaboratable):
 
         # The role mux between UlpiRegisters and the host SIE / raw byte stream,
         # on the same pins. Reset role is `off`, which routes UlpiRegisters.
-        m.submodules.target_usb = target_usb = UsbPort(name="target")
+        m.submodules.target_usb = target_usb = UsbPort(name="target", trace_depth=1024 if variant.flag("CYNTHION_USB_TRACE") else 0)
         usb_host_bridge = WishboneCSRBridge(target_usb.bus, data_width=32)
         m.submodules.usb_host_bridge = usb_host_bridge
         decoder.add(usb_host_bridge.wb_bus, addr=USB_HOST_BASE, name="usb_host")

@@ -153,6 +153,14 @@ Legend: **I** implemented and simulated; **U** not proven on a board (everything
 - PHY line state stayed `dp 0 dm 0` (host pulldowns on, OTG control `06`): no D+ pull-up, so the phone is not attaching for data. Likely locked screen / charge-only; retry unlocked with USB set to File transfer (PTP/MTP) after `usbh`-level tooling exists, or first from the PC as Stage 0.
 - Console bug found on the way: `usb target_a` said "nothing drawing" while 450 mA flowed (signed compare) — [#551](https://github.com/awtoau/cynthion-workspace/issues/551), fixed in firmware, not yet flashed.
 
+## Pixel on TARGET-A: first board run, 2026-11-02
+- `role host` enters HS (chirp works); `desc` right after it returned `18d1:4ee2`. Only an explicit `reset` (and `aoa`'s re-attach reset) failed with `handshake 4`.
+- Cause: GUH SIE FSM sits in `RESET` only at power-up; a later bus reset kept FS/NORMAL on the PHY, so the HS-termination SE0 and chirps never ran and the phone never saw a reset (it had already dropped to FS suspend after 3 ms without SOF, and ignored the SETUP). Fix: `sie.py` drives the reset controller's PHY mode whenever `reset_active`; sim check "second bus reset" fails without it.
+- After the fix: `role host; reset; desc` HS, `usb target_a aoa` -> `accessory 18d1:2d01 bulk in 1 out 1`.
+- Real-PHY facts seen with the trace: USB3343 accepts a whole token in 4 cycles (NXT high), then NXT paces data at 1 byte / 40 cycles in FS; the PHY reports its own transmitted line states as RXCMDs (DIR pulses per bit); the SOF and token-to-data gap (FS ~200 cycles from last token byte accepted) were fine.
+- Debug trace: build with `CYNTHION_USB_TRACE=1` (own build dir `...-utrace1`; shipping image has none, `TR_STATE.3` = 0). Shell: `usb target_a trace <mode>` (1 incl. reset period, 2 drop repeated cycles, 4 arm now, 8 stop; else arms on next transfer start), `trace reset` (arm + reset), `trace dump [first] [n]` -> `idx +cycles dDATA fFLAGS lsLS qREQ`. Flags: 01 dir 02 nxt 04 stp 08 oe 10 tx_valid 20 rx_active 40 rx_valid 80 reset_active. `q` = SIE PHY request (xcvr, term, op_mode).
+- Open: line_state in `LINK` can read stale SE0 in FS (the RXCMD for the final J after EOP is not sent by the PHY).
+
 ## The phone side already exists: awto-dji
 - The sibling `awto-dji` checkout (Flutter app `au.awto.dji.awto_dji_app`, installed on the Pixel 3 XL; wireless adb at the Pixel's current `adb devices -l` address). It is the AOA **device**; the DJI RC is the accessory **host** (docs: `aoa-live-test-2026-10-23.md`, `-26.md`, `phone-bridge-operator-guide.md`).
 - Accessory filter ([`accessory_filter.xml`]): manufacturer `DJI`, model `T600`. The RC also sends description `DJI`, version `v1.2.3.4`, uri `www.dji.com`, serial `12345678` (read off a live phone with `dumpsys usb`). Source: `lib/transport/aoa_identity.dart`.
