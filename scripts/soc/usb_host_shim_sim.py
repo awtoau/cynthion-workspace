@@ -719,7 +719,25 @@ def group_host(checks, verbose=False):
         seen["bulk_pid"] = await pc.read(REG_RXPID)
         seen["bulk_resp"] = (await pc.read(REG_RESP)) & 7
 
-    run(bench, testbench, processes=(capture_usb(device.utmi, packets),),
+        # A bus reset of a connected HS device must not drop to FS terminations first
+        # (the phone then takes ~0.4 s to show J again, #571).
+        seen["rwrites"].clear()
+        await pc.write(REG_CTRL, CTRL_BUS_RESET)
+        await poll(pc, REG_LINK, lambda v: not v & 0x80, 40, gap=1)
+        seen["again"] = await poll(pc, REG_LINK, lambda v: v & 0x80, BRINGUP_POLLS, gap=64)
+
+    seen["rwrites"] = []
+
+    async def watch_phy(ctx):
+        last = int(ctx.get(bench.phy.func_ctrl))
+        while True:
+            await ctx.tick("usb")
+            now = int(ctx.get(bench.phy.func_ctrl))
+            if now != last:
+                seen["rwrites"].append(now)
+                last = now
+
+    run(bench, testbench, processes=(capture_usb(device.utmi, packets),), extra=(watch_phy,),
         platform=BoardPlatform())
 
     if verbose:
@@ -792,6 +810,11 @@ def group_host(checks, verbose=False):
         len(bulk) == BULK_MAX_PACKET_SIZE and bulk == [i & 0xFF for i in range(len(bulk))]
         and seen["bulk_resp"] == RESP_ACK and seen["bulk_pid"] in (PID_DATA0, PID_DATA1),
         f"{len(bulk)} bytes resp {seen['bulk_resp']} pid {seen['bulk_pid']:#x}")
+    checks.check(
+        "host: a bus reset of a connected HS device goes straight to SE0 (no FS-termination wait for J) and completes",
+        seen.get("again") is not None
+        and seen["rwrites"] and seen["rwrites"][0] & 0x18 == 0x10,
+        f"writes {[hex(v) for v in seen['rwrites']]} again {seen.get('again')}")
     checks.check(
         "host: RXLEN is 512 where the SIE's own 8-bit rx_len wrapped to 0",
         seen["bulk_len"] == BULK_MAX_PACKET_SIZE and seen["sie_rx_len"] == 0,

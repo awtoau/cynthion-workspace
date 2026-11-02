@@ -194,9 +194,11 @@ class USBResetController(wiring.Component):
                     self.detected_speed.eq(USBHostSpeed.FULL),
                 ]
 
+                # A connected device is reset in place: dropping to FS terminations to
+                # wait for J made the Pixel take ~0.4 s to reconnect (#571).
                 with m.If(self.bus_reset):
                     m.d.usb += chirp_timer.eq(0)
-                    m.next = "DISCONNECTED"
+                    m.next = "BUS-RESET"
 
             if not self.fullspeed_only:
                 with m.State("IDLE-HS"):
@@ -210,6 +212,6 @@ class USBResetController(wiring.Component):
 
                     with m.If(self.bus_reset):
                         m.d.usb += chirp_timer.eq(0)
-                        m.next = "DISCONNECTED"
+                        m.next = "BUS-RESET"
 
         return m
