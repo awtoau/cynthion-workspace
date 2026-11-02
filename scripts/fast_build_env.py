@@ -109,9 +109,15 @@ OVERRIDES = {
 
 
 def apply():
-    """Set the overrides in this process. Returns what was set."""
-    os.environ.update(OVERRIDES)
-    return dict(OVERRIDES)
+    """Set the overrides in this process; a value the caller already set wins (#429)."""
+    for key, value in OVERRIDES.items():
+        os.environ.setdefault(key, value)
+    return {key: os.environ[key] for key in OVERRIDES}
+
+
+def nextpnr_opts():
+    """The nextpnr flags a build should use: the caller's override, else the default."""
+    return os.environ.get("AMARANTH_nextpnr_opts") or NEXTPNR_OPTS
 
 
 # Applied on import, so `import fast_build_env` before a build is enough.

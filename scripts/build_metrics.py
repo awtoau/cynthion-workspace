@@ -949,8 +949,8 @@ def nextpnr_opts() -> str:
     cannot honestly be compared with one that used the other.
     """
     try:
-        from fast_build_env import NEXTPNR_OPTS               # noqa: PLC0415
-        return NEXTPNR_OPTS
+        from fast_build_env import nextpnr_opts as resolved   # noqa: PLC0415
+        return resolved()
     except Exception:
         return "unknown"
 
