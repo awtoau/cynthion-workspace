@@ -158,9 +158,9 @@ does `repos/cynthion/cynthion/python`.
 **One command, and the scrub is in it — never `gh issue` by hand.**
 
 ```bash
-./scripts/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
-./scripts/gh_post.py comment 498 --body-file tmp/x.md
-./scripts/gh_post.py close   498 --body-file tmp/x.md
+./scripts/issues/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
+./scripts/issues/gh_post.py comment 498 --body-file tmp/x.md
+./scripts/issues/gh_post.py close   498 --body-file tmp/x.md
 ```
 
 It refuses, before any network call, on a private path (the patterns come from

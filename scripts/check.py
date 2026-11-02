@@ -380,7 +380,7 @@ def build_checks() -> List[Check]:
                 #
                 # Source only; no board, no toolchain, well under a second.
                 Step([PYTHON, "scripts/check_doc_links.py"], ROOT),
-                Step([PYTHON, "scripts/link_issue_refs.py", "--check"], ROOT),
+                Step([PYTHON, "scripts/issues/link_issue_refs.py", "--check"], ROOT),
             ],
         ),
         # There is no `gateware` check. It elaborated

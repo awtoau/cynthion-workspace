@@ -17,9 +17,9 @@ has no successor the correction says so in the issue text rather than inventing
 one.  Where an issue is stale on a *fact* and not merely a path, a dated note goes
 at the top and the argument below it is left exactly as its author wrote it.
 
-    ./scripts/fix_issue_refs.py                 # dry run, prints what would change
-    ./scripts/fix_issue_refs.py --apply         # dry run plus `gh issue edit`
-    ./scripts/fix_issue_refs.py --apply 97 110  # only these
+    ./scripts/issues/fix_issue_refs.py                 # dry run, prints what would change
+    ./scripts/issues/fix_issue_refs.py --apply         # dry run plus `gh issue edit`
+    ./scripts/issues/fix_issue_refs.py --apply 97 110  # only these
 
 Reads the bodies from `tmp/issues/<n>.md` (dumped from
 `gh issue list --state open --limit 300 --json number,title,body`), writes the
@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 SRC = ROOT / "tmp" / "issues"
 DST = ROOT / "tmp" / "issues-fixed"
 LOG = ROOT / "tmp" / "logs" / "fix_issue_refs.log"

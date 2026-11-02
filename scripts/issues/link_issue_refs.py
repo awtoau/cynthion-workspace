@@ -8,8 +8,8 @@ editor or a rendered site leaves the reader to go and search for it.
 Skips what must not be rewritten: fenced and inline code, headings, anchors in
 URLs, `#L42` line references, and refs that are already links.
 
-    ./scripts/link_issue_refs.py            # rewrite docs/**.md
-    ./scripts/link_issue_refs.py --check    # exit 1 if any bare ref remains
+    ./scripts/issues/link_issue_refs.py            # rewrite docs/**.md
+    ./scripts/issues/link_issue_refs.py --check    # exit 1 if any bare ref remains
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 REPO = "awtoau/cynthion-workspace"
 URL = f"https://github.com/{REPO}/issues"
 
@@ -99,7 +99,7 @@ def main() -> int:
     print(f"{total} {verb} issue reference(s) across {len(touched)} file(s)")
 
     if args.check and total:
-        print("\nRun ./scripts/link_issue_refs.py to fix.", file=sys.stderr)
+        print("\nRun ./scripts/issues/link_issue_refs.py to fix.", file=sys.stderr)
         return 1
     return 0
 

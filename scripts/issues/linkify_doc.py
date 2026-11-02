@@ -25,8 +25,8 @@ document, and a link that resolves from `docs/` does not resolve from
   reads as verified when it is stale. Only real paths are linked, and
   `--report-missing` names the rest, which is itself a useful audit.
 
-    ./scripts/linkify_doc.py docs/plans/issue-and-doc-audit.md
-    ./scripts/linkify_doc.py --report-missing docs/plans/*.md
+    ./scripts/issues/linkify_doc.py docs/plans/issue-and-doc-audit.md
+    ./scripts/issues/linkify_doc.py --report-missing docs/plans/*.md
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

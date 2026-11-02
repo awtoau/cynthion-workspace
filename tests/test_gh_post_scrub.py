@@ -100,7 +100,7 @@ def test_only_the_preapproved_repo_is_accepted():
 
 def test_a_clean_body_on_the_preapproved_repo_passes():
     gh_post.gate(gh_post.PREAPPROVED,
-                 {"body": "The fix is in `scripts/gh_post.py`.\n"})
+                 {"body": "The fix is in `scripts/issues/gh_post.py`.\n"})
 
 
 def test_a_refused_body_reaches_no_gh_call(tmp_path):
@@ -108,7 +108,7 @@ def test_a_refused_body_reaches_no_gh_call(tmp_path):
     body = tmp_path / "dirty.md"
     body.write_text(f"Repro at {HOME}/notes.md\n")
     done = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "gh_post.py"), "comment", "427",
+        [sys.executable, str(ROOT / "scripts" / "issues" / "gh_post.py"), "comment", "427",
          "--body-file", str(body), "--dry-run"],
         capture_output=True, text=True, cwd=ROOT)
     assert done.returncode == 1

@@ -13,8 +13,8 @@ Three signals, none conclusive on its own:
 
 Output is a ranked candidate list for a human to read. It closes nothing.
 
-    ./scripts/issue_triage.py                 # all open issues
-    ./scripts/issue_triage.py --label p0      # one label
+    ./scripts/issues/issue_triage.py                 # all open issues
+    ./scripts/issues/issue_triage.py --label p0      # one label
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 REPO = "awtoau/cynthion-workspace"
 LOG = ROOT / "tmp" / "logs" / "issue-triage.log"
 

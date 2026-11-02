@@ -24,7 +24,7 @@ new title; in both cases the body is a note to the log rather than a comment —
 not need explaining twice, and a title carries a number that has been superseded, which is
 deleted rather than annotated.
 
-    scripts/gh_triage_apply.py <manifest.md> [--repo owner/name] [--dry-run]
+    scripts/issues/gh_triage_apply.py <manifest.md> [--repo owner/name] [--dry-run]
 
 Building the manifest's input list: `gh issue list --state open --limit 300`. The default
 limit is 100 and it returns exactly 100 rows with nothing saying a page was cut, which is
@@ -43,7 +43,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "gh_triage_apply.log"
 DEFAULT_REPO = "awtoau/cynthion-workspace"
 

@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = "awtoau/cynthion-workspace"
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = ROOT / "tmp" / "issues"
 LOGS = ROOT / "tmp" / "logs"
 

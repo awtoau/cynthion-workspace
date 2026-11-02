@@ -10,8 +10,8 @@ longer has -- `ecp5-test/` became `gateware/`, several documents were retired to
 resolve reads as checked when it is not, so this finds them mechanically rather
 than by eye.
 
-    ./scripts/audit_issue_refs.py                 # every open issue
-    ./scripts/audit_issue_refs.py 97 110 202      # only these
+    ./scripts/issues/audit_issue_refs.py                 # every open issue
+    ./scripts/issues/audit_issue_refs.py 97 110 202      # only these
 
 Reads `tmp/issues-open.json` (refresh with
 `gh issue list --state open --limit 300 --json number,title,body`), writes the
@@ -23,7 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 CACHE = ROOT / "tmp" / "issues-open.json"
 LOG = ROOT / "tmp" / "logs" / "audit_issue_refs.log"
 

@@ -67,7 +67,7 @@ def known_to_run():
 
 @pytest.mark.parametrize("name", sorted(known_to_run()))
 def test_script_known_to_run_is_reachable(name):
-    assert (SCRIPTS / name).exists(), f"{name} is named but absent"
+    assert name in {p.name for p in _paths.script_files()}, f"{name} is named but absent"
     assert name in reachable(), (
         f"{name} runs in the gate but the audit calls it unreachable; "
         "it would be reported as a retirement candidate")

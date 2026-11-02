@@ -231,8 +231,8 @@ Details for numbers >116 are in §6c, for ≤116 in §6e. The bulk categories fo
 > **DONE 2026-08-07.** 60 open issues were edited: 81 references rewritten, each
 > replacement path `test -e`'d before it was written, and a dated note at the top
 > wherever the staleness was a *fact* rather than a path. Reproducible with
-> `./scripts/fix_issue_refs.py` (the table of corrections is the data); dead
-> references are found with `./scripts/audit_issue_refs.py`.
+> `./scripts/issues/fix_issue_refs.py` (the table of corrections is the data); dead
+> references are found with `./scripts/issues/audit_issue_refs.py`.
 >
 > **Four entries above are false positives — this audit was wrong about them:**
 >

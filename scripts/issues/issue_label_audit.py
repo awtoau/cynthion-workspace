@@ -6,9 +6,9 @@
 """
 Finds label gaps in the tracker.
 
-    ./scripts/issue_label_audit.py                        # every subject
-    ./scripts/issue_label_audit.py hyperram               # one subject
-    ./scripts/issue_label_audit.py hyperram --numbers 313,316  # label these
+    ./scripts/issues/issue_label_audit.py                        # every subject
+    ./scripts/issues/issue_label_audit.py hyperram               # one subject
+    ./scripts/issues/issue_label_audit.py hyperram --numbers 313,316  # label these
 
 Output goes to the terminal and to `tmp/logs/issue-label-audit.log`.
 
@@ -36,7 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 REPO = "awtoau/cynthion-workspace"
 
 # Title patterns and body patterns per label. Body terms are counted; the

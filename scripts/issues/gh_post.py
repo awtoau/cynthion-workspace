@@ -5,10 +5,10 @@
 
 """File an issue, a comment or a close on the tracker. The scrub is not optional.
 
-    ./scripts/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
-    ./scripts/gh_post.py comment 498 --body-file tmp/x.md
-    ./scripts/gh_post.py close   498 --body-file tmp/x.md --reason completed
-    ./scripts/gh_post.py comment 498 --body-file tmp/x.md --dry-run
+    ./scripts/issues/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
+    ./scripts/issues/gh_post.py comment 498 --body-file tmp/x.md
+    ./scripts/issues/gh_post.py close   498 --body-file tmp/x.md --reason completed
+    ./scripts/issues/gh_post.py comment 498 --body-file tmp/x.md --dry-run
 
 Prints the URL of what it created. Records to `tmp/logs/dev.log` like everything
 else here.
@@ -50,7 +50,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import private_path_check as ppc  # noqa: E402

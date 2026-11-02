@@ -56,7 +56,12 @@ PY = sys.executable
 
 
 def script(name: str) -> str:
-    return str(REPO / "scripts" / name)
+    """Path of a tool script, found by bare name in scripts/ or a tool subdirectory."""
+    scripts = REPO / "scripts"
+    for directory in (scripts, *sorted(p for p in scripts.iterdir() if p.is_dir())):
+        if (directory / name).is_file():
+            return str(directory / name)
+    return str(scripts / name)
 
 
 # ---------------------------------------------------------------------------
