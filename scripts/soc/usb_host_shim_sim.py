@@ -93,13 +93,13 @@ class Bench(Elaboratable):
     """UsbPort + UlpiRegisters + PHY model (+ optional device on its wire)."""
 
     def __init__(self, *, with_device=True, full_speed_only=False, func_ctrl=0x41,
-                 phone=None, fault=None, **port_kwargs):
+                 phone=None, fault=None, report_disconnect=False, **port_kwargs):
         self.port = UsbPort(**port_kwargs)
         self.regs = UlpiRegisters()
         self.phy = UlpiPhyModel(func_ctrl=func_ctrl)
         self.force_dir = Signal()
         self.with_device = with_device
-        self.phone, self.fault = phone, fault
+        self.phone, self.fault, self.report_disconnect = phone, fault, report_disconnect
         if phone is not None:
             self.device = phone
         elif with_device:
@@ -117,6 +117,8 @@ class Bench(Elaboratable):
             p.regs_stp_o.eq(r.stp_o), p.regs_idle.eq(r.usb_idle),
         ]
         if self.phone is not None:
+            if self.report_disconnect:
+                m.d.comb += phy.host_disconnect.eq(~self.phone.present)
             m.submodules.device = self.phone
             m.submodules.wire = DomainRenamer({"sync": "usb"})(
                 Wire(phy.utmi, self.phone.utmi, present=self.phone.present,

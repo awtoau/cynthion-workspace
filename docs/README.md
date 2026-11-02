@@ -62,6 +62,7 @@ in its §13 got there in the first place.
 * [`START.md`](START.md) — Setup and build entry point
 * [`apollo-firmware.md`](apollo-firmware.md) — Apollo firmware: the fork versus upstream, and how to build it
 * [`aoa-adaptor.md`](aoa-adaptor.md) — The AOA adaptor
+* [`target-test-harness.md`](target-test-harness.md) — Target-port test table (control, bulk, interrupt, handshakes, resets, AOA), sim and board backends, seeded fuzz
 * [`codex-agent.md`](codex-agent.md) — Handing work to Codex
 * [`binary-protocol.md`](binary-protocol.md) — The binary record stream: framing, kinds, versioning, and why the Apollo link is a different question
 * **[`board-arbiter.md`](board-arbiter.md) — one owner for the tty, the JTAG and what is configured**: every board operation goes through it, and why the idle queue's output can never be quoted as a measurement

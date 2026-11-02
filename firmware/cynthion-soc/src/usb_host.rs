@@ -96,6 +96,7 @@ const ATTACH_GAP_MS: u32 = 100;
 const REQ_GET_DESCRIPTOR: u8 = 6;
 const REQ_SET_ADDRESS: u8 = 5;
 const REQ_SET_CONFIGURATION: u8 = 9;
+const REQ_CLEAR_FEATURE: u8 = 1;
 const AOA_GET_PROTOCOL: u8 = 51;
 const AOA_SEND_STRING: u8 = 52;
 const AOA_START: u8 = 53;
@@ -391,6 +392,11 @@ impl Host {
             // The device restarts its toggles at DATA0 (USB 2.0 9.1.1.5).
             self.tog_in = 0;
             self.tog_out = 0;
+        }
+        if setup[0] == 0x02 && setup[1] == REQ_CLEAR_FEATURE && setup[2] == 0 && setup[3] == 0 {
+            // CLEAR_FEATURE(ENDPOINT_HALT) restarts that endpoint's toggle (9.4.5).
+            let bit = 1u16 << (setup[4] & 15);
+            if setup[4] & 0x80 != 0 { self.tog_in &= !bit } else { self.tog_out &= !bit }
         }
         Ok(n)
     }
