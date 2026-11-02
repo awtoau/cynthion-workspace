@@ -142,7 +142,7 @@ STEPS: dict[str, tuple[str, list[str], bool]] = {
 # so including it makes the gate red on every tree state, which is the failure
 # mode this file has already fixed twice today. Reformatting is its own commit
 # and its own review; `./dev.py fmt-check` runs on demand until then. See #165.
-GATE = ["test", "lint", "sim-once", "build"]
+GATE = ["worktree-gate", "test", "lint", "sim-once", "build"]
 
 # ci = run-all-collect-all -> one GO/NO-GO. Every leg runs even after a failure:
 # a gateware build is about a minute, and finding the second problem on the next
@@ -428,8 +428,15 @@ def cmd_pin_publish(extra: list[str]) -> int:
     return run_tool([PY, script("submodule_pin_publish.py")], extra)
 
 
+@command("worktree-check with the vendor model advisory: first step of the gate",
+         kind="step")
+def cmd_worktree_gate(extra: list[str]) -> int:
+    """Submodules at their pins; a missing gitignored vendor model only warns (#375)."""
+    return run_tool([PY, script("worktree_setup.py"), "check", "--gate"], extra)
+
+
 @command("make a fresh git worktree buildable: submodules, shared not copied",
-         args="[--prune]", kind="action")
+         kind="action")
 def cmd_worktree_setup(extra: list[str]) -> int:
     """Checks out each submodule as a linked worktree of the superproject's own
     object store, so 30 worktrees cost 30 file trees and one history (#365)."""
