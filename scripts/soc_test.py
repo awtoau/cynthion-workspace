@@ -822,25 +822,25 @@ def main():
         listing = [b"help, ?", b"info", b"selftest", b"time", b"board",
                    b"led", b"load", b"reset", b"rtic", b"sideband",
                    b"fusb302b", b"pac1954", b"usb3343",
-                   b"[info|read|bench]",
+                   b"[status|read|bench]",
                    # `status` and `wedge` are #411's readout and its negative
                    # control, `fault` is #409's. Asserted here so none can be
                    # dropped: an indicator whose failure case is unreachable is
                    # one nobody should believe.
-                   b"[stats|check|irq|log|status|wedge|fault]",
+                   b"[stats|check|stress|irq|log|status|wedge|fault]",
                    b"[map|pmod|ports|button]", b"[status|reset]",
                    # The four after `bench` are the SPI controller's verbs
                    # (#442) -- the opcodes the memory map's FSM cannot issue.
-                   b"[info|id|read|bench|sfdp|status|erase|program]",
+                   b"[status|read|bench|sfdp|erase|program]",
                    b"[status|scan|soak]",
                    # `reset` and `clear` are the DESTRUCTIVE verbs (#315),
                    # asserted here so a rename cannot quietly drop the one word
                    # that separates each from its `init`.
                    b"[status|floor|alert|rate|detect|limit|samples|bracket"
                    b"|hispeed|reset]",
-                   # `clear` is the other one, and `info` was missing from this
-                   # row already.
-                   b"[info|status|read|sel|sweep|test|cross|ramp|bench|id|clear]",
+                   # `clear` is the destructive one. `status` is the only
+                   # identify (6e46cd2): there is no `id` verb on any region.
+                   b"[status|read|sel|sweep|test|cross|ramp|bench|clear]",
                    # `input` went with the selector that reached no pin (#305).
                    b"[status|off|control|both|charge]"]
         command("help", listing, "`help` lists every command")
@@ -988,7 +988,7 @@ def main():
         # the same address. So the assertion is BOTH halves: the sentence, and no
         # trap line, which is what proves nothing touched the bus.
         reply = command("bist status",
-                        [b"bist: this bitstream has no engine"],
+                        [b"bist: this target has no engine"],
                         "`bist` on an engineless build says so")
         check("`bist` touches no bus on an engineless build",
               b"*** TRAP" not in reply,
@@ -2074,7 +2074,8 @@ def main():
                  b"read rnd", b"write seq", b"write rnd",
                  b"0 words wrong"],
                 "`bench bram` walks block RAM and the pattern survives it")
-        command("flash bench", [b"flash", b"read seq", b"read rnd", b"ok"],
+        command("flash bench", [b"flash", b"read seq", b"read rnd",
+                 b"reads CORRECT -- @0 615000ff @40 2a558800"],
                 "`bench flash` reads the window and checks known content")
 
         # The HyperRAM answer here is the REFUSAL, and asserting it is worth
@@ -2120,8 +2121,8 @@ def main():
         # offsets asserted below are exactly the two that stand-in knows. On
         # the board they are the bitstream header and a word 0x40 into it, and
         # the assertion is then about real silicon without changing.
-        command("flash id", [b"flash @0 615000ff", b"4096 KiB"],
-                "`flash id` reports the first word and the size of the window")
+        command("flash status", [b"flash @0 615000ff", b"4096 KiB"],
+                "`flash status` reports the first word and the size of the window")
         command("flash read 40", [b"flash @000040 2a558800"],
                 "`flash read` names the region and the offset it read")
         # Aligned DOWN to the containing word rather than refused: 0x42 is
@@ -2148,18 +2149,21 @@ def main():
         command("bram read 0", [b"bram @000000"],
                 "`bram read` reads block RAM and names the region")
 
-        # `flash id` is the only identify there is. HyperBus has no JEDEC
-        # sequence and fabric has no identity, so those two say why rather than
-        # being registered as commands that print nothing.
-        command("bram id", [b"bram has no id"],
-                "`bram id` says there is nothing to identify")
-        command("hyperram id", [b"HyperBus carries no JEDEC id"],
-                "`hyperram id` says HyperBus has no such thing")
+        # `<region> status` is the only identify there is (6e46cd2). Fabric has
+        # no identity, so `bram status` says so rather than printing an empty
+        # line; the HyperRAM one decodes the part's own ID registers.
+        command("bram status", [b"no identity"],
+                "`bram status` says there is nothing to identify")
+        command("hyperram status", [b"id0", b"cr0"],
+                "`hyperram status` decodes the part's own registers")
+        # And the verbs that were removed are refused, not silently answered.
+        command("bram id", [b"usage: bram status|read"],
+                "`bram id` is gone: it gets the usage line")
 
         # A region with no verb, and a verb with no number.
-        command("flash", [b"usage: flash read <hex offset>"],
+        command("flash", [b"usage: flash status|read <hex offset>"],
                 "a bare region name says how to call it")
-        command("bram read zz", [b"usage: bram read <hex offset>"],
+        command("bram read zz", [b"usage: bram status|read <hex offset>"],
                 "a malformed offset is refused rather than read as zero")
 
         # The HyperRAM read, and here the two targets genuinely differ.

@@ -82,7 +82,7 @@ COMMANDS = [
     "info map", "info pmod", "info ports", "info button",
     "usb3343 status", "vbus status", "fusb302b", "i2c status",
     "pac1954 status", "pac1954 alert", "pac1954 rate",
-    "hyperram status", "flash id", "hyperram id",
+    "hyperram status", "flash status",
     "bram read 0", "flash read 0",
     "bram bench", "flash bench",
 ]
