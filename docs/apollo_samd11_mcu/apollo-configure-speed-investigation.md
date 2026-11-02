@@ -48,7 +48,7 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 ## Where the remaining 240 ms goes
 
 - Wire time 81.9 ms; transport costs 3.9x that. USB, not JTAG.
-- Per-chunk USB cost is bus efficiency: fit **144.7 us fixed + 2.717 us/byte** (direct port: 122.7 us + 2.267 us/byte, 3.53 Mbit/s = 29% of bus) vs 0.667 us/byte wire. `scripts/usb_transfer_cost.py`.
+- Per-chunk USB cost is bus efficiency: fit **144.7 us fixed + 2.717 us/byte** (direct port: 122.7 us + 2.267 us/byte, 3.53 Mbit/s = 29% of bus) vs 0.667 us/byte wire. [`usb_transfer_cost.py`](../../debris/scripts/usb_transfer_cost.py).
 - Payload term is ~334 ms regardless of chunk size. Doubling chunks only halves the fixed term (35 ms of 457 at 1024 B).
 - SPI clocking marginal cost 0.663-0.715 us/byte vs 0.667 wire floor (2-3% overhead); the rest of the no-USB gap is per-chunk setup.
 - Full-speed bulk is 64 B/packet like control. Packets per 1 ms frame differ: bulk 19 (0.822 us/byte), control measured 5.8 (2.717 us/byte).
@@ -78,7 +78,7 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 - Must be asynchronous: arm channels and return, poll completion from `jtag_scan_task()`. Spinning on `TCMPL` blocks `tud_task()` and is polling plus setup cost.
 - Completion polled, not ISR: `CHID` is a single register window, channel setup is not re-entrant.
 - ~64 B of its flash cost is mandatory (DMAC descriptor + write-back sections).
-- Second buffer (`jtag_tx_alt`, 512 B) is not redundant: removing it costs +74.1 ms (+22.8%). `scripts/jtag_single_buffer_probe.py`.
+- Second buffer (`jtag_tx_alt`, 512 B) is not redundant: removing it costs +74.1 ms (+22.8%). [`jtag_single_buffer_probe.py`](../../debris/scripts/jtag_single_buffer_probe.py).
 - TX-only DMA / dropping TDO: ~2 ms of 950, silent-failure surface. ECP5 self-validates via `LSC_RESET_CRC`; BSE code 3 = CRC failed. Every configure decodes `DONE`, `FAIL` and BSE code explicitly.
 
 ### RAM (JTAG buffers)
@@ -89,9 +89,9 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 - `JTAG_BUFFER_SIZE` 1024 is rejected: doubling costs both halves of the pair (1024 B); union cap ~1634 B, i.e. 2 x ~817. 512 B stands. Re-carve (transmit takes whole region, receive its second half) reached 457.5 ms at 1024 B but needs `GET_INFO` to report **two limits** (write limit 1024, capture-read limit 512; `GET_INFO` has 4 spare bytes) or capturing scans >512 B are refused (`_execute_command()` in `ecp5.py` defaults `ignore_response=False`).
 
 ### Standard test (the only figure to quote)
-- `scripts/jtag_fixed_benchmark.py`, committed payload 122880 B: fixed so a smaller bitstream cannot read as "faster"; real bitstreams 103364-136184 B; divides evenly by 128..1024.
+- [`jtag_fixed_benchmark.py`](../../debris/scripts/jtag_fixed_benchmark.py), committed payload 122880 B: fixed so a smaller bitstream cannot read as "faster"; real bitstreams 103364-136184 B; divides evenly by 128..1024.
 - Shift path only (no `ISC_ENABLE`, CRC, DONE poll; TAP left in SHIFT-DR): FPGA ignores data, safe to repeat. Spread 1.8-3.3 ms.
-- `scripts/jtag_speed_bisect.py` reflashes historical firmware (checks out `firmware/` only; full checkouts remove our `boot_to_dfu()`). `SOURCES` is a wildcard: `stack_probe.c/h` and `apollo_mode.c/h` must be set aside for stock builds (stock builds 94.17% ROM / 86.52% RAM).
+- [`jtag_speed_bisect.py`](../../debris/scripts/jtag_speed_bisect.py) reflashes historical firmware (checks out `firmware/` only; full checkouts remove our `boot_to_dfu()`). `SOURCES` is a wildcard: `stack_probe.c/h` and `apollo_mode.c/h` must be set aside for stock builds (stock builds 94.17% ROM / 86.52% RAM).
 - Time in-process, not `subprocess.run(python cli.py ...)` (~80 ms interpreter startup).
 - Do not compare figures from different bitstreams/firmware/scopes.
 
@@ -132,10 +132,10 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 
 ## Clean state between runs
 
-- A configured FPGA drives the shared lines and will not re-enter ISC: back-to-back configures fail with "Failed to enter ISC" and all-zero status. `verify_configure.py` issues before each run:
+- A configured FPGA drives the shared lines and will not re-enter ISC: back-to-back configures fail with "Failed to enter ISC" and all-zero status. [`verify_configure.py`](../../debris/scripts/verify_configure.py) issues before each run:
   - `0xec` `EMERGENCY_RESET`: breaks `MODE_JTAG_PROGRAMMING` latch (pipe error otherwise).
   - `0xbe` `JTAG_STOP`: closes dangling session.
   - `0xc0` `TRIGGER_RECONFIGURATION`: pulses PROGRAMN.
 - `force_fpga_offline()` unusable here (pipe error once offline).
 - After configure the FPGA may take the USB port: "No such device", re-run.
-- In Saturn-V: `dfu-util -d 1d50:615c -a 0 -D <firmware.bin> -R`; `apollo enter-dfu`; `scripts/apollo_reflash.py`.
+- In Saturn-V: `dfu-util -d 1d50:615c -a 0 -D <firmware.bin> -R`; `apollo enter-dfu`; [`apollo_reflash.py`](../../debris/scripts/apollo_reflash.py).
