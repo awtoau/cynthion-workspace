@@ -200,7 +200,6 @@ Not served: USB 3.x, spec compliance, multi-tier hubs, guaranteed throughput.
 6. Measure PIO byte rate; then decide on tier two.
 
 - Acceptance loopback (AUX to TARGET, proposed on #105) needs `aux_phy`, which is the console: move the console to `control_phy` behind `ApolloAdvertiser` for that test, or use a third-party device for first light.
-- Follow-up drafts for these increments: [drafts/usb-host-next-increments.md](drafts/usb-host-next-increments.md).
 
 ## 12. Alternative: OHCI (full speed only)
 
