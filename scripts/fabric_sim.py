@@ -44,6 +44,7 @@ from devlog import emit  # noqa: E402
 from amaranth.sim import Simulator
 
 from fabric.fabric_gateware import FabricTest, REG_SIGNATURE
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from fabric_golden import golden
 
 

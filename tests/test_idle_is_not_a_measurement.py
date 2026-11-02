@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "gateware"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import board_arbiter as arb  # noqa: E402
 import hyperram_matrix_diff as matrix  # noqa: E402
 

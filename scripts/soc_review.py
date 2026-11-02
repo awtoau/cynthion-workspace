@@ -104,6 +104,7 @@ CONNECT = re.compile(r"wiring\.connect\(m,\s*(\w+)\.source,\s*(\w+)\.sink\)")
 
 def read_cells(build_dir):
     """Whole-design totals from a FINISHED nextpnr run (#440)."""
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     import soc_trim_delta
     cells, _fmax = soc_trim_delta.read(build_dir)
     return {name: cells.get(name, 0) for name in CELLS}

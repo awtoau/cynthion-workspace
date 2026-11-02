@@ -36,6 +36,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import bist_rows  # noqa: E402
 
 # `bist latency 16` as the board prints it. Each row is followed by the `sel`
@@ -235,7 +236,7 @@ PRIVATE_ROW = ("dif|se", "fix|var", "PASS|fail")
 def test_no_script_carries_its_own_copy_of_the_row_pattern():
     """Seven copies is how three of them went stale without anyone noticing."""
     offenders = []
-    for path in sorted((ROOT / "scripts").glob("*.py")):
+    for path in _paths.script_files():
         if path.name == "bist_rows.py":
             continue
         text = path.read_text()

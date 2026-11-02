@@ -68,6 +68,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from devlog import emit  # noqa: E402
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from fabric_build import parse_utilisation, parse_timing          # noqa: E402
 import fabric_arcs                                                # noqa: E402
 import fabric_placement                                           # noqa: E402

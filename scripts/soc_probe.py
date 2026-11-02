@@ -69,6 +69,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 
 # The ER1 sink's constant, from `gateware/soc/bus/jtag_stage.py`. It is a

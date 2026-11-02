@@ -53,6 +53,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from devlog import emit  # noqa: E402
 from soc import variant  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import run_bounded  # noqa: E402
 
 BUILD = variant.build_dir(ROOT)

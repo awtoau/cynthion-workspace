@@ -54,6 +54,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import board_arbiter as arbiter  # noqa: E402
 
 BASE = f"http://127.0.0.1:{arbiter.PORT}"

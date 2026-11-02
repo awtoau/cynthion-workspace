@@ -23,6 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import gh_post  # noqa: E402
 import private_path_check as ppc  # noqa: E402
 

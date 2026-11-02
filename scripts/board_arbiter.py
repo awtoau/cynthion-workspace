@@ -328,6 +328,7 @@ class Board:
         `tio_user.py --serve` holds the tty by design. Anything else is someone
         going around the arbiter, and is named rather than silently interleaved.
         """
+        import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
         import board_holders
 
         return [(pid, cmd) for pid, cmd in

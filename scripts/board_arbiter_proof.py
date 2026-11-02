@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import board as client  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import board_arbiter as arbiter  # noqa: E402
 import soc_confirm  # noqa: E402
 

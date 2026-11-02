@@ -21,6 +21,7 @@ ELF = WORKSPACE / "repos/apollo/firmware/_build/cynthion_d11/firmware.elf"
 
 sys.path.insert(0, str(WORKSPACE / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import arm_binutils_resolve  # noqa: E402
 from devlog import emit  # noqa: E402
 

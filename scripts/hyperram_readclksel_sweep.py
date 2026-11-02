@@ -195,6 +195,7 @@ def main():
 
     # Hardware dependencies stay outside analysis imports so synthetic tests do
     # not require a toolchain, Apollo checkout, debugger, or board.
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from hyperram_ceiling import build_one, run_one, solve_pll, timing_of
 
     if solve_pll(sync_mhz, fast_ratio=2) is None:

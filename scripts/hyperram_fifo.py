@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent

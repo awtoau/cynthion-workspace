@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import devlog                                          # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from soc_workload import Session, sections             # noqa: E402
 
 CRATE = ROOT / "firmware" / "cynthion-soc"

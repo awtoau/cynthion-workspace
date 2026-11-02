@@ -74,6 +74,7 @@ OUT = ROOT / "tmp" / "occupancy"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import soc_cpu_arms  # noqa: E402
 from soc_trim_delta import TRIMS  # noqa: E402
 

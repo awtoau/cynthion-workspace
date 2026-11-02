@@ -197,6 +197,7 @@ def main():
         golden = int(args.golden, 16)
         emit(f"golden signature (given): {golden:#010x}")
     else:
+        import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
         from fabric_golden import golden as compute_golden, \
             verify_vector_model
         checked = verify_vector_model(blocks, 300)

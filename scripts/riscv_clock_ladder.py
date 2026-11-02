@@ -67,6 +67,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
 from soc import clocks, variant  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from soc_sync_ladder import parse_spec, timing  # noqa: E402
 
 SOC_RUN = ROOT / "scripts" / "soc_run.py"

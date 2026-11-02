@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "repos" / "apollo"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from apollo_fpga.gateware import sideband as gw
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sideband_decoder import crc8, decode_status
 
 

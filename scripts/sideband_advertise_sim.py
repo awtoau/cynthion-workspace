@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT / "gateware" / "probes"))
 sys.path.insert(0, str(ROOT / "gateware" / "probes" / "sideband"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 

@@ -166,6 +166,7 @@ def main():
     # Recompute the golden value here, from the specification, rather than
     # reading it out of the build log. A gateware built against a wrong
     # constant would report clean forever; this is the check that catches it.
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from fabric_golden import golden as compute_golden, verify_vector_model
     checked = verify_vector_model(BLOCKS, 300)
     note(f"golden model cross-checked against the scalar specification "

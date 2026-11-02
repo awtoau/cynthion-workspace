@@ -233,6 +233,7 @@ def spawn(cmd: list[str], cwd: Path | str | None = None, *,
     # next one's bound comes from measurement rather than from the floor.
     if bound_seconds is not None and rc == 0:
         try:
+            import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
             from subprocess_timeout_from_history import record
             record(f"spawn:{program}", time.monotonic() - started)
         except (ImportError, OSError):

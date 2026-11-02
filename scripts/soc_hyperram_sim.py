@@ -147,6 +147,7 @@ from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
                                             HyperRAMDQSInterface,
                                             HyperRAMInterface)
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks
 from bootram import (BootRAM, ClockStopPHY, HYPERRAM_CK_MHZ,
                            HYPERRAM_MAX_BURST_WORDS, HYPERRAM_TCSM_NS,

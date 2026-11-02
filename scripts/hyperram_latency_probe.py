@@ -47,6 +47,7 @@ sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from devlog import emit, log  # noqa: E402
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import soc_hyperram_sim as sim  # noqa: E402
 from bootram import HYPERRAM_LATENCY_CLOCKS  # noqa: E402
 

@@ -61,6 +61,7 @@ def main():
         sys.modules[f"peripherals.{name}"] = module
         setattr(peripherals, name, module)
 
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     import soc_hyperram_sim
     print(f"controllers from {before}, simulation from the working tree")
     return soc_hyperram_sim.main()

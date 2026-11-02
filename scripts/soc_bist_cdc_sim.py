@@ -56,6 +56,7 @@ from amaranth import ClockDomain, Elaboratable, Module, Signal  # noqa: E402
 from amaranth.lib.cdc import FFSynchronizer  # noqa: E402
 from amaranth.sim import Simulator  # noqa: E402
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 

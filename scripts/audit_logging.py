@@ -46,6 +46,7 @@ SCRIPTS = ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
 
+import _paths  # noqa: E402
 from devlog import emit  # noqa: E402
 
 # Calls that hand the child our streams unless told otherwise.
@@ -119,7 +120,7 @@ def main():
                         help="list only scripts that still need converting")
     args = parser.parse_args()
 
-    findings = [inspect(p) for p in sorted(SCRIPTS.glob("*.py"))
+    findings = [inspect(p) for p in _paths.script_files()
                 if p.name not in ("devlog.py", "audit_logging.py")]
 
     own = [f for f in findings if f.own_log]

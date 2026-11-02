@@ -67,6 +67,7 @@ def shipping():
     `scripts/soc_dead_peripherals.py` greps for raw addresses -- a script
     carrying them counts itself as a peripheral's user.
     """
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     import soc_map_audit
     soc, _regions = soc_map_audit.build_soc()
     facts = soc_map_audit.analyse(soc.decoder.bus.memory_map)

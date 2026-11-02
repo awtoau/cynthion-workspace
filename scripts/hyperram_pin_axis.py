@@ -48,6 +48,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import hyperram_matrix_diff as matrix  # noqa: E402
 import hyperram_pin_patch as pins  # noqa: E402
 import soc_confirm  # noqa: E402

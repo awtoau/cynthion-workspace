@@ -37,6 +37,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from logging_utils import setup_logging
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import limit_for, run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent

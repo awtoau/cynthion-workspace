@@ -151,6 +151,7 @@ def build_soc():
     vexii_cpu.VexiiRiscv.__init__ = record
     try:
         warnings.filterwarnings("ignore")
+        import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
         import soc_generate_pac
         soc, _platform = soc_generate_pac.build_soc()
     finally:

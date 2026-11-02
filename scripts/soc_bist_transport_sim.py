@@ -66,6 +66,7 @@ from amaranth_soc.csr.wishbone import WishboneCSRBridge  # noqa: E402
 from board.cynthion_r1_4 import (  # noqa: E402
     CynthionPlatformRev1D4)
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 

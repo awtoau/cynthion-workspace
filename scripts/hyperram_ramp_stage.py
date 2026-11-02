@@ -63,6 +63,7 @@ RAMP_WORD = 0x4000 // 2          # the part addresses 16-bit words
 
 def main():
     from apollo_fpga import ApolloDebugger                     # noqa: E402
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from soc_jtag_stage import Sink, SIGNATURE, describe       # noqa: E402
 
     ramp = bytes(range(RAMP_BYTES))
