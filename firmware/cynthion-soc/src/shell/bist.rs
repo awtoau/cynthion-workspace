@@ -23,6 +23,7 @@ use core::fmt::Write;
 use super::parse::{parse_decimal, trim};
 use crate::bist::{self, Axes, Bist};
 use crate::clock::Hz;
+use crate::target;
 use crate::uart::Uart;
 
 /// Passes per cell when none is given.
@@ -33,6 +34,11 @@ use crate::uart::Uart;
 const DEFAULT_PASSES: u32 = 64;
 
 pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
+    // No fabric, no engine window: every read below would trap (QEMU).
+    if target::FABRIC.is_none() {
+        let _ = writeln!(uart, "bist: this target has no engine");
+        return;
+    }
     let rest = trim(rest);
     // SAFETY: `bist::BASE` is the peripheral's CSR base, held equal to the
     // gateware's by `tests/test_bist_constants.py`.
