@@ -5,8 +5,8 @@
     ./scripts/soc/aoa_repeat.py [--cycles 10] [--sizes 1 64 512 4096] [--phone IP]
 
 Stops at the first failing cycle (--keep-going to run on): fix the error, rerun.
-Per cycle: role off/host, reset, aoa, wait for the app to report the accessory open, set echo
-mode, echo each size. The app's event log is followed the whole time and
+Per cycle: role off/host, reset, aoa, wait for the app's attach + open events from AFTER the aoa,
+set echo mode, echo each size. The app's event log is followed the whole time and
 `ctl get` is read after each phase: a cycle fails on any app error after the accessory is open,
 on `accessory_open` false, or when the app's received byte count differs from what was sent.
 Log: tmp/logs/aoa_repeat.log (shell output, app events, app state per phase).
@@ -31,8 +31,8 @@ CTL_REPO = Path(os.environ.get("AWTO_DJI_CTL", ROOT.parent / "awto-dji-wt-ctl"))
 # One shell command is ~4 s on this console (prompt wait); a cycle is ~8 commands.
 SHELL_LIMIT_S = 60
 CTL_LIMIT_S = 20
-# Accessory open follows re-enumeration by ~1-2 s on the Pixel; 8 x 0.5 s = 4 s covers it.
-OPEN_TRIES, OPEN_GAP_S = 8, 0.5
+# The app logs attach + open ~1-2 s after the phone re-enumerates; bounded by the re-attach limit.
+ATTACH_WAIT_S = 8.0   # phone re-attach bound, same as ATTACH_US in the firmware
 # Log-follow poll: an app event line lands within one poll; 0.2 s is far below a USB step.
 POLL_S = 0.2
 DEFAULT_APP_LOG = ROOT / "tmp" / "logs" / "dji_listen_echo2.log"
@@ -121,24 +121,40 @@ def echo_ok(text, size):
         and "stopped:" not in block.split("aux>")[1] and "mismatch" not in block
 
 
+def wait_for_new_accessory(events, mark):
+    """True once the app logs an accessory attach intent AND then 'accessory open' after `mark`.
+
+    `accessory_open` in a reply can be left over from the session before our `aoa`; only an
+    attach followed by an open that arrive after the `aoa` belong to the new accessory.
+    """
+    deadline = time.monotonic() + ATTACH_WAIT_S
+    while time.monotonic() < deadline:
+        seen = events.since(mark)
+        attach = next((i for i, t in enumerate(seen) if "USB_ACCESSORY_ATTACHED" in t), None)
+        if attach is not None and any("accessory open" in t for t in seen[attach:]):
+            return True
+        time.sleep(POLL_S)
+    return False
+
+
 def run_cycle(cycle, args, events, log):
     """-> (ok, why). `why` names the first thing that failed, with the app's side of it."""
-    start = events.mark()
-    out = shell(["usb target_a role off", "usb target_a role host", "usb target_a reset",
-                 "usb target_a aoa"])
+    out = shell(["usb target_a role off", "usb target_a role host", "usb target_a reset"])
     log.write(out)
-    detach = [t for t in events.since(start) if APP_ERROR.search(t)]
+    if "reset done" not in out:
+        return False, f"reset did not complete: {out.strip().splitlines()[-3:]}"
+    mark = events.mark()
+    out = shell(["usb target_a aoa"])
+    log.write(out)
     if "accessory 18d1:2d0" not in out:
-        return False, f"aoa did not enumerate; app saw: {detach or 'nothing'}"
+        return False, f"aoa did not enumerate; app saw: {events.since(mark) or 'nothing'}"
+    if not wait_for_new_accessory(events, mark):
+        return False, f"app never logged attach + open after aoa; saw: {events.since(mark)[-4:]}"
 
-    for _ in range(OPEN_TRIES):
-        mode = reply(ctl(args.phone, "mode", "echo", f"test={cycle}"))
-        log.write(json.dumps(mode) + "\n")
-        if mode.get("ok") and mode.get("accessory_open"):
-            break
-        time.sleep(OPEN_GAP_S)
-    else:
-        return False, f"app never reported the accessory open (last reply {mode})"
+    mode = reply(ctl(args.phone, "mode", "echo", f"test={cycle}"))
+    log.write(json.dumps(mode) + "\n")
+    if not (mode.get("ok") and mode.get("accessory_open")):
+        return False, f"app refused echo mode or reports the accessory closed: {mode}"
 
     quiet = events.mark()
     text = shell([f"usb target_a echo 1 {size} 1" for size in args.sizes])

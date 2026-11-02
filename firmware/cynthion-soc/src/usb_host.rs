@@ -581,6 +581,26 @@ impl Host {
         Ok(d)
     }
 
+    /// `enumerate`, retried while the phone is still re-attaching after a bus reset (Android drops
+    /// and re-presents the gadget, 0.1-1 s measured, #571). Bounded by `ATTACH_US`.
+    fn enumerate_waiting(&mut self, addr: u8) -> Result<DeviceId, Error> {
+        let started = clock::now();
+        loop {
+            match self.enumerate(addr) {
+                Err(Error::Resp(4) | Error::NotIdle | Error::Timeout { .. }) => {
+                    let elapsed = started.elapsed(clock::now());
+                    if elapsed > clock::micros(ATTACH_US) {
+                        return Err(Error::Timeout { op: "device wait", limit_us: ATTACH_US,
+                                                    elapsed_us: clock::to_micros(elapsed) });
+                    }
+                    clock::wait(clock::millis(ATTACH_GAP_MS));
+                    let _ = self.reset();
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Addr 0: read 8 bytes for bMaxPacketSize0, SET_ADDRESS, read the descriptor.
     pub fn enumerate(&mut self, addr: u8) -> Result<DeviceId, Error> {
         let mut d = [0u8; 8];
@@ -628,7 +648,7 @@ impl Host {
     /// find the bulk pair. Returns the accessory-mode id.
     pub fn aoa(&mut self, strings: &[&[u8]; 6]) -> Result<DeviceId, Error> {
         self.host()?;
-        let mut id = self.enumerate(DEVICE_ADDR)?;
+        let mut id = self.enumerate_waiting(DEVICE_ADDR)?;
         if !id.is_accessory() {
             let mut version = [0u8; 2];
             self.control(&setup_packet(0xc0, AOA_GET_PROTOCOL, 0, 0, 2), &[], &mut version)?;
