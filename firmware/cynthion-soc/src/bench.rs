@@ -926,16 +926,17 @@ fn flash(uart: &mut Uart) {
     sum ^= got;
     ratio(uart, "flash", &seq, &rnd);
 
-    // Content, not absence of error. The two constants are the ones `check`
-    // uses; the checksum is over every walk above, and a window that is dead
-    // rather than slow returns 00000000 or ffffffff for all of it.
-    let known = target::flash_word(0) == 0x6150_00ff && target::flash_word(0x40) == 0x2a55_8800;
+    // Content, not absence of error: the ECP5 preamble at 0, and a word at 0x40
+    // that is neither 00000000 nor ffffffff (a dead window). The word's value is
+    // the image's, not a constant. The checksum covers every walk above.
+    let (head, mid) = (target::flash_word(0), target::flash_word(0x40));
+    let known = head == 0x6150_00ff && mid != 0 && mid != 0xffff_ffff;
     let _ = writeln!(
         uart,
-        "flash    reads {} -- @0 {:08x} @40 {:08x} expected 615000ff/2a558800, checksum {:08x}",
+        "flash    reads {} -- @0 {:08x} @40 {:08x}, checksum {:08x}",
         if known { "CORRECT" } else { "WRONG" },
-        target::flash_word(0),
-        target::flash_word(0x40),
+        head,
+        mid,
         sum
     );
 }
