@@ -1043,6 +1043,13 @@ def group_aoa(checks, verbose=False):
         got = await xfer_retry(pc, type=TYPE_IN, address=2, endpoint=1, data_pid=0)
         seen["bulk_in"] = got
         seen["bulk_sent"] = list(out)
+        big = bytes((i * 7 + 3) & 0xFF for i in range(512))
+        sent = await xfer_retry(pc, type=TYPE_OUT, address=2, endpoint=1, data_pid=1, payload=big)
+        seen["big_out"] = sent["resp"]
+        got = await xfer_retry(pc, type=TYPE_IN, address=2, endpoint=1, data_pid=1)
+        seen["big_in"] = got
+        seen["big_sent"] = list(big)
+        seen["zlp_out"] = await xfer_retry(pc, type=TYPE_OUT, address=2, endpoint=1, data_pid=0)
 
     pk = []
     run(bench, testbench, processes=(capture_usb(phone.utmi, pk),), platform=BoardPlatform())
@@ -1077,6 +1084,14 @@ def group_aoa(checks, verbose=False):
     checks.check("aoa: bulk OUT 1 is ACKed and bulk IN 1 echoes the same bytes",
                  seen.get("bulk_out") == RESP_ACK and echoed == seen["bulk_sent"],
                  f"out resp {seen.get('bulk_out')} in {seen.get('bulk_in')}")
+    big = seen.get("big_in", {})
+    checks.check("aoa: a 512-byte bulk OUT is ACKed and a 512-byte bulk IN returns the same bytes",
+                 seen.get("big_out") == RESP_ACK and big.get("data") == seen.get("big_sent"),
+                 f"out resp {seen.get('big_out')} in resp {big.get('resp')} "
+                 f"len {len(big.get('data') or [])}")
+    checks.check("aoa: a zero-length bulk OUT (the ZLP that ends a whole-packet transfer) is ACKed",
+                 seen.get("zlp_out", {}).get("resp") == RESP_ACK,
+                 f"resp {seen.get('zlp_out', {}).get('resp')}")
 
 
 def main():
