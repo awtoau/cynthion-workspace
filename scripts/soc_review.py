@@ -11,7 +11,7 @@ Composes the instruments that already exist rather than adding new ones:
   |---|---|
   | `scripts/soc_map_audit.py` | windows, and mapped/silent/unmapped bytes |
   | `scripts/soc_dead_peripherals.py` | windows no software reaches |
-  | `scripts/build_log_audit.py` | the warning set from the build log |
+  | `scripts/tools/build_log_audit.py` | the warning set from the build log |
   | nextpnr's `top.tim` | whole-design cell totals |
   | this file | mechanical duplication scans |
 

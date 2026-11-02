@@ -6,9 +6,9 @@
 """
 Audit a Yosys/nextpnr build log for what it costs and what it quietly did.
 
-    ./scripts/build_log_audit.py                      # newest build under tmp/awto_soc
-    ./scripts/build_log_audit.py <path/to/top.rpt>
-    ./scripts/build_log_audit.py --json
+    ./scripts/tools/build_log_audit.py                      # newest build under tmp/awto_soc
+    ./scripts/tools/build_log_audit.py <path/to/top.rpt>
+    ./scripts/tools/build_log_audit.py --json
 
 Exit 1 when something crosses a threshold or a real warning appears, so a build
 step can gate on it.
@@ -40,7 +40,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 BUILD = ROOT / "tmp" / "awto_soc" / "build"
 
 # LFE5U-25F, which is the die under the LFE5U-12F marking on this board.

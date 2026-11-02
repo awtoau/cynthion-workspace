@@ -92,7 +92,7 @@ constants that allowed the drift are gone.
 
 ## Unrelated: upstream/GSG work is parked, nothing submitted
 
-`scripts/upstream_ci.py` runs a GSG repo's own CI in a disposable clone under
+`scripts/tools/upstream_ci.py` runs a GSG repo's own CI in a disposable clone under
 `tmp/`; `docs/upstream-ci-workflow.md` has the detail and the measured findings.
 The short version is that upstream's automated signal is thinner than it looks —
 LUNA's entire Actions gate is 93 tests in 2.2 s, and PR #301 passes it

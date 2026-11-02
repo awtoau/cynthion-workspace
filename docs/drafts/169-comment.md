@@ -14,7 +14,7 @@
 - **The `.gitignore` `lib/` trap is fixed.** The block is `/lib/` and `/lib64/`,
   anchored, with a comment naming the 36 files it cost. **That bullet above is
   obsolete.**
-- `scripts/submodule_patch_audit.py` exists; all four submodules report
+- `scripts/tools/submodule_patch_audit.py` exists; all four submodules report
   `safe -- every commit is on a remote`.
 - [#190](https://github.com/awtoau/cynthion-workspace/issues/190) landed: `amaranth-soc` / `amaranth-stdio` are declared, and the new
   `amaranthsoc` check fails if the import resolves inside luna-soc's vendored

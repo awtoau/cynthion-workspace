@@ -7,9 +7,9 @@
 """
 Fails if any submodule holds a commit, a stash or an edit that is not on a remote.
 
-    python3 scripts/submodule_patch_audit.py
-    python3 scripts/submodule_patch_audit.py --fetch    # refresh remotes first
-    python3 scripts/submodule_patch_audit.py -v         # list every branch
+    python3 scripts/tools/submodule_patch_audit.py
+    python3 scripts/tools/submodule_patch_audit.py --fetch    # refresh remotes first
+    python3 scripts/tools/submodule_patch_audit.py -v         # list every branch
 
 Exit status 0 only if every submodule could be deleted today without losing
 anything. Output goes to the terminal and to
@@ -55,7 +55,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

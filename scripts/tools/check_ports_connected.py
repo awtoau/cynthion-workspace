@@ -5,7 +5,7 @@
 
 """Find peripheral `Out(...)` ports that nothing in the SoC ever reads.
 
-    ./scripts/check_ports_connected.py          # exit 1 if any port dangles
+    ./scripts/tools/check_ports_connected.py          # exit 1 if any port dangles
 
 ## Why this exists
 
@@ -38,7 +38,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 SOC = ROOT / "gateware" / "soc"
 TOP = SOC / "top.py"
 PERIPHERALS = SOC / "peripherals"

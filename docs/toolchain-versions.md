@@ -255,7 +255,7 @@ constraint on moving it.
 
 ## Submodules
 
-`repos/` pins four. `scripts/submodule_patch_audit.py` refuses to let one be
+`repos/` pins four. `scripts/tools/submodule_patch_audit.py` refuses to let one be
 removed while it holds work that is on no remote.
 
 | submodule | pinned | fork | upstream default branch | drift |

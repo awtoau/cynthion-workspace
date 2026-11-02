@@ -7,8 +7,8 @@
 Reports every logging arrangement in `scripts/`, so the inconsistency is a list
 rather than an impression.
 
-    ./scripts/audit_logging.py
-    ./scripts/audit_logging.py --unconverted    # only what still needs work
+    ./scripts/tools/audit_logging.py
+    ./scripts/tools/audit_logging.py --unconverted    # only what still needs work
 
 ## What it is looking for
 
@@ -41,7 +41,7 @@ import ast
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))

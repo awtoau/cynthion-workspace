@@ -5,9 +5,9 @@
 
 """Find submodule pins that exist on no remote, and push the commits that fix it.
 
-    ./scripts/submodule_pin_publish.py                  # report; writes nothing
-    ./scripts/submodule_pin_publish.py --json           # the same, machine-readable
-    ./scripts/submodule_pin_publish.py --push repos/apollo   # publish that one
+    ./scripts/tools/submodule_pin_publish.py                  # report; writes nothing
+    ./scripts/tools/submodule_pin_publish.py --json           # the same, machine-readable
+    ./scripts/tools/submodule_pin_publish.py --push repos/apollo   # publish that one
 
 Progress and results -> `tmp/logs/dev.log`, like every tool here.
 
@@ -66,7 +66,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, log  # noqa: E402
@@ -160,7 +160,7 @@ def report(details):
         emit(f"  fast-forward {'yes' if detail['fast_forward'] else 'NO -- refuses'}")
         for line in detail["commits"]:
             emit(f"    {line}")
-        emit(f"  publish with: ./scripts/submodule_pin_publish.py "
+        emit(f"  publish with: ./scripts/tools/submodule_pin_publish.py "
              f"--push {detail['submodule']}")
     if not details:
         emit("every submodule pin is reachable from a remote: a fresh clone builds")

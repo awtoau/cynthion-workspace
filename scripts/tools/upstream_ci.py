@@ -12,13 +12,13 @@ The clone is thrown away and re-made on every run, so nothing here can touch
 repos/* or the workspace submodules.
 
 Usage:
-    ./scripts/upstream_ci.py luna                     # upstream main
-    ./scripts/upstream_ci.py luna --pr 301            # someone else's PR head
-    ./scripts/upstream_ci.py apollo --job host-tests  # one job only
-    ./scripts/upstream_ci.py apollo --pick 0e9bfb1    # our commit on clean upstream
-    ./scripts/upstream_ci.py apollo --patch tmp/x.patch   # a patch file on clean upstream
-    ./scripts/upstream_ci.py luna --list              # show jobs, run nothing
-    ./scripts/upstream_ci.py apollo --reuse           # skip re-clone, rerun jobs
+    ./scripts/tools/upstream_ci.py luna                     # upstream main
+    ./scripts/tools/upstream_ci.py luna --pr 301            # someone else's PR head
+    ./scripts/tools/upstream_ci.py apollo --job host-tests  # one job only
+    ./scripts/tools/upstream_ci.py apollo --pick 0e9bfb1    # our commit on clean upstream
+    ./scripts/tools/upstream_ci.py apollo --patch tmp/x.patch   # a patch file on clean upstream
+    ./scripts/tools/upstream_ci.py luna --list              # show jobs, run nothing
+    ./scripts/tools/upstream_ci.py apollo --reuse           # skip re-clone, rerun jobs
 
 Exit code is 0 only if every selected job passes.
 
@@ -36,10 +36,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from logging_utils import setup_logging  # noqa: E402
 
-WORKSPACE = Path(__file__).resolve().parent.parent
+WORKSPACE = Path(__file__).resolve().parent.parent.parent
 TMP = WORKSPACE / "tmp"
 LOG_DIR = TMP / "logs"
 

@@ -8,8 +8,8 @@
 recorded artifact names one account, one disk and one agent worktree --
 `scripts/private_path_check.py` fails on exactly that.
 
-    ./scripts/results_scrub_paths.py            # report what would change
-    ./scripts/results_scrub_paths.py --write    # rewrite them
+    ./scripts/tools/results_scrub_paths.py            # report what would change
+    ./scripts/tools/results_scrub_paths.py --write    # rewrite them
 
 Only the leading checkout prefix is removed, so `.../tmp/awto_soc/build/x.bit`
 becomes `tmp/awto_soc/build/x.bit`. A path under some other checkout (an agent
@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402

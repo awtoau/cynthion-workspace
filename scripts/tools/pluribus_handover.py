@@ -5,8 +5,8 @@
 
 """Assemble a self-contained synthesis-optimisation package from the last build.
 
-    ./scripts/pluribus_handover.py            # from this variant's build dir
-    ./scripts/pluribus_handover.py --netlist  # include the 35 MB post-synth JSON
+    ./scripts/tools/pluribus_handover.py            # from this variant's build dir
+    ./scripts/tools/pluribus_handover.py --netlist  # include the 35 MB post-synth JSON
 
 Output goes to `tmp/pluribus-handover/`, log to `tmp/logs/pluribus_handover.log`.
 
@@ -39,7 +39,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "gateware"))
 

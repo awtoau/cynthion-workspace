@@ -274,7 +274,7 @@ def build_checks() -> List[Check]:
                 # An undriven output port elaborates, places and routes without
                 # a word, which is how `VbusControl`'s two input-enable ports
                 # drove no pad for as long as they existed (#305).
-                Step([PYTHON, "scripts/check_ports_connected.py"], ROOT),
+                Step([PYTHON, "scripts/tools/check_ports_connected.py"], ROOT),
             ],
         ),
         Check(

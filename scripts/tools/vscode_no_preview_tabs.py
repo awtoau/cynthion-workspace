@@ -11,7 +11,7 @@ Settings files are JSONC (comments allowed), so this edits them textually
 rather than round-tripping through json.dumps, which would strip the comments.
 
 Usage:
-    scripts/vscode_no_preview_tabs.py [--dry-run]
+    scripts/tools/vscode_no_preview_tabs.py [--dry-run]
 
 Backups land in tmp/vscode-profile-backup/, the log in tmp/logs/.
 """
@@ -24,7 +24,7 @@ import shutil
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOG_DIR = ROOT / "tmp" / "logs"
 BACKUP_DIR = ROOT / "tmp" / "vscode-profile-backup"
 

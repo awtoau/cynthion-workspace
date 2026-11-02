@@ -5,10 +5,10 @@
 
 """Find dangling commits, and put a branch on every one worth keeping.
 
-    ./scripts/recover_dangling.py                  # report, change nothing
-    ./scripts/recover_dangling.py --since 2026-08-10
-    ./scripts/recover_dangling.py --rescue         # create the branches
-    ./scripts/recover_dangling.py --rescue --push  # ...and push them
+    ./scripts/tools/recover_dangling.py                  # report, change nothing
+    ./scripts/tools/recover_dangling.py --since 2026-08-10
+    ./scripts/tools/recover_dangling.py --rescue         # create the branches
+    ./scripts/tools/recover_dangling.py --rescue --push  # ...and push them
 
 ## Why
 
@@ -37,7 +37,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 LOG = ROOT / "tmp" / "logs" / "recover-dangling.log"
 
 

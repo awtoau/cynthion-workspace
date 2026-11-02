@@ -32,7 +32,7 @@ import subprocess
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 HISTORY = ROOT / "tmp" / "build_times.json"
 
 # Fraction added to the slowest observed run. 25% absorbs ordinary variation --

@@ -15,7 +15,7 @@ and the difference is called out.
 | `gateware` check is ~98% of lint wall time | **deleted**, with a ten-line comment at the end of `build_checks()` recording why. Question 3 is answered: deleted, not repointed — `socmap` covers the gateware this repo builds |
 | `.gitignore:17` unanchored `lib/` will untrack the next `lib/` | **fixed.** The block is now `/lib/` and `/lib64/`, anchored, with a comment naming the 34 + 2 files it cost. **This bullet of [#169](https://github.com/awtoau/cynthion-workspace/issues/169) is obsolete** |
 | — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | the `flutter` check is gone too, and the dashboard is at `debris/code/app-flutter-dashboard/` |
-| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | `scripts/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
+| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | `scripts/tools/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
 
 **Overlap with [#190](https://github.com/awtoau/cynthion-workspace/issues/190) (closed).** `amaranth-soc` and `amaranth-stdio` are now
 declared in `machine_setup.py:AMARANTH_GIT`, and a new `amaranthsoc` check fails
@@ -197,7 +197,7 @@ firmware. The choice is the owner's:
 
 - keep both submodules purely so the gate keeps building upstream firmware, or
 - accept that this repo no longer gates upstream's firmware, delete both checks,
-  and let `scripts/upstream_ci.py` (which clones fresh and touches no `repos/*`)
+  and let `scripts/tools/upstream_ci.py` (which clones fresh and touches no `repos/*`)
   be the only thing that looks upstream.
 
 **Do not decide this as a side effect of A–C.** It is the actual content of
