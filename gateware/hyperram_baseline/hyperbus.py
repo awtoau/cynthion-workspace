@@ -25,8 +25,10 @@ from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module, M
 T_CSM_NS = 4000.0
 # Table 21, 166 MHz grade: CS# High >= 6 ns between transactions; 2 cycles is >= 12 ns at <= 166 MHz.
 CS_HIGH_CYCLES = 2
-# CS# Low, CK stopped, before the first and after the last CK: fabric-vs-ODDR latency.
+# CS# Low, CK stopped, before the first and after the last CK, with OE held: covers
+# fabric (CS#/OE) vs ODDR (CK/DQ/RWDS) output latency. Board: ODDR lags by ~3 (#581 doc).
 GUARD_CYCLES = 3
+POST_GUARD_CYCLES = 6
 # Ceiling of the runtime latency register; the burst cap assumes it.
 WAIT_MAX = 31
 # CR0 default 0x8F2F: 7 clocks, fixed 2x. Data starts 2L-1 CK after the last CA CK.
@@ -41,7 +43,7 @@ RESET_NS = 2000.0
 def max_burst_words(ck_mhz):
     """Longest even burst whose CS# Low time fits tCSM at the longest latency setting."""
     budget = int(T_CSM_NS * ck_mhz / 1000.0)
-    return (budget - (2 * GUARD_CYCLES + 3 + WAIT_MAX + TAIL_CYCLES)) & ~1
+    return (budget - (GUARD_CYCLES + POST_GUARD_CYCLES + 3 + WAIT_MAX + TAIL_CYCLES)) & ~1
 
 
 class PinIntent:
@@ -139,7 +141,8 @@ class HyperBusCore(Elaboratable):
                     m.d.sync += [p.dq_oe.eq(1),
                                  p.dq_o.eq(Mux(k == 0, ca[32:48], Mux(k == 1, ca[16:32], ca[0:16])))]
                 with m.Elif(k < data_start):
-                    m.d.sync += [p.dq_oe.eq(is_write | (k < 5)),
+                    # Read: OE held until the ODDR'd CA has left the pins, well before data.
+                    m.d.sync += [p.dq_oe.eq(is_write | (k < data_start - 4)),
                                  p.rwds_oe.eq(is_write & (k >= 7))]
                 with m.Else():
                     m.d.sync += [p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write)]
@@ -151,7 +154,8 @@ class HyperBusCore(Elaboratable):
                     m.next = "TAIL"
             with m.State("TAIL"):
                 m.d.comb += listen.eq(1)
-                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), cnt.eq(cnt + 1)]
+                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write),
+                             cnt.eq(cnt + 1)]
                 with m.If(is_write | (received == n)):
                     m.d.sync += cnt.eq(0)
                     m.next = "POST"
@@ -164,8 +168,9 @@ class HyperBusCore(Elaboratable):
                     m.d.sync += [cnt.eq(0), filling.eq(0)]
                     m.next = "POST"
             with m.State("POST"):
-                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), cnt.eq(cnt + 1)]
-                with m.If(cnt == GUARD_CYCLES - 1):
+                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write),
+                             cnt.eq(cnt + 1)]
+                with m.If(cnt == POST_GUARD_CYCLES - 1):
                     m.d.sync += cnt.eq(0)
                     m.next = "HIGH"
             with m.State("HIGH"):
