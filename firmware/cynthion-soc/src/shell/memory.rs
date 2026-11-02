@@ -322,10 +322,10 @@ fn readback(uart: &mut Uart, spi: &Flash, offset: u32, expected: u32) {
 fn usage(uart: &mut Uart, region: Region) {
     let _ = writeln!(
         uart,
-        "usage: {} info|read <hex offset>{}",
+        "usage: {} status|read <hex offset>|bench{}",
         region.name(),
         if region.no_id().is_none() {
-            ", or `flash id|sfdp|status|erase|program`"
+            ", or `flash sfdp|erase|program`"
         } else {
             ""
         }
