@@ -32,7 +32,7 @@ ERR_LIMIT = 3
 
 # NAKs in a row before the descriptor returns to the RV (programmable, NAK_LIMIT).
 # Min HS NAKed transaction ~60 usb cycles (token 8 + turnaround + handshake 6 + SIE
-# IPD 24 + CDC/drain ~20) = 1 us; 1000 = one FS frame (1 ms) of back-to-back NAKs.
+# IPD 24 + CDC/drain ~20) = 1 us; 1000 = one FS frame (1 ms) of IN NAKs (OUT ~10x: re-push).
 NAK_LIMIT_DEFAULT = 1000
 
 MPS_BITS = 10               # <= 512: the SIE's TX FIFO holds one packet

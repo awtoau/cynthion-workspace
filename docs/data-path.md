@@ -85,7 +85,7 @@ Per armed descriptor (`sequencer.py`):
 
 | Wait | Bound | From | On expiry |
 |---|---|---|---|
-| NAKs in a row | `NAK_LIMIT`, reset 1000, programmable | min HS NAKed transaction ~60 usb cycles (token 8 + turnaround + handshake 6 + SIE IPD 24 + shim CDC/drain ~20) = 1 us; 1000 = one FS frame (1 ms) | descriptor stops, `R_FLAGS.nak_limit`, bytes so far kept, IRQ; RV reports `nak_limit` |
+| NAKs in a row | `NAK_LIMIT`, reset 1000, programmable | min HS NAKed IN ~60 usb cycles (token 8 + turnaround + handshake 6 + SIE IPD 24 + shim CDC/drain ~20) = 1 us, so 1000 = one FS frame (1 ms); a NAKed 512 B OUT also re-pushes the packet (~8.5 us at sync 60 MHz), so ~10 ms | descriptor stops, `R_FLAGS.nak_limit`, bytes so far kept, IRQ; RV reports `nak_limit` |
 | transaction errors in a row | 3 (`ERR_LIMIT`) | USB 2.0 8.6.4 three-strike retry | `R_FLAGS.error`, IRQ |
 | one transaction | `usb_host` `XFER_LIMIT` (unchanged) | 1 FS frame + SIE IPD, x1.25 | SIE reset, response NONE: counts as an error |
 | RV waits | firmware `datapath.rs` constants | per-wait arithmetic in the code | `Timeout(op)` with elapsed |
