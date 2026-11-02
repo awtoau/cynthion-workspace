@@ -65,10 +65,11 @@ const RESP_STALL: u8 = 3;
 /// Shim `SWITCH_LIMIT` = 1.25 x (PHY_PAD_RESET + PHY_PREP) = 90_160 usb cycles = 1.503 ms; x1.25.
 /// Expiry: `Timeout("role switch")`.
 const ROLE_US: u32 = 1_880;
-/// Entering host: INIT-BUS-RESET 50 ms + settle 0.1 + BUS-RESET 50 + chirp 0.1 (`guh/reset.py`); x1.25.
-const ENTER_RESET_US: u32 = 126_000;
-/// `bus_reset` from idle: settle 0.1 + `_MAX_RESET_TIME` 3_000_000 cycles / 60 MHz = 50 ms + chirp 0.1; x1.25.
-const RESET_US: u32 = 63_000;
+/// Bus reset waits for the reset controller's DISCONNECTED state to see J again: a phone in
+/// accessory mode drops off the bus and re-attaches (0.1 s to over 1 s seen, #571), so the
+/// bound is the re-attach bound, `ATTACH_US`. Expiry: `Timeout("bus reset")`.
+const ENTER_RESET_US: u32 = ATTACH_US;
+const RESET_US: u32 = ATTACH_US;
 /// `reset_done` clears ~6 sync cycles (0.1 us) after the strobe; 2 us covers the read quantum.
 const RESET_CLEAR_US: u32 = 2;
 /// Root-port reset recovery, TRSTRCY (USB 2.0 7.1.7.5). A fixed delay, not a bound.
