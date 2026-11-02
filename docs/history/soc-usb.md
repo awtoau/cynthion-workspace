@@ -1,6 +1,6 @@
 # History: SoC, USB and Apollo docs
 
-Removed from live docs (terse-ify pass), verbatim, with source file. Not current; do not rely on any number here.
+Removed from live docs (terse-ify pass), verbatim, with source file. Not current; do not rely on any number here. Markdown link syntax is disarmed ("] (") so the link checker skips it.
 
 ---
 
@@ -36,7 +36,7 @@ critical section, which is a reentrancy hazard rather than a style problem.
 **The fix:** a 256-byte RX ring buffer, so the ISR only enqueues and the console
 task drains it.
 
-**Not the DMA driver from [#66](https://github.com/awtoau/cynthion-workspace/issues/66).** Verified: zero DMA/DMAC references. That issue
+**Not the DMA driver from [#66] (https://github.com/awtoau/cynthion-workspace/issues/66).** Verified: zero DMA/DMAC references. That issue
 tracks a *ping-pong DMA* driver on SERCOM2 that was reviewed and deliberately
 **deselected**. This is a plain ISR-safe ring buffer, a much smaller change, and
 its deselection does not apply.
@@ -83,7 +83,7 @@ Worth separating, because the two get conflated:
 
 - **`repos/apollo` is 34 commits ahead of upstream.** Those are live: they are in
   the code that gets built and flashed. Submitting the upstreamable ones is
-  issue [#102](https://github.com/awtoau/cynthion-workspace/issues/102).
+  issue [#102] (https://github.com/awtoau/cynthion-workspace/issues/102).
 - **These three files are not carried anywhere.** They are unapplied text. Nothing
   builds them.
 
@@ -98,15 +98,15 @@ change itself is the record and a loose diff beside it would only be a second,
 divergent copy. Recover the text with `git log` in the submodule if the
 before-and-after is needed.
 
-For the evidence/issue workflow that goes with these changes, see [apollo_change_process.md](../apollo_samd11_mcu/apollo_change_process.md).
+For the evidence/issue workflow that goes with these changes, see [apollo_change_process.md] (../apollo_samd11_mcu/apollo_change_process.md).
 
 ### Related Build-System Changes
 
 The build-system work that introduced logging, fail-fast checks, and parallel execution is summarized separately here:
 
-- [0001-improved-build-system-logging-fail-fast-parallelization.md](0001-improved-build-system-logging-fail-fast-parallelization.md)
-- [0002-parallel-build-execution-setup-and-build-threading.md](0002-parallel-build-execution-setup-and-build-threading.md)
-- [install.md](../install.md)
+- [0001-improved-build-system-logging-fail-fast-parallelization.md] (0001-improved-build-system-logging-fail-fast-parallelization.md)
+- [0002-parallel-build-execution-setup-and-build-threading.md] (0002-parallel-build-execution-setup-and-build-threading.md)
+- [install.md] (../install.md)
 
 ### 2026-07-22 - Apollo console/UART race hardening
 
@@ -128,7 +128,7 @@ Why it matters:
 
 Verification status:
 - Track runtime evidence and build output alongside the patch set, not here.
-- Use the issue comment / `tmp/` log pattern from [apollo_change_process.md](../apollo_samd11_mcu/apollo_change_process.md).
+- Use the issue comment / `tmp/` log pattern from [apollo_change_process.md] (../apollo_samd11_mcu/apollo_change_process.md).
 
 ---
 
@@ -168,7 +168,7 @@ Verification status:
 ## Parallel Build Execution
 
 Related change set:
-- [0001-improved-build-system-logging-fail-fast-parallelization.md](0001-improved-build-system-logging-fail-fast-parallelization.md)
+- [0001-improved-build-system-logging-fail-fast-parallelization.md] (0001-improved-build-system-logging-fail-fast-parallelization.md)
 
 ### Usage
 
@@ -312,7 +312,7 @@ title should not assert.
 (`awtoau/awto-apollo`), on a 14 KB / 4 KB part, with the ceilings never raised.
 Verified on hardware: IDCODE `0x21111043`, configure `rc=0`, `check.py` 6 passed.
 
-The flash and RAM percentages once quoted here were the pre-[#199](https://github.com/awtoau/cynthion-workspace/issues/199) figures, which
+The flash and RAM percentages once quoted here were the pre-[#199] (https://github.com/awtoau/cynthion-workspace/issues/199) figures, which
 omitted `.relocate` and read as under both ceilings when both were over. Current
 numbers: `docs/chips/samd11-apollo.md` § Memory budget.
 
@@ -335,7 +335,7 @@ is 81.9 ms, so the transport still costs 3.9x what the bits do. Per-transaction 
 ~145 us against ~47 us of wire for a 64-byte packet.
 
 **The next lever is not the one this work assumed.** Dispatching SETUP from the USB
-interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see [#100](https://github.com/awtoau/cynthion-workspace/issues/100)**; it
+interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see [#100] (https://github.com/awtoau/cynthion-workspace/issues/100)**; it
 works and is faster, but stalls on a chunk-size change and is 246 bytes over budget) and
 is worth **7.8 ms -- 3.2% of the remaining gap**. That bounds the whole software-latency theory: even a perfect
 version of it leaves ~230 ms unexplained. What is left is the 64-byte control endpoint
@@ -1332,7 +1332,7 @@ rather than filed away because the audience for a configure-speed document is ex
 the audience tempted to propose an FPGA-side loader, and these are hard negatives with
 primary sources -- expensive to establish, cheap to re-propose.
 
-Tracked as **[#108](https://github.com/awtoau/cynthion-workspace/issues/108)**.
+Tracked as **[#108] (https://github.com/awtoau/cynthion-workspace/issues/108)**.
 
 ## 1. The ECP5 cannot reconfigure its own SRAM
 
@@ -1440,7 +1440,7 @@ enough that it spends most of its time waiting for data.
 The Apollo debug controller enumerates at **12 Mbps full-speed** with a 64-byte
 EP0 (`/sys/bus/usb/devices/.../speed` = 12; `CFG_TUD_ENDPOINT0_SIZE 64`).
 
-This is the single most important fact for issue [#100](https://github.com/awtoau/cynthion-workspace/issues/100), because the 388 Mbps
+This is the single most important fact for issue [#100] (https://github.com/awtoau/cynthion-workspace/issues/100), because the 388 Mbps
 figure the issue reasons from is the throughput of the **FPGA's** USB PHY, on a
 different port and a different chip. The bitstream does not travel that path. It
 travels the SAMD11's full-speed link, whose raw ceiling is 1.5 MB/s.
@@ -1454,7 +1454,7 @@ full-speed wire**. That inefficiency is the opportunity.
 | SAMD11 ingest at measured 0.40 MB/s | 771 ms |
 | JTAG clocking alone at 1.40 us/byte | 427 ms |
 | 100% of full-speed wire | **203 ms** -- floor for *any* SAMD11 path |
-| issue [#100](https://github.com/awtoau/cynthion-workspace/issues/100)'s target | 6 ms -- **not reachable through this MCU** |
+| issue [#100] (https://github.com/awtoau/cynthion-workspace/issues/100)'s target | 6 ms -- **not reachable through this MCU** |
 
 Note the end-to-end 2746 ms exceeds the 771 ms ingest figure, because the
 per-transfer fixed cost (204 us x 1191 chunks) and the `SCAN` transfers add on
@@ -1513,7 +1513,7 @@ oversight.
 
 **Status:** proposal, no hardware exercised
 **Date:** 2026-07-30T19:30:00+10:00; integration design added 2026-08-03T01:30:00+10:00
-**Consolidates:** awtoau/cynthion-workspace#101, [#105](https://github.com/awtoau/cynthion-workspace/issues/105)
+**Consolidates:** awtoau/cynthion-workspace#101, [#105] (https://github.com/awtoau/cynthion-workspace/issues/105)
 **Target:** LFE5U-12F (24288 LUT, 56 BRAM), Cynthion r1.4
 
 Sections 0-10 are the original feasibility study: can this board host, and does
@@ -1523,9 +1523,9 @@ sections 0-10 got wrong. Read section 11.1 before trusting anything above it.
 
 **If the question is Linux, this is not the document.** A 480 Mbps host with a
 bespoke register interface has no Linux driver, so taking it means writing an HCD.
-[`linux-on-cynthion.md`](../linux-on-cynthion/ANALYSIS.md) carries that chain end to end and
+[`linux-on-cynthion.md`] (../linux-on-cynthion/ANALYSIS.md) carries that chain end to end and
 picks the full-speed OHCI route for exactly that reason; its Part II is the
-full-speed investigation in detail. This document remains the answer to [#105](https://github.com/awtoau/cynthion-workspace/issues/105)'s
+full-speed investigation in detail. This document remains the answer to [#105] (https://github.com/awtoau/cynthion-workspace/issues/105)'s
 question, which was 480 Mbps.
 
 ---
@@ -1697,7 +1697,7 @@ done outside LUNA.
 but not as a refusal. martinling (GSG member) replied:
 
 > There is a working example of host mode gateware using LUNA
-> [in the Tiliqua project](https://github.com/apfaudio/tiliqua/pull/65), which you
+> [in the Tiliqua project] (https://github.com/apfaudio/tiliqua/pull/65), which you
 > could use as a starting point. At some point we'd like to bring more of that
 > functionality into LUNA and add an example for doing this with Cynthion, but
 > we're not there yet.
@@ -1708,7 +1708,7 @@ with the same substance: technically possible, no support provided.
 
 ### 3.2 `apfaudio/guh` — a USB2 **high-speed** host engine for LUNA
 
-Tiliqua PR [#65](https://github.com/awtoau/cynthion-workspace/issues/65) (merged 2024-11-05) was the full-speed-only ancestor. That code has
+Tiliqua PR [#65] (https://github.com/awtoau/cynthion-workspace/issues/65) (merged 2024-11-05) was the full-speed-only ancestor. That code has
 since been extracted and substantially extended into a standalone library,
 **`apfaudio/guh`** ("Gateware USB Host"), by the same author. This is the single
 most important artifact for this proposal.
@@ -1913,7 +1913,7 @@ inheriting Zephyr's enumeration, hub and class drivers.
 
 ## 7. Verdict on the Zephyr hypothesis
 
-The hypothesis from [#105](https://github.com/awtoau/cynthion-workspace/issues/105) was that the Zephyr USB layer is the easiest route. On
+The hypothesis from [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) was that the Zephyr USB layer is the easiest route. On
 the evidence it is **not the easiest route, but the mismatch is not fatal either.**
 It is the right destination if the goal is a general-purpose host, and the wrong
 starting point.
@@ -1959,7 +1959,7 @@ drive, and building that controller is Option B. Treat Zephyr as a later phase
 that Option B is deliberately designed to enable — worth doing if the goal is
 hosting arbitrary devices, and pointless as a shortcut to first light.
 
-One correction to the framing in [#101](https://github.com/awtoau/cynthion-workspace/issues/101), which proposed adapting
+One correction to the framing in [#101] (https://github.com/awtoau/cynthion-workspace/issues/101), which proposed adapting
 "zephyr/freebsd/openbsd/linux code [...] but written in rust" and asked whether
 xHCI-style registers are needed. Porting an OS host stack is the Option C tail,
 not the head, and xHCI is the wrong model: GUH's author addresses this directly,
@@ -1975,7 +1975,7 @@ interface is far cheaper and entirely sufficient.
 **Do it, via Option A now and Option B next. Do not start with Zephyr.**
 
 This is worth doing specifically *because* the expensive parts already exist. The
-question in [#101](https://github.com/awtoau/cynthion-workspace/issues/101)/#105 was framed as "can Cynthion host at 480 Mbps and what would
+question in [#101] (https://github.com/awtoau/cynthion-workspace/issues/101)/#105 was framed as "can Cynthion host at 480 Mbps and what would
 it take", with an implicit fear that the answer was a from-scratch host stack that
 would not fit. Both halves of that fear are unfounded:
 
@@ -2033,21 +2033,21 @@ fabric numbers say it fits.
 
 ## 9. Issue consolidation
 
-[#101](https://github.com/awtoau/cynthion-workspace/issues/101) and [#105](https://github.com/awtoau/cynthion-workspace/issues/105) are the same request: [#101](https://github.com/awtoau/cynthion-workspace/issues/101) ("Create host USB device on moon?") asks
+[#101] (https://github.com/awtoau/cynthion-workspace/issues/101) and [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) are the same request: [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) ("Create host USB device on moon?") asks
 for FPGA host support and speculates about OS stacks in Rust and xHCI-style
-registers; [#105](https://github.com/awtoau/cynthion-workspace/issues/105) asks to research a 480 Mbps host and proposes Zephyr. Same goal,
+registers; [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) asks to research a 480 Mbps host and proposes Zephyr. Same goal,
 different guesses at the route — and this document answers both.
 
-**Recommendation: keep [#105](https://github.com/awtoau/cynthion-workspace/issues/105) open, close [#101](https://github.com/awtoau/cynthion-workspace/issues/101) as a duplicate of [#105](https://github.com/awtoau/cynthion-workspace/issues/105).**
+**Recommendation: keep [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) open, close [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) as a duplicate of [#105] (https://github.com/awtoau/cynthion-workspace/issues/105).**
 
-Reasoning: [#105](https://github.com/awtoau/cynthion-workspace/issues/105) states the measurable requirement (480 Mbps) and the hypothesis to
-test, so it reads as the actionable ticket. [#101](https://github.com/awtoau/cynthion-workspace/issues/101)'s specifics are the parts this
+Reasoning: [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) states the measurable requirement (480 Mbps) and the hypothesis to
+test, so it reads as the actionable ticket. [#101] (https://github.com/awtoau/cynthion-workspace/issues/101)'s specifics are the parts this
 research contradicts — xHCI is explicitly the wrong model, and porting an OS host
 stack is a late phase rather than the starting point — so keeping it open would
 preserve a misleading plan. Its one durable instinct ("must be easier to find luna
 or other work if possible") turned out to be exactly right and is captured above.
 
-Retitle [#105](https://github.com/awtoau/cynthion-workspace/issues/105) to something like "USB host mode at 480 Mbps via GUH" and link this
+Retitle [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) to something like "USB host mode at 480 Mbps via GUH" and link this
 document. Neither issue was closed or edited in producing this proposal, per the
 brief.
 
@@ -2066,8 +2066,8 @@ Local:
 
 Upstream:
 - `apfaudio/guh` — https://github.com/apfaudio/guh (BSD-3-Clause)
-- `apfaudio/tiliqua` PR [#65](https://github.com/awtoau/cynthion-workspace/issues/65) — the full-speed ancestor
-- `greatscottgadgets/cynthion` [#230](https://github.com/awtoau/cynthion-workspace/issues/230) (GSG pointing at Tiliqua), [#174](https://github.com/awtoau/cynthion-workspace/issues/174)
+- `apfaudio/tiliqua` PR [#65] (https://github.com/awtoau/cynthion-workspace/issues/65) — the full-speed ancestor
+- `greatscottgadgets/cynthion` [#230] (https://github.com/awtoau/cynthion-workspace/issues/230) (GSG pointing at Tiliqua), [#174] (https://github.com/awtoau/cynthion-workspace/issues/174)
 - Zephyr UHC API — `include/zephyr/drivers/usb/uhc.h`, `drivers/usb/uhc/`
 
 Note on `import luna`: it resolves to the interpreter's own
@@ -2188,11 +2188,11 @@ combinationally cheap — which a CSR multiplexer is.
 
 ---
 
-## 13. Where it attaches, and the collision with [#120](https://github.com/awtoau/cynthion-workspace/issues/120)
+## 13. Where it attaches, and the collision with [#120] (https://github.com/awtoau/cynthion-workspace/issues/120)
 
 `target_phy` is the only candidate: `aux_phy` carries the CDC-ACM console
 (`gateware/soc/top.py`) and `control_phy` is shared with Apollo. It is also
-the port the ULPI register window of [#120](https://github.com/awtoau/cynthion-workspace/issues/120) sits on, and that is a hard conflict
+the port the ULPI register window of [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) sits on, and that is a hard conflict
 today, for a reason more basic than bus arbitration.
 
 ### 13.1 The conflict is ownership, not arbitration
@@ -2207,7 +2207,7 @@ today, for a reason more basic than bus arbitration.
 - `target_phy.rst` is tied to `ResetSignal("usb")`, so a host stack cannot
   re-initialise the PHY.
 
-This is [#125](https://github.com/awtoau/cynthion-workspace/issues/125)'s point exactly: `ULPIRegisterWindow` is an initialisation-time bus
+This is [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)'s point exactly: `ULPIRegisterWindow` is an initialisation-time bus
 **master** and cannot coexist with a stack that owns the PHY.
 
 ### 13.2 The fix is re-parenting, not arbitration
@@ -2234,13 +2234,13 @@ competing master into a client of the translator, and it is a candidate for
 `docs/upstreamable-patches.md` in its own right — the bug is that upstream
 documents an interface it does not provide.
 
-### 13.3 And it settles [#125](https://github.com/awtoau/cynthion-workspace/issues/125)'s open question
+### 13.3 And it settles [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)'s open question
 
-[#125](https://github.com/awtoau/cynthion-workspace/issues/125) asks which PHY the RX CMD status peripheral should watch and who owns it.
+[#125] (https://github.com/awtoau/cynthion-workspace/issues/125) asks which PHY the RX CMD status peripheral should watch and who owns it.
 `UTMITranslator` already decodes RX CMDs and exposes `line_state`, `vbus_valid`,
 `session_valid`, `session_end`, `rx_error`, `host_disconnect`, `id_digital`
 (`ulpi.py:694-697`). So the status peripheral taps the translator's outputs, is
-instantiated once per translator, and needs no bus access — which is what [#125](https://github.com/awtoau/cynthion-workspace/issues/125)
+instantiated once per translator, and needs no bus access — which is what [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)
 argued for on first principles, now with a named attachment point.
 
 ### 13.4 A host and the analyzer can share one translator
@@ -2370,7 +2370,7 @@ at 0x0.
 Its cost is its staging FIFO: `_DATA_FIFO_WORDS` defaults to 8 KiB, which is
 about 4 of the 14 free BRAMs, and it is a tunable. Target block RAM first —
 HyperRAM is the obvious destination for large buffers but has no Wishbone
-adapter ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92](https://github.com/awtoau/cynthion-workspace/issues/92)).
+adapter ([#90] (https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92] (https://github.com/awtoau/cynthion-workspace/issues/92)).
 
 **Do not build tier two first.** It is only worth it once a measured PIO number
 proves it necessary, and §15.3's estimate is not that measurement.
@@ -2449,8 +2449,8 @@ Then, in order:
 
 1. **Mux `target_phy`.** Move the pad wiring at `gateware/soc/top.py`
    behind an owner select, or better, implement §13.2's `UTMITranslator` manual
-   register access so `UlpiRegisters` becomes a client. This unblocks [#120](https://github.com/awtoau/cynthion-workspace/issues/120) and
-   [#125](https://github.com/awtoau/cynthion-workspace/issues/125) as well as the host.
+   register access so `UlpiRegisters` becomes a client. This unblocks [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) and
+   [#125] (https://github.com/awtoau/cynthion-workspace/issues/125) as well as the host.
 2. **VBUS and CC.** No `*_vbus_en` pin is driven anywhere in the SoC today.
    Add `control_vbus_en`, `target_c_vbus_en`, `aux_vbus_en` and
    `target_a_discharge` to the existing `gpio` peripheral, and present Rp on
@@ -2461,7 +2461,7 @@ Then, in order:
 5. **Measure the PIO byte rate** against the CLINT tick, and only then decide
    whether §15.4's DMA is needed.
 
-The AUX-to-TARGET loopback proposed on [#105](https://github.com/awtoau/cynthion-workspace/issues/105) remains the right acceptance test,
+The AUX-to-TARGET loopback proposed on [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) remains the right acceptance test,
 with one revision: it needs `aux_phy` free, and `aux_phy` is the console. Either
 move the console to `control_phy` behind `ApolloAdvertiser` for that test, or
 accept a third-party device for first light and defer the loopback.
@@ -2491,7 +2491,7 @@ SpinalHDL ships a complete OHCI controller —
 **`UsbOhciWishbone.scala`**. On paper it is everything §15 has to build by hand:
 a published standard register map, an existing Linux/BSD/Zephyr driver for it,
 DMA descriptors already specified, a Wishbone wrapper, and the same HDL
-ecosystem as our CPU. It is the thing [#101](https://github.com/awtoau/cynthion-workspace/issues/101) was reaching for.
+ecosystem as our CPU. It is the thing [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) was reaching for.
 
 It is **full and low speed only** — `UsbOhci.scala` carries `lowSpeed` and an
 `fs` timer constant and nothing else, because OHCI is an FS/LS specification.
@@ -2499,7 +2499,7 @@ The high-speed companion is EHCI, and no open EHCI implementation was found.
 
 So the choice is stark and worth stating plainly: **12 Mbps with a standard
 register map and off-the-shelf drivers, or 480 Mbps with a bespoke interface.**
-[#105](https://github.com/awtoau/cynthion-workspace/issues/105) asked for 480, so this note is a record of the road not taken rather than a
+[#105] (https://github.com/awtoau/cynthion-workspace/issues/105) asked for 480, so this note is a record of the road not taken rather than a
 recommendation — but if the requirement ever softens to full speed, this is the
 better engineering, and it deserves a fresh look rather than a port of §15.
 Its licence was not confirmed (the repository reports `NOASSERTION`) and would
@@ -2581,7 +2581,7 @@ the in-situ number is still the next increment's job.
 
 ## 23. What the driver needs, whatever schedules it
 
-`docs/rtic.md` and [#115](https://github.com/awtoau/cynthion-workspace/issues/115) are unresolved, so nothing here assumes a
+`docs/rtic.md` and [#115] (https://github.com/awtoau/cynthion-workspace/issues/115) are unresolved, so nothing here assumes a
 scheduling model. The engine's interface is `events in, work out`, and what it
 asks of a driver is the same under a superloop, an interrupt handler or an RTIC
 task:
@@ -2618,7 +2618,7 @@ task:
 - **No hardware.** Same as Parts I and II.
 
 Next increment, in order: re-parent `target_phy` behind `UTMITranslator` (§13.2,
-which also unblocks [#120](https://github.com/awtoau/cynthion-workspace/issues/120) and [#125](https://github.com/awtoau/cynthion-workspace/issues/125)), then the in-situ build for the numbers §19
+which also unblocks [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) and [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)), then the in-situ build for the numbers §19
 could not give, then the CSR/FIFO shim of §15 with §23's five requirements, then
 firmware enumeration.
 
@@ -2644,7 +2644,7 @@ One finding that is now designed around, and one retraction:
    `SyncFIFOBuffered` bug, not the CPU. That FIFO has since been fixed and the
    ladder has not been re-run, so **the CPU's working ceiling is unmeasured.**
 
-Issue [#110](https://github.com/awtoau/cynthion-workspace/issues/110) asked whether Lattice Diamond's place-and-route reaches a higher clock
+Issue [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) asked whether Lattice Diamond's place-and-route reaches a higher clock
 than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
 achieved frequency climbs with the requested one -- 72.6 at 60, 76.3 at 80,
 86.1 at 90, 92.0 at 100 -- so ~92 MHz looked like where nextpnr stopped trying
@@ -2792,10 +2792,10 @@ this repo's own commit messages -- rests on this withdrawn measurement.
 Re-running it is cheap: the same script, the fixed `StreamBuffer`, and a readout
 that is not the console. Until then, no number here bounds the CPU.
 
-## Diamond, and what [#110](https://github.com/awtoau/cynthion-workspace/issues/110) asked
+## Diamond, and what [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) asked
 
 The comparison against Lattice Diamond, why it could not answer the question as
-posed, and what to do about [#110](https://github.com/awtoau/cynthion-workspace/issues/110) are recorded in the issue rather than here.
+posed, and what to do about [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) are recorded in the issue rather than here.
 This file is for the findings above. Note that only the first -- the three
 exact-60 PLL solutions -- is a standing result; the second is a withdrawal.
 
@@ -2843,20 +2843,20 @@ answers.**
 
 This is a reference, not a plan. What follows are numbers with the conditions
 they were taken under; what to *do* about any of them is an issue. See
-[`README.md`](README.md) for that rule.
+[`README.md`] (README.md) for that rule.
 
 **Reproduce with**, none of which touch the board:
 
 | script | answers |
 |---|---|
-| [`soc_peripheral_area.py`](../scripts/soc_peripheral_area.py) | what each peripheral costs synthesised alone — an upper bound |
-| [`soc_instrumentation_cost.py`](../scripts/soc_instrumentation_cost.py) | what the three instrumentation peripherals cost **in context** — a delta |
-| [`soc_upstream_copy_check.py`](../scripts/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
-| [`pnr_noise.py`](../scripts/pnr_noise.py) | how much of an Fmax difference is placement luck |
-| [`soc_icache_model.py`](../scripts/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
-| [`soc_review.py`](../scripts/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
-| [`soc_map_audit.py`](../scripts/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
-| [`soc_decoder_cost.py`](../scripts/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
+| [`soc_peripheral_area.py`] (../scripts/soc_peripheral_area.py) | what each peripheral costs synthesised alone — an upper bound |
+| [`soc_instrumentation_cost.py`] (../scripts/soc_instrumentation_cost.py) | what the three instrumentation peripherals cost **in context** — a delta |
+| [`soc_upstream_copy_check.py`] (../scripts/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
+| [`pnr_noise.py`] (../scripts/pnr_noise.py) | how much of an Fmax difference is placement luck |
+| [`soc_icache_model.py`] (../scripts/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
+| [`soc_review.py`] (../scripts/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
+| [`soc_map_audit.py`] (../scripts/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
+| [`soc_decoder_cost.py`] (../scripts/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
 
 ---
 
@@ -2868,7 +2868,7 @@ they were taken under; what to *do* about any of them is an issue. See
 **Firmware size is SPEED.** The I-cache is 8 KiB, 64 sets x 2 ways.
 `firmware/cynthion-soc/Cargo.toml` records `opt-level` `z` → `3` growing `.text`
 79% and costing **5.4x the IPC**, and
-[`rtic.md`](rtic.md) measures the
+[`rtic.md`] (rtic.md) measures the
 hot footprint at 5,632 bytes — larger than the cache before any runtime is added.
 So in the firmware a library that is cleaner but bigger is a loss, and every
 change needs a `.text` delta beside it.
@@ -2911,11 +2911,11 @@ is mapping, and mapping depends on the neighbours; read the DFF column first.
 
 No build-dependent constant reaches the netlist: the identity is the ECP5's
 USERCODE plus `gateware/usercode_map.py`. What that was worth in cells is in
-[#447](https://github.com/awtoau/cynthion-workspace/issues/447) and
-[#443](https://github.com/awtoau/cynthion-workspace/issues/443), with the
+[#447] (https://github.com/awtoau/cynthion-workspace/issues/447) and
+[#443] (https://github.com/awtoau/cynthion-workspace/issues/443), with the
 conditions it was measured under.
 
-- [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
+- [`soc_repro_check.py`] (../scripts/soc_repro_check.py) is the gate: two builds of
   one tree, byte-compared, and `check.py`'s `repro` runs it.
 
 ### The floor: a COMB delta under ~200 is the mapper
@@ -2923,14 +2923,14 @@ conditions it was measured under.
 - Null control, 2026-08-12, `432d29b`, `bist0-ck160-dqs1-merge0-sync60`,
   `--no-parallel-refine`: one 32-bit identity constant given a different value,
   no logic touched → **TRELLIS_COMB +194, TRELLIS_FF +1**
-  ([`soc_trim_delta.py --trim null-constant`](../scripts/soc_trim_delta.py)).
+  ([`soc_trim_delta.py --trim null-constant`] (../scripts/soc_trim_delta.py)).
 - Global, not local folding: the whole `gateware_id` block is 153 COMB, and the
   move is 194.
 - So a COMB delta is a result only when it is well clear of ±194 **and** an FF,
   BRAM or LUTRAM delta of the same sign supports it. Numbers this unsettles, and
   the trims that survive it:
-  [#454](https://github.com/awtoau/cynthion-workspace/issues/454).
-- [`soc_review.py`](../scripts/soc_review.py) enforces it: a smaller move is
+  [#454] (https://github.com/awtoau/cynthion-workspace/issues/454).
+- [`soc_review.py`] (../scripts/soc_review.py) enforces it: a smaller move is
   printed and explicitly not called a regression.
 
 ### The other hazard: Fmax is placement luck
@@ -2938,7 +2938,7 @@ conditions it was measured under.
 Already known (71.45–76.99 MHz across identical builds) and confirmed again
 here: 84.88 MHz and 73.69 MHz from two builds differing by 22 cells. No Fmax
 figure in this document is offered as evidence of anything;
-[`pnr_noise.py`](../scripts/pnr_noise.py) is what settles a timing question.
+[`pnr_noise.py`] (../scripts/pnr_noise.py) is what settles a timing question.
 
 ## 3. What each peripheral costs
 
@@ -2999,7 +2999,7 @@ assignments that expose internals to the ILA. Its docstring states the
 obligation — "If upstream changes, this must be re-synced or it is measuring a
 different circuit than the one that ships" — and nothing checked it.
 
-[`soc_upstream_copy_check.py`](../scripts/soc_upstream_copy_check.py) now does.
+[`soc_upstream_copy_check.py`] (../scripts/soc_upstream_copy_check.py) now does.
 **As of the currently installed `luna_soc`: in sync.** 83 upstream statements,
 85 in the copy, the two extra being the instrumentation assignments and the `as
 fsm:` handle they need. The check was validated against known-bad mutations in
@@ -3032,7 +3032,7 @@ handlers moves 7,000 bytes out of `run` (17,044 → 10,044) and grows `.text` fr
 not free. Whether the locality is worth 668 bytes is **not measured** — the
 addresses a command touches are the same either way, and only a linker that then
 orders by hotness would change what the cache sees.
-[`soc_icache_model.py`](../scripts/soc_icache_model.py) is what would settle it.
+[`soc_icache_model.py`] (../scripts/soc_icache_model.py) is what would settle it.
 
 ### `core::str` cost 880 bytes to compare four ASCII words
 
@@ -3075,7 +3075,7 @@ Checked against the installed libraries by running them, not by reading them.
 
 ### The luna_soc surface is three times what the doc says
 
-[`toolchain-simplification.md`](toolchain-simplification.md) §2 states "the
+[`toolchain-simplification.md`] (toolchain-simplification.md) §2 states "the
 genuine surface is exactly two things" — `core.blockram` (127 lines) and the
 VexRiscv CPU (194). It predates the flash work. The shipping SoC also imports
 the whole of `luna_soc.gateware.core.spiflash`:
