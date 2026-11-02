@@ -26,7 +26,7 @@ Clock plan, owned here. Other docs link, they do not restate.
 | `sync` | PLL menu above | `SYNC_CEILING_MHZ` | 60 | default, unmeasured; CPU ceiling is [#110](https://github.com/awtoau/cynthion-workspace/issues/110) |
 | `fast` | 2x `sync` | integer divide of the same VCO | 2x `sync` when DQS / `FLASH_PHY_FAST` | forced by DQS (parked) |
 | HyperRAM CK | part rated 166 | second PLL (`hyperram_clocks.py`) | not in the shipping design | [#230](https://github.com/awtoau/cynthion-workspace/issues/230), [#432](https://github.com/awtoau/cynthion-workspace/issues/432) |
-| `jtag_tck` | n/a | 405 kHz driven | unconstrained in nextpnr | [#461](https://github.com/awtoau/cynthion-workspace/issues/461) |
+| `jtag_tck` | n/a | 405 kHz driven | constrained at 20 MHz (`gateware/soc/bus/jtag_stage.py:112`), 50x the driven rate; never binds | [#461](https://github.com/awtoau/cynthion-workspace/issues/461), [timing-variability.md](timing-variability.md) |
 
 ## PLL divider trap (why `usb` is not on the PLL)
 

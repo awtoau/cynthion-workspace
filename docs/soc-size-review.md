@@ -52,7 +52,7 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 
 ### Fmax is placement luck
 
-- 71.45-76.99 MHz across identical builds; 84.88 vs 73.69 MHz from two builds differing by 22 cells. No Fmax here is evidence; [pnr_noise.py](../scripts/soc/pnr_noise.py) settles timing questions.
+- 71.45-76.99 MHz across identical builds; 84.88 vs 73.69 MHz from two builds differing by 22 cells. No Fmax here is evidence; [pnr_noise.py](../scripts/soc/pnr_noise.py) settles timing questions. Causes ranked and the constraint audit: [timing-variability.md](timing-variability.md).
 
 ## 3. Per peripheral (out of context, upper bounds)
 

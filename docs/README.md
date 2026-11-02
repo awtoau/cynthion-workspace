@@ -82,6 +82,7 @@ in its §13 got there in the first place.
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
 * [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) — The CC/SBU over-voltage protection: a series switch with one open-drain flag, and nothing listening to it
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
+* [`timing-variability.md`](timing-variability.md) — Why nextpnr's verdict moves between builds (wire-bound CSR fabric, seed, `--parallel-refine`, mapper re-roll), the constraint audit, what makes a build route, and the hardware go/no-go that replaces STA
 * [`soc-size-review.md`](soc-size-review.md) — Where the SoC's size actually is — per-peripheral area, per-module `.text`, and why two of the obvious ways to measure both give wrong answers
 * [`toolchain-simplification.md`](toolchain-simplification.md) — luna_soc dependency: what needs it, what does not
 * [`toolchain-versions.md`](toolchain-versions.md) — Toolchain versions (pinned vs installed vs latest) and the constraints on them
