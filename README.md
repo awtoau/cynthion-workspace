@@ -40,6 +40,12 @@ No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 [Python strategy](#python-strategy).
 
+### Apollo firmware
+
+The SoC needs **our Apollo fork**, not upstream's. `cynthion update` replaces it
+with upstream's; `soc_run.py` then refuses to configure.
+Check and restore: [`docs/apollo-firmware.md`](docs/apollo-firmware.md).
+
 ### The board console
 
 Start it once and leave it running:
