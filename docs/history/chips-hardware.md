@@ -129,3 +129,46 @@ Two statements in the existing notes are wrong and are corrected here:
 | divisor 0 produces no clock; SCK capped at sync/2 | **wrong.** Divisor 0 reads byte-exact at every rung, at exactly half the cycle count of divisor 1 |
 | 120 MHz FAIL, 160 MHz FAIL | both were divisor-0 points, disbelieved for the reason above. 120 MHz passes |
 | 80 MHz is the fastest verified | 144 MHz, five modes |
+
+## docs/chips/ecp5/bram-budget.md (removed; issue links inline)
+
+Facedancer build gotcha, timing figure: "...fails timing at 72.68 MHz. Built the way its own build path does it, every clock passes."
+
+"This section used to name two ways out as untried. One has since been taken: `.text` and `.rodata` execute in place from flash ... block RAM behind them freed exactly as predicted. The trade named here was right, and is the one this design now lives with."
+
+How the 56 were spent (before/after doubling the caches; `./dev.py metrics report`; superseded, RAM region was 63 KiB):
+
+| consumer | before | after | |
+|---|---|---|---|
+| main block RAM, the writable region | 32 | 32 | 64 KiB at address 0 |
+| CPU I-cache | 2 | **5** | 4 KiB → 8 KiB |
+| CPU D-cache | 4 | **5** | 4 KiB → 8 KiB |
+| USB buffers | 3 | 3 | |
+| CPU BTB | 2 | 2 | |
+| ILA | 1 | 1 | |
+| **total** | 44 | **48** | of 56 |
+| **spare** | 12 | **8** | 16 KiB |
+
+"Of the 63 KiB RAM region about 11 KiB is live and the entire remainder is stack slack — `.stack` is simply 'whatever is left'. Growing RAM would have enlarged slack and relieved nothing measurable."
+
+"Timing held, and 'held' is the whole claim available from one build: `clk`'s distribution over 40 nextpnr seeds is 65.75–74.94 MHz, median 71.42, against a 60 MHz constraint that does not itself affect the result ([#467](https://github.com/awtoau/cynthion-workspace/issues/467), [#478](https://github.com/awtoau/cynthion-workspace/issues/478))."
+
+"An earlier version of this section said sets rather than ways was forced, because `flash_cache_flush()` needs a direct-mapped cache. **That was wrong**, in the direction that made the easy choice look mandatory."
+
+"The 52-versus-58 disagreement on 128×2 ([#287](https://github.com/awtoau/cynthion-workspace/issues/287)) does not reproduce. Two elaborations of that geometry, minutes apart, produce a byte-identical `top.json` and 57 blocks both times. Two things that were true when it was seen are not now: elaboration is reproducible ([#441](https://github.com/awtoau/cynthion-workspace/issues/441)), and every build no longer shares one generated `VexiiRiscv.v` path ([#306](https://github.com/awtoau/cynthion-workspace/issues/306)), which is exactly how one geometry's build could report another's memories."
+
+Fmax per geometry (seed sweep, `soc_occupancy_timing.py`, `cpu-l1-*` arms, 40 seeds each, [#481](https://github.com/awtoau/cynthion-workspace/issues/481)):
+
+| geometry | paired vs 64×2 | 95% CI | faster |
+|---|---|---|---|
+| **128×1** | **+3.50 MHz** | [+2.20, +4.80] | 34/40 |
+| 256×1 | +2.25 | [+0.61, +3.88] | 29/40 |
+| fetch 64×2 / lsu 128×1 | +2.16 | [+0.74, +3.58] | 25/40 |
+| 64×1 | -0.74 | [-2.35, +0.86] | 17/40 |
+| 32×2 | -1.91 | [-3.09, -0.72] | 12/40 |
+
+"One build's Fmax is a property of that placement: the distribution at fixed occupancy is 9 MHz wide ([#467]), and the constraint the design is given does not change it ([#478]). Dropping the way pays only where the sets are: 64×1 is indistinguishable from 64×2."
+
+Files table note: "That sweep's Fmax figures are withdrawn; its area and BRAM rows stand".
+
+Geometry table sizes in the pre-fix doc were wrong for 2-way rows (listed 32×2 as 2 KiB, 64×2 as 4 KiB, 128×2 as 8 KiB, 32×4 as 2 KiB).
