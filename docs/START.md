@@ -68,7 +68,7 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 - Console: `./scripts/tio_user.py` once, leave running; serves TCP 9000 (`--no-serve` = exclusive). `soc_run.py`/`soc_shell.py` read through 9000. Two readers on the tty garble output.
 - Board state traps:
   - Replug / power cycle drops the SoC (SRAM config): re-run `./dev.py run --no-build` or `board configure`.
-  - SoC needs the Apollo FORK firmware, not upstream's. `cynthion update --mcu-firmware` flashes upstream's `apollo.bin` over DFU and replaces it. Reflash fork: `cd repos/apollo/firmware && make APOLLO_BOARD=cynthion dfu` (UNVERIFIED, from install.md). Doc `docs/apollo-firmware.md` named in the brief does not exist; see [samd11-apollo.md](chips/samd11-apollo.md).
+  - SoC needs the Apollo FORK firmware, not upstream's. `cynthion update` replaces it with upstream's; `soc_run.py` refuses stock (`stock-apollo`). Check and restore: [apollo-firmware.md](apollo-firmware.md).
   - `apollo force-offline` hands the ECP5 port back to Apollo after a bitstream is running.
 - Other: `./dev.py probe` (is it alive/ours), `flash`, `capture`, `typec`, `stage`.
 
@@ -100,5 +100,4 @@ cd .claude/worktrees/<name>
 - [git.md](git.md): lists seven submodules (facedancer, luna, packetry, saturn-v absent from `.gitmodules`); "eleven submodules" vs four top-level; hardcoded pin `90c8b7b6`.
 - [riscv-core-build.md](riscv-core-build.md): "every worktree shares the main checkout's `repos/vexiiriscv`" is false after `worktree-setup` (lock is then per worktree).
 - [chips/samd11-apollo.md](chips/samd11-apollo.md): cites `scripts/apollo_reflash.py`, which does not exist.
-- `docs/apollo-firmware.md`: referenced by the brief, does not exist.
 - [`soc_run.py`](../scripts/soc_run.py) docstring: shell image "baked into the bitstream at 0x400" vs [`dev.py`](../scripts/dev.py) `fw`: ".text lives in flash, nothing of the firmware travels in the bitstream".
