@@ -1,5 +1,7 @@
 # cynthion-workspace
 
+Agents: start at [docs/START.md](docs/START.md)
+
 Integration workspace for the Cynthion USB proxy stack.
 
 This repo does not contain code — it pins submodule versions, provides fast
