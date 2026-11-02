@@ -116,6 +116,15 @@ def test_the_console_without_apollo_is_a_missing_control_cable():
                    reply=b"").name == "silent-firmware"
 
 
+def test_upstream_apollo_firmware_is_refused_and_the_fork_is_not():
+    """The fork's string is ahead of the tag; upstream's release is the bare tag."""
+    assert soc_confirm.stock_apollo_verdict("v1.1.1").name == "stock-apollo"
+    assert soc_confirm.stock_apollo_verdict("v1.1.1-64-g90c8b7b") is None
+    assert soc_confirm.stock_apollo_verdict("v1.1.1-64-g90c8b7b-dirty") is None
+    # Unreadable is not stock: refusing on a failed read would block a good board.
+    assert soc_confirm.stock_apollo_verdict(None) is None
+
+
 def test_jtag_contention_is_inconclusive_rather_than_a_verdict():
     """`ffffffff` is a design holding the bus OR a wedged part. Never guess."""
     result = verdict(apollo=True, console_usb=False, idcode=0xFFFF_FFFF)
