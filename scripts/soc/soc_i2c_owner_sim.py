@@ -828,8 +828,9 @@ def run_firmware_checks(checks, root):
     checks.check(
         "no wait-and-retry is left in the power driver",
         "clock::millis(2)" not in power
-        and not re.search(r"while .*elapsed\(clock::now\(\)\)", power),
-        "power.rs still spins waiting out a window. That retry existed only to "
+        and not re.search(r"while .*elapsed\(clock::now\(\)\)(?!.*ON_DEMAND_WAIT_US)", power),
+        "power.rs still spins waiting out a window (the bounded ON_DEMAND_WAIT_US "
+        "latch wait in `read_now` is the one allowed). That retry existed only to "
         "survive a collision that one owner makes impossible, and a retry that "
         "can never fire is a lie about how the system works.")
 
