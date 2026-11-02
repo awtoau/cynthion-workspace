@@ -556,6 +556,8 @@ re-muxed, so a partial frame cannot raise RXC against a pin no longer wired to i
 
 ## 11. Settled — do not re-propose
 
+- **Purpose (Dan, 2026-11-02): Apollo as the independent watchdog and reporter.** Apollo owns the CONTROL port and polls the FPGA over this wire, so it can report an FPGA/SoC problem to the host over its own USB even when the SoC's USB, console or JTAG is dead. Stock FPGA_ADV (§8) already returns CONTROL to Apollo when the FPGA stops advertising; the sideband adds Apollo asking the FPGA how it is. The SoC console is on AUX, so the SoC does not need CONTROL. Not built yet: Apollo never polls ([#179](https://github.com/awtoau/cynthion-workspace/issues/179)); that is the work that delivers this purpose.
+
 * **Open drain at both ends, and no external pull-up.** §1. The RC objection was
   measured and refuted; the contention hazard it replaced was measured at up to 30 µs
   per collision. [#88](https://github.com/awtoau/cynthion-workspace/issues/88).
