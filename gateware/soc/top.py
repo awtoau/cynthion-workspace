@@ -804,38 +804,12 @@ def _refuse_ck_past_the_fabric():
 
 _refuse_ck_past_the_fabric()
 
-# The geometry of each of the two L1 caches: 64 sets x 2 ways x 64 B line = 8
-# KiB each. A constant rather than a literal at the instantiation because
-# `scripts/soc/soc_generate_pac.py` and `gateware/usercode_map.py` both report it,
-# and a geometry reported from a different number than the core was generated
-# with would be worse than not reporting it.
-#
-# 8 KiB rather than 4: the matched superloop-vs-RTIC runs in `docs/rtic.md`
-# (#245) measured the RTIC dispatcher's +1,700 B of `.text` moving frontend
-# stalls from 44/1000 cycles to 452/1000 through a 4 KiB I-cache, while `.bss`
-# uses 9,728 bytes of a 63 KiB RAM whose remainder is all stack slack. Code size
-# costs real cycles here; data size does not.
-#
-# Ways are not ruled out by `flash_cache_flush()`: PLRU replacement means a
-# sweep of the full cache size still evicts every way, and that flush is only in
-# the generated C test firmware -- the Rust firmware uses a real `fence.i`.
-#
-# 2 ways, because RTIC's handlers are separate instruction working sets that
-# preempt each other, and in a DIRECT-MAPPED cache two hot ones sharing an index
-# evict each other however large the cache is. That is a conflict miss;
-# associativity is the only fix for it, capacity is not.
-#
-# Block RAM per geometry, off each geometry's own netlist -- 43 (64x1), 47
-# (128x1, 32x2), 49 (this), 55 (256x1), 57 (128x2, 32x4). The last two do not
-# place: 57 blocks on a die with 56. 3 ways does not exist -- SpinalHDL's PLRU
-# asserts `isPow2`.
-#
-# TIMING SAYS 128x1, and it is the open half of this decision: +3.50 MHz
-# [+2.20, +4.80] over 40 seeds a side, 2 blocks cheaper, and it holds at the
-# real speed grade (#494, #481). What is not measured is the hit rate that
-# 2 ways is for -- `STALLED_CYCLES_FRONTEND` under a preempting workload.
+# Geometry of each L1 cache: 64 sets x 1 way x 64 B line = 4 KiB each.
+# - Reference is upstream VexRiscv (4 KiB I / 2 KiB D, one way), docs/chips/vexiiriscv-cpu.md.
+# - One constant for both: the PAC and `usercode_map.py` report it.
+# - Ways must be a power of two (Plru asserts `isPow2`).
 CACHE_SETS = 64
-CACHE_WAYS = 2
+CACHE_WAYS = 1
 
 
 class AwtoSoc(Elaboratable):

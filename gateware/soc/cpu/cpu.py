@@ -102,36 +102,10 @@ VEXII = (resolve_shared(ROOT, Path("repos/vexiiriscv"), env_var="VEXII_ROOT",
 GENERATE_FLAGS = [
     "--xlen", "32",
     "--with-rvm", "--with-rvc", "--with-rva", "--with-rdtime",
-    # 128 sets x 1 way x 64 B = 8 KiB each. `generate()` substitutes sets from
-    # its `cache_sets` argument -- these two literals are the default, not the
-    # last word (`top.py`'s CACHE_SETS is); kept equal so no reader has to work
-    # out which number won.
-    #
-    # ONE WAY IS STILL AN OPEN CHOICE, not forced. `flash_cache_flush()`
-    # (`scripts/riscv/riscv_firmware.py`) evicts by reading the cache's size at line
-    # stride, which does NOT make a direct-mapped cache a correctness
-    # requirement. Two reasons:
-    #   * replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,
-    #     `Plru.scala`); a sweep of the FULL cache size touches every set
-    #     `wayCount` times with distinct tags, evicting every way under PLRU.
-    #     The flush already reads the full size, so it survives ways > 1.
-    #   * that flush is only in the GENERATED C test firmware -- the Rust
-    #     firmware uses a real `fence.i` (`firmware/cynthion-soc/src/main.rs`),
-    #     so the product never depended on the sweep at all.
-    #
-    # Real trade: conflict misses against Fmax and block RAM. RTIC doesn't
-    # context-switch (preempts on one stack), but each handler is still a
-    # separate instruction working set -- in a direct-mapped cache, two hot
-    # handlers colliding on an index evict each other regardless of cache size.
-    # Associativity fixes that; capacity doesn't. Against it: `bankCount =
-    # wayCount` (`FetchL1Plugin.scala:128`), so ways cost block RAM fast, and a
-    # way-select mux lands in the hit path at an Fmax the BTB already had to be
-    # relaxed to meet.
-    #
-    # `scripts/soc/soc_cache_sweep.py` measures the trade rather than arguing it.
-    # 3 ways does not exist: PLRU asserts `isPow2` on the way count.
-    "--with-fetch-l1", "--fetch-l1-sets", "128", "--fetch-l1-ways", "1",
-    "--with-lsu-l1", "--lsu-l1-sets", "128", "--lsu-l1-ways", "1",
+    # Sets/ways here are the default; `generate()` substitutes `top.py`'s
+    # CACHE_SETS/CACHE_WAYS. 64 sets x 1 way x 64 B = 4 KiB each.
+    "--with-fetch-l1", "--fetch-l1-sets", "64", "--fetch-l1-ways", "1",
+    "--with-lsu-l1", "--lsu-l1-sets", "64", "--lsu-l1-ways", "1",
     # All three are needed. A cached core still has an uncached LSU path --
     # that is how it reaches I/O regions, and peripherals live in one -- so it
     # appears as its own top-level bus. Omitting --lsu-wishbone leaves it
@@ -177,32 +151,6 @@ GENERATE_FLAGS = [
     # stopped printing is indistinguishable from a CPU that stopped running --
     # the ambiguity that has cost the most time on this project.
     "--debug-jtag-instruction",
-
-    # Branch prediction: a branch target buffer.
-    #
-    # Without one, BranchPlugin/LearnPlugin still resolve and record branches
-    # but nothing acts on the record, so every taken branch redirects the
-    # three-stage fetch and the pipeline refills. Measured at 7 instructions in
-    # 28.77 cycles with every one hitting the I-cache (#140): 4 cycles/
-    # instruction with no memory in the way at all.
-    #
-    # --with-btb is BtbPlugin at Param.scala's defaults: 512 sets, one chunk
-    # (single issue), 16-bit hash, dual-port RAM.
-    #
-    # --relaxed-btb is NOT optional, not a precaution: at default jumpAt = 1 the
-    # BTB's block RAM read, 16-bit hash compare, hit decision and fetch redirect
-    # are all one cycle, and nextpnr closes at 57.55 MHz -- a hard FAIL against
-    # the 60 MHz constraint, critical path starting at
-    # `BtbPlugin_logic_mem.0.0.DOA8`, 4.10 ns clk-to-q before a single LUT.
-    # Relaxed moves the redirect to jumpAt = 2, giving the compare its own
-    # cycle.
-    #
-    # Cost: one cycle on a correctly predicted branch instead of zero -- far
-    # cheaper than the full refetch it replaces (bench numbers above).
-    #
-    # rasDepth follows --with-ras and is 0 without it, so these flags alone are
-    # the BTB and nothing else.
-    "--with-btb", "--relaxed-btb", "--relaxed-branch",
 ]
 
 
@@ -278,7 +226,7 @@ def _generator_lock():
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def generate(reset_addr, cache_sets=128, output=None, regions=None,
+def generate(reset_addr, cache_sets=64, output=None, regions=None,
              cache_ways=1):
     """Run the Scala generator and return the path to the Verilog.
 
