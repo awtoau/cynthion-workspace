@@ -1,6 +1,6 @@
 # Capture-path compression in the FPGA: design
 
-**Status:** stage 1 built and simulated: codec modules only (`gateware/soc/capture/`), standalone, NOT in `top.py`, HyperRAM or the shell; nothing run on hardware (U). Tap, block packer, index, CSRs: not built. See [Implementation: stage 1](#implementation-stage-1). Requirement (Dan, 2026-11-02): compression is essential; it must be **switchable**; the RISC-V must be able to **sample data before it is compressed**; data is **stored compressed in HyperRAM**; the RISC-V reads **uncompressed** data through a **gateware decompressor** (no software decompression).
+**Status:** stage 1 (codec) and stage 2 (per-transaction framer, ring, record-aligned blocks, see [stage 2](#implementation-stage-2-framer-ring-block-feeder)) built and simulated: modules only (`gateware/soc/capture/`), standalone, NOT in `top.py`, HyperRAM or the shell; nothing run on hardware (U). Tap, block packer, index, CSRs: not built. See [Implementation: stage 1](#implementation-stage-1). Requirement (Dan, 2026-11-02): compression is essential; it must be **switchable**; the RISC-V must be able to **sample data before it is compressed**; data is **stored compressed in HyperRAM**; the RISC-V reads **uncompressed** data through a **gateware decompressor** (no software decompression).
 **Index:** [`aoa-adaptor.md`](aoa-adaptor.md) · [`upstream-watch.md`](upstream-watch.md) (upstream has no compression anywhere on the capture path) · [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)
 
 ## Why
@@ -130,6 +130,77 @@ Tags: V = verified in simulation, I = inferred, U = unverified (nothing is on ha
 - U: ratio on real USB captures (only synthetic corpora here).
 - U: a corrupt block whose `last` never arrives hangs by construction (the decoder is input-driven); the bound is from the first beat to `done` given the block's `last`.
 
+## Implementation: stage 2 (framer, ring, block feeder)
+Tags as above. Code: [`framer.py`](../gateware/soc/capture/framer.py) (`CaptureRing`), [`path.py`](../gateware/soc/capture/path.py) (`CapturePath` = ring + `SwitchableCompressor`); sim [`capture_framer_sim.py`](../scripts/soc/capture_framer_sim.py) (in `soc_sims.py`, about 36 s). **Not wired into `top.py`** (see [Integration plan](#integration-plan-not-done)).
+
+### Record: one per transaction (Dan, 2026-11-02, #557)
+- Byte stream, little endian, 5-byte header then payload:
+
+| bytes | field | content |
+|---|---|---|
+| 0,1 | `ts16` | counter value when the transaction's first packet byte arrived |
+| 2 | flags | `[1:0]` kind (0 TXN, 1 EVENT, 2 DROP, 3 WRAP); `2` err; `3` timeout; `4` trunc; `5` has_tok; `6` has_data; `7` has_hs |
+| 3,4 | `len` | payload bytes |
+| 5.. | payload | TXN: token (3 B) + data packet + handshake (1 B), those present; EVENT: code; DROP: records dropped (saturating 255); WRAP: none |
+
+- **Transaction** = token (+ data) (+ handshake). SOF is a record of its own (closed at its last byte). Closes on: handshake, next token, a second data/handshake, or `txn_idle` clocks of silence (default 512). Closed without a handshake and not SOF sets `timeout` (also isochronous OUT: no handshake by design).
+- `err`: any packet's RxError, or a token-class packet whose length is not 3. `trunc`: payload past 1019 B cut (a record always fits one 1 KiB block).
+- Timestamps are per transaction, never per byte or per packet. Time of an event/DROP/WRAP record is when it was raised/written.
+- Tap is the framed packet stream (`pkt_data/valid/last/err` + `ev_valid/ev_code`), per the item-5 finding that status never reaches the raw ULPI stream.
+
+### ts16 rollover rule
+- Counter: 16 bits, one count per `1 << ts_shift` clocks (default 1 clock = 1.09 ms period at 60 MHz).
+- Decoder: `abs += (ts - prev_ts) & 0xFFFF`. Valid iff consecutive records are < 0x10000 counts apart.
+- Guarantee: a WRAP record is written whenever 0x8000 counts pass with no record, so consecutive records are at most 0x8000 + latency (a transaction time, a few hundred counts) apart. WRAP is also written at first idle moment, never inside a transaction.
+- Order: records are in emission order and `ts16` is non-decreasing modulo 2^16. Events are written before a queued packet only if older than it (4-deep event queue).
+- Loss of guarantee: ring full for 0xFFFF counts. The next DROP record carries `trunc` (flag bit 4) = "time may have wrapped unseen".
+- Sim: `ts_init` starts near 0xFFFF; 132 k clocks of silence decode to the true distance (4 WRAP records).
+
+### Path and policies
+```
+packets -> input FIFO (16) -> framer (counters see every packet first) -> packet ring (2 KiB, 1 DP16KD)
+        -> record-length queue (16) -> block feeder -> SwitchableCompressor -> coded blocks
+```
+- **Counters** (`n_pkt n_sof n_nak n_err n_dropped n_lost`, 16-bit wrapping) increment at the input, before the FIFO, so dropped records are still counted. V
+- **Record-aligned blocks:** the feeder ends a block only on a record boundary when the next record would exceed 1024 B, on `flush`, or after `flush_idle` clocks with nothing queued (default 1024). The last byte of each record is held until the next record's length is known. Each block parses alone; first record `ts16` is `blk_ts` (strobe `blk_ts_valid`, in block order, for the index entry). V
+- **Ring full policy = drop** (stall not built): a transaction that cannot get header space or runs out of space is dropped whole (ring rolled back), counted once in `n_dropped` and `DROP`; the oldest data stays. Events dropped the same way when the 4-deep queue is full. `stall` policy: U, not implemented.
+- **Input FIFO overflow** (back-to-back packets with no gap, not seen with USB gaps): FIFO cleared, open transaction aborted, input discards to the next packet end, `n_lost` incremented. V
+- **Record write latency:** header backfill is 5 clocks per record; packets arriving meanwhile wait in the 16-deep FIFO (HS gaps ≥ 11 clocks).
+- Collapser (NAK/SOF repeat collapse, above) is not built; transaction records already cut a NAK storm to one 10-byte record per NAK.
+
+### Verification run (`capture_framer_sim.py`)
+- Traffic: SOF, IN/NAK, IN/DATA/ACK, OUT/DATA/ACK|NAK, SETUP, no-response IN, isochronous OUT, STALL, NYET, RxError, 0..512 B data, 1-24 clock packet gaps, FS byte rate; PIDs/CRC5/CRC16 from the `usb_host` sims. Data content mixes random, zeros, pattern, text.
+- V: exact records (ts16, flags, bytes) for 140 mixed transactions; 512 B transaction = one record; counters exact; FS rate; rollover (start at 0xFF00, plus silence over 2 periods); ring full (1 KiB ring, output stalled: 98 of 115 records dropped whole, DROP + kept = fed, `n_dropped` equal); FIFO overflow then clean traffic exact; full path (LZ4 + stored stretch, random output stalls): coded blocks decode (python, `lz4` library, gateware decompressor) to the ring bytes, every record present or counted.
+- U: real USB3343 traffic, `rx_error` mid-packet behaviour, bus-level wiring from the SIE (the sim feeds packets, not ULPI/SIE signals).
+
+### Cells (yosys `synth_ecp5`, module alone; no timing)
+| config | LUT4 | CCU2C | FF | DP16KD | LUTRAM |
+|---|---|---|---|---|---|
+| framer + ring (`CaptureRing`, 2 KiB ring) | 533 | 185 | 407 | 1 | 16 |
+| path (ring + compressor) | 1236 | 386 | 1058 | 5 | 16 |
+| + decompressor | +512 | +118 | +124 | +1 | 0 |
+
+- Path + decompressor ≈ 1750 LUT4 + 504 CCU2C, 6 DP16KD.
+
+### Integration plan (not done)
+- **Why not wired:** the design is at about 84% COMB; the path with the decompressor is about 2.7 k logic cells (LUT4 + 2 x CCU2C), which does not fit in the remaining margin without trimming elsewhere (I). Not built into `top.py`, so the build is untouched.
+- **Cheapest first step:** `CaptureRing` + `StoredCompressor` only (no LZ4): ~0.7 k + 1 DP16KD, records still per-transaction, blocks still record aligned; LZ4 added when cells allow.
+- **Taps:** host role: SIE `rxs` payload/valid/last/error for RX packets plus the engine's own TX packets (the engine knows token/data it sends); `raw` role: RX FIFO entries, tag 0 data, tag 1 RXCMD, packet end = RxActive low. Passive `target_phy`: needs the `UTMITranslator` first. Events: line/VBUS/reset status changes as `ev_valid/ev_code` (upstream codes 1..30).
+- **CSR block `capture` (proposed, 8-bit CSR bus like `usb_host`):**
+
+| reg | access | content |
+|---|---|---|
+| CTRL | rw | `enable`, `mode[3:0]` codec id (0 stored, 1 lz4), `flush` (write-1 pulse), `clear_counters` |
+| STATUS | r | `ring_used[10:0]`, block FIFO level, sticky `dropped`, `lost` |
+| COUNTERS | r | `n_pkt n_sof n_nak n_err n_dropped n_lost`, 6 x 16 bit, read-latch strobe for a consistent snapshot |
+| NOW | r | `now[15:0]` |
+| BLK | r | last block: `blk_ts`, `raw_len`, `comp_len`, `codec_id` (feeds the index entry) |
+
+- **Sinks:** coded `source` stream into the HyperRAM block writer (block size 1 KiB, index entry = offset, `comp_len`, `raw_len`, `codec_id`, `blk_ts`); RISC-V reads blocks through `SwitchableDecompressor` and parses the records in software (no codec in software). Pair `blk_ts` with the compressor's output block through a 4-entry FIFO (compressor output trails its input by up to 2 blocks).
+- **Sizes:** ring 2048 B (1 DP16KD; the ring-full test shows a 2 KiB ring drops under a stalled writer, so size to HyperRAM write latency), `txn_idle` 512, `flush_idle` 1024 (clocks at the capture clock), `ts_shift` 0.
+- Gate before wiring: `scripts/soc/capture_codec_area.py` cells vs the current `top` margin; the framer sim in `scripts/soc_sims.py`.
+
 ## Open
+- Wire the path into the SoC (integration plan above); `stall` policy; collapser.
 - Confirm the tap by simulation (item 5).
 - Simultaneous capture from both sources.
