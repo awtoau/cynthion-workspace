@@ -24,7 +24,7 @@ use core::fmt::Write;
 use crate::fusb302::Port;
 use crate::shell::parse::trim;
 use crate::uart::Uart;
-use crate::{target, typec::Controllers, vbus, Devices};
+use crate::{power, target, typec::Controllers, vbus, Devices};
 
 /// The four rails, in `power::PORTS` order, and what each one is.
 ///
@@ -126,7 +126,17 @@ fn status(uart: &mut Uart, index: usize, devices: &mut Devices) {
     let _ = writeln!(uart, "{}  {}", name, what);
 
     // --- the rail ------------------------------------------------------
-    let sample = devices.power.latest();
+    // Poll off (the default): one on-demand read of the whole part rather than
+    // a cached sample of unknown age (#552). Poll on: the cache is at most one
+    // interval old.
+    let sample = if power::interval_ms() == power::RATE_OFF {
+        match devices.bus.as_mut() {
+            Some(bus) => devices.power.read_now(bus).ok(),
+            None => None,
+        }
+    } else {
+        devices.power.latest()
+    };
     let _ = write!(uart, "  power     ");
     match sample.as_ref() {
         Some(sample) => {
@@ -155,7 +165,7 @@ fn status(uart: &mut Uart, index: usize, devices: &mut Devices) {
             }
         }
         None => {
-            let _ = writeln!(uart, "no sample yet; `pac1954 rate 50` starts the poll");
+            let _ = writeln!(uart, "unreadable: no sample from the pac1954");
         }
     }
 

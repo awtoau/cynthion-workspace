@@ -39,6 +39,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     if argument == b"off" {
         open_all();
         if let Some(bus) = devices.bus.as_mut() {
+            devices.power.vbus_disarm(bus);
+        }
+        if let Some(bus) = devices.bus.as_mut() {
             let _ = fusb302::configure(bus, fusb302::Port::Target);
         }
         let _ = writeln!(uart, "open");
@@ -59,7 +62,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "?");
             return;
         }
-        match charge_target_c(&devices.power) {
+        match charge_target_c(&mut devices.power, Some(&mut *bus)) {
             Ok(mv) => {
                 let _ = writeln!(uart, "on {} mV", mv);
             }
@@ -80,7 +83,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         None => {
             let _ = writeln!(uart, "?");
         }
-        Some(source) => match close(source, &devices.power) {
+        Some(source) => match close(source, &mut devices.power, devices.bus.as_mut()) {
             Ok(mv) => {
                 let _ = writeln!(uart, "on {} mV", mv);
             }
@@ -97,8 +100,17 @@ pub(crate) fn vbus_refusal(uart: &mut Uart, refusal: Refusal) {
         Refusal::TooLow(mv) => {
             let _ = writeln!(uart, "no: {} mV low", mv);
         }
-        Refusal::Stale => {
-            let _ = writeln!(uart, "no: stale");
+        Refusal::Uv(mv) => {
+            let _ = writeln!(uart, "no: uv {} mV", mv);
+        }
+        Refusal::Ov(mv) => {
+            let _ = writeln!(uart, "no: ov {} mV", mv);
+        }
+        Refusal::Unreadable => {
+            let _ = writeln!(uart, "no: pac1954 unreadable");
+        }
+        Refusal::NotSampling => {
+            let _ = writeln!(uart, "no: pac1954 not sampling");
         }
     }
 }

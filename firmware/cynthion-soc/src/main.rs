@@ -146,6 +146,7 @@ mod typec;
 mod uart;
 mod ulpi;
 mod vbus;
+mod vbus_gate;
 #[cfg(feature = "workload")]
 mod workload;
 
