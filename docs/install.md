@@ -1,720 +1,81 @@
-# Cynthion Workspace Installation & Build Guide
+# Prerequisites and toolchain
 
-## Overview
+- Setup and build procedure: [`START.md`](START.md). Machine setup is `./dev.py setup` (`scripts/machine_setup.py`: distro packages, submodules, Rust target, Python packages, udev). Check with `./dev.py doctor`.
+- Versions and constraints: [`toolchain-versions.md`](toolchain-versions.md) (the only place versions live).
+- Retired install guide (the `cyn` CLI, `awto-apollo` paths, `apollod`, `act`, `install.py setup`): [`history/upstream-toolchain.md`](history/upstream-toolchain.md).
+- Paths: workspace-relative or `$HOME`-based, never one machine's absolute path; `scripts/check.py paths` enforces it.
 
-This workspace uses forked repositories under `${REPOS_ROOT:-$HOME/git/awtoau}`. Use workspace-relative or `$HOME`-based paths rather than machine-specific absolute paths naming a particular user or mount point; `scripts/check.py paths` enforces it.
+## System
 
-## Which installer, and why there are two
+- Linux x86_64 (tested on Fedora 44); 5+ GB disk (repos + builds); 8+ GB RAM (16 GB recommended for synthesis).
 
-**Setting up a machine is `./dev.py setup`**, which runs `scripts/machine_setup.py`:
-distro packages, submodules, the Rust target, the Python packages, udev.
+### Packages
 
-`scripts/install.py` is the older monolithic installer and its `setup` half is
-superseded by the above. It is kept for the subcommands that have no replacement
-— `versions`, `versions-check`, `toolchain-install`, `toolchain-status` — because
-`machine_setup.py` deliberately does not install the FPGA toolchain. The
-`setup`/`rebuild`/`clone-repos` sections below are historical: nothing in the
-repo invokes them, and `./dev.py audit` reports the file as `documented`,
-meaning this page is the only thing keeping it reachable. See [#157](https://github.com/awtoau/cynthion-workspace/issues/157).
-
-## Documentation Ownership
-
-- This document is the canonical install, toolchain, and build-system reference.
-- Phase tracking and success criteria live in [apollo_serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md).
-- Patch and change history lives in [patchset_overview.md](patchset/patchset_overview.md).
-
-## Version and Update Checks
-
-Run these early during setup and whenever the environment drifts:
+Fedora/RHEL:
 
 ```bash
-./scripts/install.py versions
-./scripts/install.py versions-check
+sudo dnf install -y arm-none-eabi-gcc-cs binutils bison boost-devel clang cmake curl \
+  dfu-util eigen-devel flex gawk gcc gcc-c++ git jq libreadline-devel make openocd \
+  pkg-config readline-devel tcl tcl-devel zlib-devel
 ```
 
-Use this to:
-- Capture local versions for system tools, FPGA toolchain, Python packages, and repo commits
-- Compare local versions with upstream releases
-- Keep a baseline for later diff checks
-
-Suggested workflow:
+Debian/Ubuntu:
 
 ```bash
-# Save baseline after a known-good setup
-./scripts/install.py versions > tmp/versions-baseline.txt
-
-# Compare later state
-./scripts/install.py versions > tmp/versions-current.txt
-diff tmp/versions-baseline.txt tmp/versions-current.txt
-
-# Check upstream updates
-./scripts/install.py versions-check
+sudo apt-get update && sudo apt-get install -y arm-none-eabi-gcc binutils bison \
+  build-essential clang cmake curl dfu-util flex gawk git jq libeigen3-dev \
+  libboost-all-dev libreadline-dev openocd pkg-config tcl tcl-dev zlib1g-dev
 ```
 
----
+Minimums:
 
-## Prerequisites
+| Tool | Version | Purpose |
+|---|---|---|
+| GCC/G++ | 15+ | C/C++ |
+| Make / CMake | 4.0+ / 3.10+ | builds |
+| Clang | 18+ | optional, used by Yosys |
+| Git | 2.30+ | repos |
+| ARM GCC | 15.x | Apollo firmware |
+| Flex / Bison / pkg-config | 2.6+ / 3.0+ / 0.29+ | Yosys/nextpnr builds |
+| boost / readline / zlib / Eigen3 | 1.70+ / 7.0+ / any / 3.3+ | tool libraries (Eigen3 optional) |
+| Python | 3.15t | free-threaded: [`toolchain-versions.md`](toolchain-versions.md#python) |
+| Rustup | latest | moondancer / SoC firmware |
+| curl 7.50+, jq 1.5+, dfu-util, OpenOCD 0.10+, TCL 8.5+ | | fetch, JSON, DFU flashing (optional), JTAG debug (optional), some EDA tools |
 
-### System Requirements
-- **OS**: Linux x86_64 (tested on Fedora 44)
-- **Disk Space**: 5+ GB free (repos + builds)
-- **RAM**: 8+ GB (16 GB recommended for synthesis)
+### Rust target
 
-### Required System Packages
-
-**Install all at once (Fedora/RHEL):**
-```bash
-sudo dnf install -y \
-  arm-none-eabi-gcc-cs \
-  binutils \
-  bison \
-  boost-devel \
-  clang \
-  cmake \
-  curl \
-  dfu-util \
-  eigen-devel \
-  flex \
-  gawk \
-  gcc gcc-c++ \
-  git \
-  jq \
-  libreadline-devel \
-  make \
-  openocd \
-  pkg-config \
-  readline-devel \
-  tcl tcl-devel \
-  zlib-devel
-```
-
-**Or on Debian/Ubuntu:**
-```bash
-sudo apt-get update && sudo apt-get install -y \
-  arm-none-eabi-gcc \
-  binutils \
-  bison \
-  build-essential \
-  clang \
-  cmake \
-  curl \
-  dfu-util \
-  flex \
-  gawk \
-  git \
-  jq \
-  libeigen3-dev \
-  libboost-all-dev \
-  libreadline-dev \
-  openocd \
-  pkg-config \
-  tcl tcl-dev \
-  zlib1g-dev
-```
-
-### Core Prerequisites (Detailed)
-
-| Tool | Version | Purpose | Check | Note |
-|------|---------|---------|-------|------|
-| **Build Tools** | | | | |
-| GCC/G++ | 15+ | C/C++ compilation | `gcc --version` | Comes with build-essential |
-| Make | 4.0+ | Build system | `make --version` | Standard |
-| CMake | 3.10+ | Cross-platform builds | `cmake --version` | For some components |
-| Clang | 18+ | LLVM compiler | `clang --version` | Optional, used by Yosys |
-| Binutils | latest | Binary utilities | `ld --version` | Part of build toolchain |
-| **Hardware Dev** | | | | |
-| Git | 2.30+ | Version control | `git --version` | Required for repos |
-| ARM GCC | 15.x | ARM Cortex-M | `arm-none-eabi-gcc --version` | Apollo firmware |
-| **HDL/FPGA Tools** | | | | |
-| Flex | 2.6+ | Lexer generator | `flex --version` | For Yosys/nextpnr |
-| Bison | 3.0+ | Parser generator | `bison --version` | For Yosys/nextpnr |
-| pkg-config | 0.29+ | Library finder | `pkg-config --version` | Build configuration |
-| **Libraries** | | | | |
-| boost-devel | 1.70+ | C++ libraries | `dpkg -l \| grep boost` | Needed for some tools |
-| libreadline | 7.0+ | Interactive input | Check: `/usr/include/readline` | For CLI tools |
-| zlib | latest | Compression | Check: `/usr/include/zlib.h` | Bitstream compression |
-| Eigen3 | 3.3+ | Linear algebra | Check: `/usr/include/eigen3` | Optional, for analysis |
-| **Programming** | | | | |
-| Python | 3.15t | Gateware framework | `python3 --version` | Free-threaded; Amaranth, cynthion |
-| Rustup | latest | RISC-V firmware | `rustc --version` | moondancer |
-| **Utilities** | | | | |
-| curl | 7.50+ | HTTP download | `curl --version` | Fetch releases |
-| jq | 1.5+ | JSON parser | `jq --version` | Parse GitHub API |
-| dfu-util | latest | USB DFU flashing | `dfu-util --version` | Optional: for flashing |
-| OpenOCD | 0.10+ | JTAG debugging | `openocd --version` | Optional: for debugging |
-| TCL | 8.5+ | Scripting | `tclsh --version` | For some EDA tools |
-
-### Rust RISC-V Target
-
-```bash
-# Required for moondancer firmware build
-rustup target add riscv32imac-unknown-none-elf
-rustup target list --installed  # Verify
-```
-
-### OSS CAD Suite (FPGA Toolchain)
-
-**Option 1: Automatic Installation (Recommended)**
-```bash
-./scripts/install.py toolchain-install
-```
-
-**Option 2: Manual Installation**
-```bash
-# Download latest release
-wget https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-05-22/oss-cad-suite-linux-x64-20260522.tgz
-
-# Extract
-tar xzf oss-cad-suite-linux-x64-20260522.tgz -C ~/opt/
-
-# Verify
-source ~/opt/oss-cad-suite/environment
-yosys --version         # → 0.65+57
-nextpnr-ecp5 --version  # → 0.10-74-gee605e2b
-```
-
-### Pre-Flight Checklist
-
-```bash
-# Check Python (must be free-threaded 3.15t)
-python3 --version   # → Python 3.15.0b3
-python3 -c "import sys; print('free-threaded' if not sys._is_gil_enabled() else 'GIL ENABLED - wrong build')"
-
-# Check Rust
-rustc --version && rustup target list --installed | grep riscv
-
-# Check ARM toolchain
-arm-none-eabi-gcc --version  # → GCC 15.x
-
-# Check build tools
-gcc --version && make --version && cmake --version
-
-# Check toolchain
-source ~/opt/oss-cad-suite/environment && yosys --version
-```
-
-### Early Failure Recovery (Run Before `setup`)
-
-If pre-flight checks fail, fix these first instead of continuing:
-
-#### Python 3.15t Not Found
-
-No distro packages free-threaded 3.15 yet — it is a beta. Install a managed
-build:
-
-```bash
-uv python install 3.15t
-```
-
-Or build from source with `--disable-gil`. Either way the interpreter must
-report a free-threading build:
-
-```bash
-python3 -c "import sys; print(sys._is_gil_enabled())"   # → False
-```
-
-`scripts/install.py` picks the interpreter itself, preferring `python3.15t`
-and falling back to `python3.14t` / `python3.15` / `python3.14` if a machine is
-mid-upgrade. Override with `CYN_PYTHON=/path/to/python`.
-
-#### Rust RISC-V Target Missing
 ```bash
 rustup target add riscv32imac-unknown-none-elf
 rustup target list --installed
 ```
 
-#### OSS CAD Suite Download/Install Failure
-```bash
-# Check connectivity to release endpoint
-curl -I https://github.com/YosysHQ/oss-cad-suite-build/releases/latest
+### OSS CAD Suite
 
-# Manual fallback install
-wget https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-05-22/oss-cad-suite-linux-x64-20260522.tgz
-tar xzf oss-cad-suite-linux-x64-20260522.tgz -C ~/opt/
+- Automatic: `./scripts/install.py toolchain-install` (`toolchain-status` to check).
+- Manual: download `https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-05-22/oss-cad-suite-linux-x64-20260522.tgz`, `tar xzf ... -C ~/opt/`.
+- Use: `source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"`, then `yosys --version`, `nextpnr-ecp5 --version`.
+- Installed versions: [`toolchain-versions.md`](toolchain-versions.md#fpga-toolchain).
+- `./scripts/install.py versions` / `versions-check` capture local versions and compare with upstream releases; `scripts/install.py` otherwise is superseded by `machine_setup.py` and kept for `versions`, `versions-check`, `toolchain-install`, `toolchain-status` ([#157](https://github.com/awtoau/cynthion-workspace/issues/157)).
 
-# Verify tools
-source ~/opt/oss-cad-suite/environment
-yosys --version
-nextpnr-ecp5 --version
-```
-
-#### Build Artifacts Not Found
-```bash
-./scripts/install.py status
-ls -la tmp/*.log
-find "${REPOS_ROOT:-$HOME/git/awtoau}" -name "*.elf" -o -name "*.bin"
-```
-
-#### Optional CI Tooling (`act`) Fails
-
-Only needed if you run local GitHub Actions workflows.
+## Pre-flight
 
 ```bash
-mkdir -p ~/.local/bin
-curl -o ~/.local/bin/act \
-  https://github.com/nektos/act/releases/download/v0.2.60/act_Linux_x86_64
-chmod +x ~/.local/bin/act
-export PATH="$HOME/.local/bin:$PATH"
-act --version
+python3 --version                                   # 3.15.x
+python3 -c "import sys; print(sys._is_gil_enabled())"   # False
+rustc --version && rustup target list --installed | grep riscv
+arm-none-eabi-gcc --version                         # 15.x
+source ~/opt/oss-cad-suite/environment && yosys --version
 ```
 
-If `act` fails due to Docker:
-
-```bash
-sudo systemctl start docker
-sudo usermod -aG docker $USER
-docker ps
-```
-
-If you still need a deeper diagnosis after these first-pass fixes, see the
-[Known Issues & Workarounds](#known-issues--workarounds) section below.
-
-### Reference: CI/Docker Configuration
-
-The following are sourced from official CI workflows and Docker configurations:
-
-**GitHub Actions Workflows:**
-- `awto-apollo/.github/workflows/firmware.yml` — Apollo firmware CI
-- `awto-cynthion/.github/workflows/python.yml` — Gateware CI (Python 3.9-3.13)
-- `awto-saturn-v/.github/workflows/build.yml` — Saturn-V bootloader CI
-
-**Docker Image (Ubuntu 22.04):**
-- Source: `awto-luna/Dockerfile`
-- Includes: Full Ubuntu build-essential, boost, Eigen3, OpenOCD, DFU-util
-- Installs OSS CAD Suite automatically from latest GitHub release
-
-See respective `.github/workflows/*.yml` files for exact CI setup details.
-
----
-
-## Repository Structure
-
-```
-${REPOS_ROOT:-$HOME/git/awtoau}/
-├── awto-apollo/              # Debug controller firmware (ARM)
-│   ├── firmware/
-│   │   ├── Makefile          # Build via: make APOLLO_BOARD=cynthion [target]
-│   │   ├── src/
-│   │   │   ├── boards/       # Board-specific code
-│   │   │   │   ├── cynthion_d11/
-│   │   │   │   ├── cynthion_d21/
-│   │   │   │   └── ...
-│   │   │   └── ...
-│   │   └── lib/
-│   │       └── tinyusb/      # Vendored (submodule, requires init)
-│   └── apollo_fpga/          # Host-side Python module
-│
-├── awto-cynthion/            # Gateware (Python/Amaranth) + moondancer firmware (Rust)
-│   ├── cynthion/python/      # Gateware project
-│   │   ├── pyproject.toml
-│   │   ├── src/
-│   │   │   ├── cynthion/     # Python package root
-│   │   │   │   ├── gateware/
-│   │   │   │   │   ├── analyzer/
-│   │   │   │   │   ├── facedancer/
-│   │   │   │   │   ├── platform/
-│   │   │   │   │   │   ├── cynthion_r0_2.py
-│   │   │   │   │   │   └── ... (other revisions)
-│   │   │   │   │   └── ...
-│   │   │   │   └── ...
-│   │   │   └── ...
-│   │   └── ...
-│   ├── firmware/
-│   │   └── moondancer/       # RISC-V firmware (Rust/Cargo)
-│   │       └── Cargo.toml
-│   └── ...
-│
-├── awto-luna/                # Luna USB framework (dependency)
-├── awto-facedancer/          # Facedancer USB device framework (dependency)
-└── ...
-```
-
-## Canonical Toolchain
-
-### Environment Setup
-
-Before any build, source the OSS CAD Suite environment:
-
-```bash
-source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-```
-
-**Location**: `${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}`  
-**Version**: 2026-05-22  
-
-| Tool | Version | Commit |
-|------|---------|--------|
-| Yosys | 0.65+57 | 9d0cdb855 |
-| nextpnr-ecp5 | 0.10-74-gee605e2b | ee605e2b |
-| Trellis | (bundled) | - |
-
-Verify:
-```bash
-source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-yosys --version        # → 0.65+57
-nextpnr-ecp5 --version # → 0.10-74-gee605e2b
-```
-
-### Python & Dependencies
-
-- **Python**: 3.15.0b3 (system, free-threaded / no-GIL)
-- **Amaranth**: 0.5.x (gateware HDL framework)
-  - ✅ Tested compatible with Python 3.15t
-  - Elaboration of analyzer gateware succeeds
-- **RISC-V Toolchain**: riscv32-unknown-elf (for moondancer firmware)
-- **ARM Toolchain**: arm-none-eabi-gcc (GCC 15.2.0, for Apollo)
-
-Verify Python and gateware:
-```bash
-python3 --version  # → Python 3.15.0b3
-which riscv32-unknown-elf-gcc
-which arm-none-eabi-gcc
-```
-
-## Quick Operations with install.py
-
-Use `install.py` for common setup and recovery flows:
-
-```bash
-# Fail-fast prerequisite check (recommended first step)
-./scripts/install.py prereqs
-
-# Full setup: clone repos, init submodules, install deps, build all
-./scripts/install.py setup
-
-# Parallel setup (faster on multi-core hosts)
-./scripts/install.py --parallel setup
-./scripts/install.py --parallel --jobs 2 setup
-
-# Just clone repos without building
-./scripts/install.py --repo-only setup
-
-# Rebuild everything (clean + setup)
-./scripts/install.py rebuild
-
-# Check workspace status
-./scripts/install.py status
-
-# Clone repos to custom location
-./scripts/install.py --repos-path /path/to/repos clone-repos
-
-# CI helpers
-./scripts/install.py ci-install
-./scripts/install.py ci-list
-
-# Live troubleshooting
-tail -f ./tmp/logs/install-*.log
-grep ERROR ./tmp/logs/install-*.log
-```
-
-**Options:**
-- `--dry-run` — Show what would happen without executing
-- `--verbose` — Show full command output
-- `--no-build` — Setup repos but skip builds
-- `--no-submodules` — Skip git submodule initialization
-- `--repos-path /path` — Use custom repos directory
-
-### Local CI Smoke Test (Apollo)
-
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"
-act -l
-act -j firmware-build
-```
-
----
-
-## Manual Build Steps
-
-If you prefer to build components individually:
-
-### Phase 1.1: Apollo Firmware
-
-**Board**: Cynthion d11 (ATSAMD11)  
-**Compiler**: arm-none-eabi-gcc (GCC 15.2.0)  
-**Dependencies**: TinyUSB (vendored in `lib/tinyusb/`)
-
-#### Setup (one-time)
-
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
-# Initialize submodules (TinyUSB)
-make APOLLO_BOARD=cynthion get-deps
-```
-
-The `get-deps` target will:
-- Initialize `lib/tinyusb/` submodule
-- Download any external dependencies
-- Prepare build artifacts directory
-
-#### Build
-
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"
-
-# Clean build
-make APOLLO_BOARD=cynthion clean
-make APOLLO_BOARD=cynthion
-
-# Install to connected Cynthion (requires Saturn-V bootloader)
-make APOLLO_BOARD=cynthion dfu
-```
-
-**Output**: `build/cynthion_d11/apollo_debug_soc.elf` and `.bin`
-
-#### Build Configuration
-
-- `APOLLO_BOARD=cynthion` → Maps to `cynthion_d11` internally
-- Alternative: `APOLLO_BOARD=luna` (alias for cynthion)
-- `BOARD_REVISION_MAJOR=X BOARD_REVISION_MINOR=Y` → Override auto-detection (needed for r0.5 and older)
-- Apollo flashing uses the Saturn-V DFU bootloader on the connected Cynthion. The device must enumerate as `1d50:60e6` for `make APOLLO_BOARD=cynthion dfu` to work; `1d50:615b` is analyzer/facedancer mode and is not the Apollo flash target.
-
-#### Canonical Flash Commands (Do Not Mix Paths)
-
-Use these two commands as the supported paths:
-
-```bash
-# Flash Apollo SAMD11 firmware over USB DFU.
-cyn apollo flash
-
-# Flash ECP5 gateware through Apollo transport.
-cyn fpga flash
-```
-
-Implementation details:
-- `cyn apollo flash` runs `make APOLLO_BOARD=cynthion dfu` in `awto-apollo/firmware`.
-- `cyn fpga flash` runs `apollo configure <.../top.bit>`.
-
-### Phase 1.2: moondancer Firmware (Rust/RISC-V)
-
-**Target**: RISC-V RV32IM (VexRiscv on FPGA)  
-**Compiler**: Rust + riscv32-unknown-elf-gcc  
-**Build System**: Cargo
-
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/firmware/moondancer"
-
-# Build release
-cargo build --release
-
-# Output: target/riscv32imac-unknown-none-elf/release/moondancer
-```
-
-**Note**: The target is defined in `.cargo/config.toml` — do NOT pass `--target` manually.
-
-### Phase 1.3: Gateware (Analyzer)
-
-**Framework**: Amaranth (Python HDL)  
-**Synthesis**: Yosys → nextpnr-ecp5 → trellis → bitstream  
-**Platform**: Cynthion r0.2 (ECP5 LFE5U-12F)
-
-#### Setup (one-time)
-
-Packages install into the **default 3.15t environment** — there is no virtualenv
-to create or activate. Run everything with plain `python3`.
-
-```bash
-cd /path/to/cynthion-workspace
-
-# Editable installs into system 3.15t
-python3 -m pip install -e repos/cynthion/cynthion/python -e repos/facedancer
-
-# Gateware builds additionally need the FPGA toolchain on PATH
-source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-```
-
-Console scripts (`cynthion`, `apollo`) land in the 3.15t `bin/` directory. That
-directory must come **before** `~/.local/bin` on PATH, or a stale shim from an
-older interpreter will shadow them and fail with `ModuleNotFoundError`:
-
-```bash
-export PATH="$HOME/opt/cpython-315t/bin:$PATH"
-```
-
-Verify the whole chain resolves to one interpreter:
-
-```bash
-python3 -c "import sys, cynthion, apollo_fpga, facedancer; \
-  print(sys.version.split()[0], 'GIL' if sys._is_gil_enabled() else 'free-threaded')"
-which cynthion apollo   # both under opt/cpython-315t/bin
-```
-
-#### Build
-
-```bash
-# Test elaboration (dry-run)
-source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3 -m cynthion.gateware.analyzer.top --dry-run
-
-# Full synthesis (produces .bit file)
-LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3 -m cynthion.gateware.analyzer.top
-```
-
-**Output**: Bitstream file (location depends on Amaranth build output)
-
-### Phase 1.4: Gateware (Facedancer)
-
-Same as Analyzer, but with facedancer module:
-
-```bash
-source "${OSS_CAD_SUITE:-$HOME/opt/oss-cad-suite}/environment"
-LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2 \
-  python3 -m cynthion.gateware.facedancer.top --dry-run
-```
-
-## Environment Variables
-
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `LUNA_PLATFORM` | `cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2` | Gateware build target |
-| `APOLLO_BOARD` | `cynthion` | Apollo firmware board selection |
-| `BOARD_REVISION_MAJOR` | (auto-detect for r0.6+) | Hardware revision override |
-| `BOARD_REVISION_MINOR` | (auto-detect for r0.6+) | Hardware revision override |
-| `ECP5_SPEED_GRADE` | `8` (default) | ECP5 speed grade |
-
-## Temporary Files
-
-All build artifacts and logs go to `./tmp/` per CLAUDE.md rules:
-
-```bash
-# Logs
-./tmp/apollo-build.log
-./tmp/apollo-get-deps.log
-./tmp/amaranth-py314-test.log
-./tmp/moondancer-build.log
-./tmp/gateware-analyzer-build.log
-./tmp/gateware-facedancer-build.log
-```
-
-## Known Issues & Workarounds
-
-### TinyUSB Submodule Not Initialized
-
-**Error**: `lib/tinyusb/examples/make.mk: No such file or directory`
-
-**Solution**: Run `make APOLLO_BOARD=cynthion get-deps` before building.
-
-### LUNA_PLATFORM Not Found
-
-**Error**: `ModuleNotFoundError: No module named 'cynthion'`
-
-**Solutions**:
-1. Ensure cynthion package is installed: `python3 -m pip install -e repos/cynthion/cynthion/python`
-2. Use full platform path: `cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2`
-3. Source OSS CAD Suite environment first
-
-### apollo-mux Runtime Context Trap (REPL works, `riscv` fails)
-
-**Symptom pattern**:
-- `apollo-mux` starts and connects to socket
-- REPL responds to `help`
-- `riscv` commands fail with `No module named 'cynthion'`
-
-This usually means runtime context mismatch, not hardware failure.
-
-**Distinguish the three common causes** (diagnose in this order):
-1. **Package missing**: `python -c "import cynthion"` fails in all terminals.
-   ```bash
-   python3 -c "import cynthion; print(cynthion.__file__)"
-   ```
-2. **Wrong interpreter**: package is installed in one Python, but `apollo-mux` runs under another.
-   ```bash
-   which python3
-   python3 -m pip show cynthion
-   ```
-3. **Wrong cwd/PYTHONPATH context**: `apollo-mux` starts from a context where the expected package path is not visible.
-
-**Minimal reproducible failure sequence**:
-```bash
-# Example of a context mismatch that can fail on riscv command paths.
-python3 /path/to/awto-cynthion/scripts/apollo-mux.py \
-  --socket /path/to/awto-cynthion/tmp/apollod.sock --no-spinner -v
-```
-
-**Known-good sequence**:
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
-
-# System 3.15t holds the editable cynthion package - no venv involved.
-python3 -m pip install -e cynthion/python
-
-# Validate import path before launching REPL.
-python3 - <<'PY'
-import cynthion
-print(cynthion.__file__)
-PY
-
-# Launch with the same interpreter used for the import check.
-python3 scripts/apollo-mux.py \
-  --socket "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion/tmp/apollod.sock" --no-spinner -v
-```
-
-**Validation checklist**:
-1. `apollo-mux` shows socket connected.
-2. Import check prints a valid `cynthion` module path.
-3. `riscv canary` executes without import-path errors.
-4. If command still fails, check device mode/API compatibility separately from Python environment.
-
-### Facedancer Prebuilt-Bitstream Fallback Runbook
-
-Use this only when the local facedancer gateware build/toolchain path is blocked
-and you need bring-up continuity.
-
-**Prechecks**:
-```bash
-# 1) Confirm toolchain/build-path failure signature first.
-# Typical signatures:
-# - missing FPGA toolchain binaries
-# - facedancer asset build fails
-
-# 2) Confirm baseline USB mode before switching.
-lsusb | rg -i '1d50:615b|1d50:615c'
-
-# 3) Confirm a candidate prebuilt bitstream exists.
-find "${REPOS_ROOT:-$HOME/git/awtoau}" -path '*/assets/*' -name 'facedancer.bit'
-```
-
-**Known fallback command pattern**:
-```bash
-cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-cynthion"
-cynthion run \
-  --bitstream /absolute/path/to/facedancer.bit facedancer
-```
-
-**Postchecks**:
-```bash
-# 1) Verify USB identity/mode changed as expected.
-lsusb | rg -i '1d50:615b|1d50:615c'
-
-# 2) Verify command path sanity.
-cynthion run -h
-```
-
-**When this fallback is appropriate**:
-1. You need immediate debug/bring-up continuity.
-2. The canonical gateware build path is temporarily unavailable.
-
-**Risks and limitations**:
-1. Version drift: the prebuilt artifact may not match the current source tree.
-2. Reproducibility gap: behavior cannot be attributed to local commit build output.
-3. Trust boundary: only use artifacts from known local repos with provenance.
-
-**Recovery to canonical path**:
-1. Restore the local FPGA toolchain and successful `make assets` flow.
-2. Re-run with the locally built facedancer artifact.
-3. Record toolchain and artifact provenance in notes/logs.
-
-## Next Steps
-
-Track current phase completion criteria and phase 2+ planning in:
-- [apollo_serial_architecture_redesign_plan.md](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md)
-
-## References
-
-- [Apollo README](https://github.com/greatscottgadgets/apollo) - Official build instructions
-- [Cynthion Hardware](https://github.com/greatscottgadgets/cynthion-hardware) - Board schematics
-- [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) - FPGA toolchain releases
-- [Amaranth HDL](https://amaranth-lang.org/) - Python HDL framework
-
+- Python 3.15t missing: `uv python install 3.15t`, or build from source with `--disable-gil`. Override the interpreter with `CYN_PYTHON=/path/to/python`.
+- Console scripts (`cynthion`, `apollo`) need the free-threaded `bin/` ahead of `~/.local/bin` on PATH: [`../README.md`](../README.md#path-ordering-matters).
+
+## Build facts
+
+- Apollo flashing uses the Saturn-V DFU bootloader. The device must enumerate as `1d50:60e6` for `make APOLLO_BOARD=cynthion dfu`; `1d50:615b` is analyzer/facedancer mode, not the Apollo flash target.
+- `APOLLO_BOARD=cynthion` maps to `cynthion_d11`; `luna` is an alias. `BOARD_REVISION_MAJOR` / `BOARD_REVISION_MINOR` override auto-detection (needed for r0.5 and older).
+- `make APOLLO_BOARD=cynthion get-deps` initialises `lib/tinyusb/`; missing it fails with `lib/tinyusb/examples/make.mk: No such file or directory`.
+- Moondancer's cargo target is defined in `.cargo/config.toml`: do not pass `--target`.
+- Upstream gateware dry-run uses `LUNA_PLATFORM=cynthion.gateware.platform.cynthion_r0_2:CynthionPlatformRev0D2`; `ECP5_SPEED_GRADE` defaults to `8`.
+- `ModuleNotFoundError: No module named 'cynthion'`: install `python3 -m pip install -e repos/cynthion/cynthion/python`, check `python3 -c "import cynthion; print(cynthion.__file__)"` resolves under the same interpreter, source the OSS CAD Suite environment.
+- Logs and artifacts go to `./tmp/` (`./tmp/logs/`), never `/tmp`.

@@ -4,8 +4,11 @@ Agents: start at [docs/START.md](docs/START.md)
 
 Integration workspace for the Cynthion USB proxy stack.
 
-This repo does not contain code — it pins submodule versions, provides fast
-dev-cycle check scripts, and owns CI configuration.
+Pins the submodule versions, and holds the SoC gateware (`gateware/`), the SoC firmware
+(`firmware/`), the dev-cycle scripts (`scripts/`) and the local check gate
+(`scripts/check.py`). Nothing runs on GitHub Actions.
+
+Setup and build: [docs/START.md](docs/START.md).
 
 ## Documentation
 
@@ -84,6 +87,10 @@ you want and is never the default.
 | `repos/cynthion` | awtoau/awto-cynthion | greatscottgadgets/cynthion | Firmware (Rust), gateware (Python/Amaranth), Python host library |
 | `repos/apollo` | awtoau/awto-apollo | greatscottgadgets/apollo | Apollo ARM MCU firmware (C/TinyUSB) |
 | `repos/cynthion-hardware` | awtoau/awto-cynthion-hardware | greatscottgadgets/cynthion-hardware | KiCad schematics and PCB layout |
+| `repos/vexiiriscv` | SpinalHDL/VexiiRiscv (no fork) | SpinalHDL/VexiiRiscv | The SoC's RISC-V CPU generator (Scala/SpinalHDL, `ext/SpinalHDL` recursed) |
+
+Those four are the only submodules (`.gitmodules`). `luna`, `facedancer`, `packetry` and
+`saturn-v` are not submodules; the mirrors below are reference copies only.
 
 ## Local mirrors
 
@@ -117,10 +124,12 @@ Do not add workflow files back. If something needs automating, extend
 ```bash
 ./scripts/check.py              # everything
 ./scripts/check.py rust python  # just those
-./scripts/check.py --fast       # skip any check marked slow (none currently are)
+./scripts/check.py --fast       # skip checks marked slow (`featureiso`, `repro`)
 ./scripts/check.py --parallel   # concurrent
 ./scripts/check.py --list       # what is available, and what is unavailable here
 ```
+
+`./scripts/check.py --list` is the source of truth (13 checks, plus which are unavailable on this machine):
 
 | Check | What |
 |-------|------|
@@ -129,9 +138,14 @@ Do not add workflow files back. If something needs automating, extend
 | `apollo` | SAMD11 firmware build + size report |
 | `python` | import check + pytest on the resolved interpreter |
 | `freethreading` | asserts the interpreter is free-threaded *and* that no import re-enables the GIL |
+| `amaranthsoc` | `amaranth_soc` is the real package, not luna_soc's vendored copy |
+| `featureiso` | no spike feature reaches the shipping shell (slow) |
 | `socmap` | the committed SVD still matches the SoC's memory map |
+| `review` | the SoC review pass can still report a regression |
+| `repro` | two elaborations of this tree give one RTLIL digest (slow) |
 | `irqlog` | no interrupt handler can reach a console |
-| `paths` | no tracked file names one machine's filesystem — this repo is public |
+| `paths` | no tracked file names one machine's filesystem; this repo is public |
+| `doclinks` | every doc link resolves and every issue ref is one |
 
 `socfw` runs `cargo test` in `firmware/cynthion-soc-tests`, a host crate that
 `#[path]`-includes `cynthion-soc`'s pure modules — the firmware itself is
@@ -146,11 +160,9 @@ nothing about eleven of the twelve — and both RTIC binaries and the workload
 control sat broken on `main` for a day (#362). The target list is read from
 `Cargo.toml`, so a new binary is covered when it is declared.
 
-The whole set runs in well under a second. There was a `gateware` check that
-elaborated the upstream USB analyzer top out of `repos/cynthion` for
-`CynthionPlatformRev0D2` — upstream code, and a board revision this workspace
-does not target. It was ~98% of the runtime. The gateware this repo does build
-is covered by `socmap`, which elaborates the SoC itself. See #169.
+There is no `gateware` check on upstream's USB analyzer top (upstream code, a board
+revision this workspace does not target, ~98% of the runtime). The gateware this repo
+builds is covered by `socmap`, which elaborates the SoC itself. See #169.
 
 Exit status is 0 only if every selected check passed, so it works as a hook:
 
@@ -202,7 +214,7 @@ serialises that work.
 | Verify | `python3 -c "import sys; print(sys._is_gil_enabled())"` → `False` |
 | Override | `CYN_PYTHON=/path/to/python` |
 
-3.15 is still beta and no distro packages a free-threaded build of it, so it is
+No distro packages a free-threaded build of 3.15, so it is
 installed via `uv python install 3.15t` or built from source with
 `--disable-gil`. `scripts/install.py` resolves the interpreter itself, preferring
 `python3.15t` and falling back through `python3.14t` / `python3.15` /
@@ -215,7 +227,7 @@ That directory must precede `~/.local/bin`, or a shim left behind by an older
 interpreter shadows them and fails with `ModuleNotFoundError`:
 
 ```bash
-export PATH="$HOME/opt/cpython-315t/bin:$PATH"
+export PATH="$HOME/opt/cpython-ft/bin:$PATH"
 ```
 
 ### Upstream pinning
@@ -223,6 +235,3 @@ export PATH="$HOME/opt/cpython-315t/bin:$PATH"
 Upstream `pyproject.toml` files declare open lower bounds (`requires-python =
 ">=3.9"`) with no upper cap, so 3.15t is permitted — the pins that previously
 held this workspace on 3.12/3.14 were all in local tooling, not upstream.
-
-CI runs 3.15t as the job that matters; 3.13 and 3.14 remain in the nightly
-matrix only to catch code that accidentally depends on free-threading.
