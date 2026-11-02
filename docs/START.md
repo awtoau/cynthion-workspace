@@ -30,7 +30,7 @@ git clone --recurse-submodules https://github.com/awtoau/cynthion-workspace
 | Bootloader (Rust) | [`firmware/cynthion-boot`](../firmware/cynthion-boot) |
 | Apollo (SAMD11, C) | `repos/apollo/firmware` (submodule) |
 | VexiiRiscv CPU source | `repos/vexiiriscv` (submodule, Scala) |
-| Scripts / entry point | [`scripts/`](../scripts), [`scripts/dev.py`](../scripts/dev.py) |
+| Scripts / entry point | [`scripts/`](../scripts): entry points at the top (`dev`, `check`, `soc_run`, `soc_test`, `soc_sims`, `tio_user`, `install`); specialists in `soc/` `hyperram/` `tools/` `issues/` `fabric/` `apollo/` `riscv/` `board/` `sideband/`. Find one by bare name: [`_paths.py`](../scripts/_paths.py) `find_script()`. |
 | Pytest | [`tests/`](../tests) |
 | Docs index | [`hardware.md`](hardware.md), [`chips/`](chips) |
 
