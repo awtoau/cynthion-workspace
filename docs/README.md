@@ -41,10 +41,11 @@ be done -- that fact moves here and the issue links to it.
 ### Where a decision goes
 
 **A settled choice is architecture, not a decision.**
-[`architecture.md`](architecture.md) is what the system is made of;
-[`architecture.md`](architecture.md) is what is still open.
+[`architecture.md`](architecture.md) is what the system is made of and what is still open.
 [`upstream-boundary.md`](upstream-boundary.md) holds the policy on Great Scott
 Gadgets code, separately, because that is policy rather than measurement.
+[`history/upstream-toolchain.md`](history/upstream-toolchain.md) holds removed text
+(withdrawn plans, superseded measurements, retired guides); nothing there is current.
 
 ### Subjects with one canonical file
 
@@ -58,18 +59,18 @@ in its §13 got there in the first place.
 
 ### Top level
 
-* [`ci_cd_workflows.md`](ci_cd_workflows.md) — or manually:
-* [`codex-agent.md`](codex-agent.md) — Handing work to Codex — here
-* [`architecture.md`](architecture.md) — Decisions still open, and what would settle them
+* [`START.md`](START.md) — Setup and build entry point
+* [`apollo-firmware.md`](apollo-firmware.md) — Apollo firmware: the fork versus upstream, and how to build it
+* [`aoa-adaptor.md`](aoa-adaptor.md) — The AOA adaptor
+* [`codex-agent.md`](codex-agent.md) — Handing work to Codex
 * [`binary-protocol.md`](binary-protocol.md) — The binary record stream: framing, kinds, versioning, and why the Apollo link is a different question
 * **[`board-arbiter.md`](board-arbiter.md) — one owner for the tty, the JTAG and what is configured**: every board operation goes through it, and why the idle queue's output can never be quoted as a measurement
 * [`gateware-architecture-plan.md`](gateware-architecture-plan.md) — Making the test gateware reusable by the CPU build
-* [`git.md`](git.md) — Git & Submodules Reference
-* [`github_actions.md`](github_actions.md) — (no title)
+* [`git.md`](git.md) — Git and submodules: the four submodules, the four places each lives, worktrees
 * [`gsg-scenarios.md`](gsg-scenarios.md) — What upstream Cynthion officially does, and what implements it
 * [`hardware.md`](hardware.md) — Cynthion r1.4 hardware — the index
 * **[`instruments.md`](instruments.md) — checks that cannot report the failure they exist to catch**: the four shapes, and the rules that follow
-* [`install.md`](install.md) — Cynthion Workspace Installation & Build Guide
+* [`install.md`](install.md) — Prerequisites and toolchain install (setup and build: START.md)
 * [`../linux-on-cynthion/`](../linux-on-cynthion/) — **Linux on Cynthion**: the analysis, the bring-up plan, and the sweep scripts behind them
 * [`rtic.md`](rtic.md) — **The concurrency design**: tasks on one stack, priority in software, and the I-cache that sizes it
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
@@ -80,15 +81,11 @@ in its §13 got there in the first place.
 * [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) — The CC/SBU over-voltage protection: a series switch with one open-drain flag, and nothing listening to it
 * [`chips/cynone-sideband.md`](chips/cynone-sideband.md) — **The FPGA_ADV sideband link** — the wire, the protocol, the port request, and what is settled
 * [`soc-size-review.md`](soc-size-review.md) — Where the SoC's size actually is — per-peripheral area, per-module `.text`, and why two of the obvious ways to measure both give wrong answers
-* [`toolchain-simplification.md`](toolchain-simplification.md) — Can we drop `luna_soc`?
-* [`toolchain-versions.md`](toolchain-versions.md) — Python toolchain: what is pinned, what is stale, what is a trap
-* [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream, and what we have replaced
-* [`upstream-ci-workflow.md`](upstream-ci-workflow.md) — Running upstream CI locally, before submitting anything
-* [`upstream-patch-plan.md`](upstream-patch-plan.md) — Upstream patch plan: Great Scott Gadgets
-* [`upstream-patch-process.md`](upstream-patch-process.md) — Upstream patch validation process
-* [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers
-* [`upstream-yosys-write-edif-hierarchy.md`](upstream-yosys-write-edif-hierarchy.md) — yosys `write_edif` emits `$scopeinfo` cells as instances of undeclared cells
-* [`upstreamable-patches.md`](upstreamable-patches.md) — Patches worth sending upstream
+* [`toolchain-simplification.md`](toolchain-simplification.md) — luna_soc dependency: what needs it, what does not
+* [`toolchain-versions.md`](toolchain-versions.md) — Toolchain versions (pinned vs installed vs latest) and the constraints on them
+* [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream and what we replaced; no-upstreaming policy; luna-soc fork pin; carried commits; upstream CI and clean-build traps
+* [`upstream-yosys-edif-notes.md`](upstream-yosys-edif-notes.md) — yosys -> Lattice Diamond EDIF handoff: three blockers (`$scopeinfo`, vector ports, LPF `HZ`)
+* [`history/upstream-toolchain.md`](history/upstream-toolchain.md) — Removed text: upstream patch plan and process, old install/CI guides, dated upstream snapshots
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
 
 ### Per-chip notes
@@ -104,9 +101,6 @@ in its §13 got there in the first place.
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
 * [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — Winbond W956A8MBYA6I — the HyperRAM
-
-### Moondancer / the SoC
-
 
 ### The ECP5, beyond the part itself
 
