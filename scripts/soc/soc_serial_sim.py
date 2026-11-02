@@ -459,6 +459,50 @@ def run_error_report_checks(checks, verbose):
         f"{seen.get('frame_errors')}")
 
 
+def run_pad_released_check(checks, verbose):
+    """R14/T14 stay undriven from reset until a byte is accepted (cynthion#232).
+
+    A softcore must not take the shared TDI/TMS pins while Apollo configures the
+    FPGA. The pad enable depends only on a byte being in flight, so a CPU that
+    comes up early but sends nothing never drives it, whatever the pin does.
+    """
+    dut = SerialLine(divisor=DIVISOR, data_bits=8)
+    # 40 bit periods: longer than the 12-bit idle qualifier plus a frame, i.e.
+    # any boot-time window in which a flushed byte could have gone out.
+    hold = 40 * DIVISOR
+    driven_in_hold = []
+    driven_on_send = []
+
+    async def testbench(ctx):
+        ctx.set(dut.sink.valid, 0)
+        for n in range(hold):
+            # JTAG-rate toggling on the shared pin, as during a configure.
+            ctx.set(dut.rx_i, (n // 3) & 1)
+            if ctx.get(dut.tx_oe):
+                driven_in_hold.append(n)
+            await ctx.tick()
+        # Positive control: the same line does drive once a byte is accepted.
+        ctx.set(dut.rx_i, 1)
+        ctx.set(dut.sink.payload, ord("a"))
+        ctx.set(dut.sink.valid, 1)
+        await ctx.tick()
+        ctx.set(dut.sink.valid, 0)
+        for _ in range(FRAME_BITS * DIVISOR * 2):
+            driven_on_send.append(ctx.get(dut.tx_oe))
+            await ctx.tick()
+
+    run(dut, testbench)
+    checks.check(
+        "tx_oe is low from reset until a byte is accepted, under JTAG-rate "
+        "toggling on the shared pin  (cynthion#232)",
+        not driven_in_hold,
+        f"the pad was driven at cycle(s) {driven_in_hold[:5]} with nothing to send")
+    checks.check(
+        "and it does drive once a byte is accepted  (the check can fail)",
+        any(driven_on_send),
+        "tx_oe never rose for an accepted byte, so the check above proves nothing")
+
+
 def run_structural_checks(checks, verbose):
     """The synchroniser is a structural property; simulation cannot see it."""
     import inspect
@@ -502,6 +546,12 @@ def run_structural_checks(checks, verbose):
         gc.collect()
         Elaboratable._MustUse__silence = False
     checks.check(
+        "the Apollo pad's output enable comes from the line's tx_oe alone",
+        "apollo_pins.tx.oe.eq(apollo_line.tx_oe)" in soc
+        and soc.count("apollo_pins.tx.oe") == 1,
+        "gateware/soc/top.py drives the shared R14/T14 enable from something "
+        "other than SerialLine.tx_oe (cynthion#232).")
+    checks.check(
         "an idle_bits shorter than a frame is refused",
         rejected,
         "SerialLine accepted idle_bits=8 against a 10-bit frame; a truncated "
@@ -526,6 +576,10 @@ def main():
     emit("serial_line.SerialLine -- receive")
     run_rx_checks(checks, args.verbose)
     run_jtag_noise_check(checks, args.verbose)
+    emit()
+
+    emit("serial_line.SerialLine -- shared pins released")
+    run_pad_released_check(checks, args.verbose)
     emit()
 
     emit("serial_line.SerialLine -- what it reports losing")
