@@ -125,18 +125,9 @@ in its §13 got there in the first place.
 * [`apollo_samd11_mcu/apollo-configure-speed-investigation.md`](apollo_samd11_mcu/apollo-configure-speed-investigation.md) — `apollo configure`: speed investigation and results
 * [`apollo_samd11_mcu/apollo_change_process.md`](apollo_samd11_mcu/apollo_change_process.md) — Apollo Change Tracking Process
 * [`apollo_samd11_mcu/apollo_code_review.md`](apollo_samd11_mcu/apollo_code_review.md) — Apollo Firmware Code Review
-* [`apollo_samd11_mcu/apollo_dfu_buffer_analysis.md`](apollo_samd11_mcu/apollo_dfu_buffer_analysis.md) — Apollo DFU Buffer Issues
-* [`apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md`](apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md) — Implementation Plan - Cynthion Serial Architecture Redesign
 * [`apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`](apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md) — Apollo Serial Interface and Mode Exclusivity Design
-* [`apollo_samd11_mcu/apollo_to_fpga_spi_design.md`](apollo_samd11_mcu/apollo_to_fpga_spi_design.md) — Apollo-to-FPGA SPI Design
-* [`apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md`](apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md) — /etc/udev/rules.d/54-cynthion.rules
-* [`apollo_samd11_mcu/apollo_watchdog_architecture.md`](apollo_samd11_mcu/apollo_watchdog_architecture.md) — (no title)
-* [`apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md`](apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md) — Cynthion Architecture Scan Report
 The FPGA_ADV wire is documented at [`chips/cynone-sideband.md`](chips/cynone-sideband.md), not here.
 
 ### Patch sets
 
-* [`patchset/0001-improved-build-system-logging-fail-fast-parallelization.md`](patchset/0001-improved-build-system-logging-fail-fast-parallelization.md) — (no title)
-* [`patchset/0002-parallel-build-execution-setup-and-build-threading.md`](patchset/0002-parallel-build-execution-setup-and-build-threading.md) — Sequential (original, ~33 minutes)
-* [`patchset/patchset_overview.md`](patchset/patchset_overview.md) — (no title)
 

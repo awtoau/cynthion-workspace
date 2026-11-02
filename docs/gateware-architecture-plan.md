@@ -1,133 +1,48 @@
-# Making the test gateware reusable by the CPU build
+# Test gateware reusable by the CPU build
 
-Written because the test code currently cannot carry forward. Eleven bitstream
-directories, each a whole-chip design; **17 of them bound to
-`JTAGRegisterInterface` against 5 with a bus interface.** A peripheral wired to a
-host-driven JTAG register file cannot be attached to a CPU, so today every test
-is a throwaway.
+Goal: test peripherals attach to a CPU bus, not only to a host-driven `JTAGRegisterInterface` register file (which cannot be attached to a CPU).
 
-This is the plan to fix that, and the mastership model it depends on.
+## Mastership: one bus, one master per build
 
-## Mastership: one bus, two possible masters, never both
-
-The tempting answer -- CPU and sideband as co-masters through an arbiter -- does
-not work. Locking is the problem: two masters that can both write a peripheral
-need a lock protocol, and neither a 6-LED display nor a flash controller has one.
-
-So the model is **exactly one master at a time**, decided by build:
+CPU and sideband as co-masters through an arbiter does not work: two masters that can both write a peripheral need a lock protocol, and neither a 6-LED display nor a flash controller has one.
 
 | build | bus master | sideband role |
 |---|---|---|
-| **test bitstream** (no CPU) | **the sideband responder** | it *is* the master |
-| **CPU build** | **the CPU** | an I2C peripheral *on* the CPU's bus |
+| test bitstream (no CPU) | the sideband responder | it is the master |
+| CPU build | the CPU | an I2C peripheral on the CPU's bus, with an interrupt line |
 
-That second row is the important one. When a CPU is present the sideband stops
-being a master and becomes a **device the CPU owns**, addressed like any other
-peripheral, with an interrupt line. The host still reaches it -- Apollo still
-talks FPGA_ADV -- but writes now go through the CPU, which is the only thing that
-knows whether a peripheral is mid-transaction.
+- With a CPU the host (Apollo, FPGA_ADV) still reaches the sideband, but writes go through the CPU, which alone knows whether a peripheral is mid-transaction.
+- The sideband as a CPU peripheral with an interrupt carries the port request, commands and user data: it replaces the EIC ([#95](https://github.com/awtoau/cynthion-workspace/issues/95), open). Modes and wire contention: [chips/cynone-sideband.md](chips/cynone-sideband.md#8-the-second-job-the-control-port-request).
 
-**That also makes the sideband the EIC replacement** ([#95](https://github.com/awtoau/cynthion-workspace/issues/95)): as a CPU peripheral with
-an interrupt it carries the port request, the commands and user data, and the
-EIC/UART mode distinction stops mattering. The two modes, and why the port request
-and the command traffic contend for the wire, are in
-[`chips/cynone-sideband.md`](chips/cynone-sideband.md#8-the-second-job-the-control-port-request).
+## I2C: one controller, three pin-sets
 
-## One I2C controller, three bus pin-sets
+- r1.4 has three physically separate I2C buses because both FUSB302Bs sit at `0x22`. Bus table, pins, addresses: [hardware.md](hardware.md#the-buses); chips: [chips/fusb302b-type-c.md](chips/fusb302b-type-c.md), [chips/pac1954-power-monitor.md](chips/pac1954-power-monitor.md).
+- One master with a 2-bit bus select driving three pin-sets replaces three controllers ([#98](https://github.com/awtoau/cynthion-workspace/issues/98), [#121](https://github.com/awtoau/cynthion-workspace/issues/121), done, on silicon).
+  - `gateware/soc/peripherals/i2c_mux.py`: select + four Type-C signals. `i2c_master.py` has an `idle` output so the select cannot move mid-transfer.
+  - Each FUSB302B `int` and each DPO2036 `FAULTB` has its own interrupt source ([#135](https://github.com/awtoau/cynthion-workspace/issues/135); `FAULTB` edge-triggered): one controller means one device at a time on the bus, not one source. See [architecture.md](architecture.md), [soc-interrupts.md](soc-interrupts.md).
+  - The handler masks, it does not clear: clearing needs ~1 ms of I2C on the controller the foreground also uses. Normal context clears the device, acknowledges the pending bit, re-enables the source. Level-trap detail: [chips/fusb302b-type-c.md](chips/fusb302b-type-c.md#interrupts).
+- LEDs are a CSR register, not a fake I2C device: six wires in the same fabric; a serial protocol would add a state machine, a byte-time of latency and an error path to one combinational assignment. Uniformity is worth paying for at a bus boundary, not inside the chip.
 
-r1.4 has **three physically separate I2C buses**, and the reason is forced rather
-than chosen: **both FUSB302Bs sit at address `0x22`**, so they cannot be
-distinguished on one bus. The bus table, the pins and the addresses are in
-[`hardware.md`](hardware.md#the-buses); the chip notes are
-[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) and
-[`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md).
+## Peripherals as bus components
 
-The consequence for this plan: "just use one bus" is not available in hardware,
-but one *controller* is. A single I2C master with a 2-bit bus select driving three
-pin-sets is the multiplexed master [#98](https://github.com/awtoau/cynthion-workspace/issues/98) already asks for, and it replaces three
-replicated controllers with one plus a mux.
+Each peripheral has a CSR interface; the register file becomes a bridge so one implementation serves both builds:
 
-The interrupt lines get a source each, and the level-sensitive trap that a
-shared one would have carried is described in
-[`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md#interrupts). Not urgent: PD
-negotiation is not on the critical path.
+    host over JTAG -> JTAG-to-Wishbone bridge -> |
+                                                 |-> peripheral (CSR)
+    CPU                                        -> |
 
-**Done, and on silicon** ([#121](https://github.com/awtoau/cynthion-workspace/issues/121)). `gateware/soc/peripherals/i2c_mux.py` is the select and
-the four Type-C signals; `gateware/soc/peripherals/i2c_master.py` gained an `idle` output
-so the select cannot move underneath a transfer. The two `int` lines were OR-ed
-onto one source here, **and [#135](https://github.com/awtoau/cynthion-workspace/issues/135) gave each its own** — one controller does mean
-one device at a time on the bus, but that says nothing about which device the
-handler should be told to service, and a source is a pending bit and an enable.
-Each DPO2036's `FAULTB` has its own source too, edge-triggered. See
-[`architecture.md`](architecture.md) decision 8. The handler still *masks* rather than
-clears: clearing needs a millisecond of I2C on the controller the foreground is
-also using, which is not a thing an interrupt handler may do. Normal context
-clears the device that asserted, acknowledges the pending bit and re-enables
-its source. [`soc-interrupts.md`](soc-interrupts.md) is the controller.
-Note the earlier `gateware/probes/i2c/multiplexed.py` was never on silicon and is
-superseded.
+The SoC reaches its console this way already.
 
-**On presenting the LEDs as a fake I2C device:** attractive for uniformity and
-wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
-serial protocol adds a state machine, a byte-time of latency and an error path to
-something that is currently one combinational assignment. Uniformity is worth
-paying for at a *bus* boundary, not inside the chip. The LEDs should be a CSR
-register, same as everything else on the bus.
+Order (cheapest, most load-bearing first): multiplexed I2C master (done) -> LEDs as CSR with override/release semantics -> flash (QSPI, most bus-shaped) -> HyperRAM ([#90](https://github.com/awtoau/cynthion-workspace/issues/90), largest, real timing question).
 
-## The port: peripherals become bus components
+## Scope
 
-Each test peripheral grows a CSR interface and loses its `JTAGRegisterInterface`.
-The register file does not disappear -- it becomes a **bridge**, so the same
-peripheral is reachable either way:
+- All three USB ports as 480 Mbps CDC: proves all three can come up; the shipping bitstream configures ports differently. Largest item: three device stacks against 24288 LUTs with a CPU needing ~6000.
+- HyperRAM ID and serial readback: registers already read from a standalone bitstream ([chips/hyperram/w956a8.md](chips/hyperram/w956a8.md)); missing is the CPU-side path.
+- FUSB302B and die temperature over the sideband: `gateware/probes/pins/fusb302_id.py` reads both controllers; missing are sideband commands ([chips/cynone-sideband.md](chips/cynone-sideband.md#4-commands)). Temperature needs the `DTR` primitive, instantiated nowhere.
+- Flash and HyperRAM benchmarking driven by the CPU.
 
-    host over JTAG  ->  JTAG-to-Wishbone bridge  ->|
-                                                   |-> peripheral (CSR)
-    CPU                                         ->|
+## Area reference
 
-That is what makes one implementation serve both builds. It is also how the
-SoC already reaches its console this way, so the pattern is proven in this tree
-rather than proposed.
-
-Order, cheapest and most-load-bearing first:
-
-1. **I2C master, multiplexed** ([#98](https://github.com/awtoau/cynthion-workspace/issues/98)) -- unblocks FUSB302B and PAC1954 together.
-2. **LEDs** as a CSR register with the existing override/release semantics.
-3. **Flash** (QSPI) -- already has the most bus-shaped interface of the group.
-4. **HyperRAM** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) -- the largest, and the one with a real timing question.
-
-## Confirmed scope
-
-All four requested, with the sizing stated because they compete for one 12F:
-
-**All three USB ports as 480 Mbps CDC.** Given. This is the largest item -- three
-device stacks against 24288 LUTs with a CPU wanting ~6000 -- and the shipping
-bitstream will configure the ports differently. The point is proving all three
-*can* come up, not that one image uses them that way.
-
-**HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
-currently reports `hyperram absent` as a presence bit with no identity behind it.
-The registers themselves are already read and decoded from a standalone bitstream
-— [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — so what is missing is
-the CPU-side path, not the knowledge.
-
-**FUSB302B and die temperature over the sideband.** Small, because the gateware
-exists -- `gateware/probes/pins/fusb302_id.py` already reads both controllers. What is
-missing is sideband *commands*, not blocks; the opcode map and what adding to it
-costs are in [`chips/cynone-sideband.md`](chips/cynone-sideband.md#4-commands). Temperature needs the `DTR`
-primitive instantiated, which it currently is not anywhere.
-
-**Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
-motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs
-enumerate and neither prints, cause not established
-([#209](https://github.com/awtoau/cynthion-workspace/issues/209)).
-
-## What this does not resolve
-
-**Whether it all fits.** Three USB stacks plus a CPU plus caches plus HyperRAM on
-an LFE5U-12F is not obviously feasible, and nothing here has been synthesised
-together. The area numbers to beat: best CPU config measured at 6342 LUT and
-14 of 56 BRAM; the sideband test bitstream at 123920 bytes builds today with the
-responder, flash and power monitor.
-
-**The silent SoC.** Everything CPU-driven waits on it, and it is the one item in
-this plan with no established cause rather than an unstarted task.
+- SoC area: [soc-size-review.md](soc-size-review.md). Sideband test bitstream with responder, flash and power monitor: 123920 bytes.
+- Whether three USB stacks + CPU + caches + HyperRAM fit an LFE5U-12F has not been synthesised together.

@@ -6,8 +6,7 @@ a trigger fixed per source at elaboration — wrapped by
 [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) for the numbering.
 `scripts/soc/soc_intc_sim.py` checks this file's table against what is wired.
 
-**Index:** [`README.md`](README.md) · siblings
-[`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md)
+Siblings: [`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md). Index: [`README.md`](README.md).
 
 ## Four ways into the trap handler
 
@@ -130,7 +129,7 @@ declared per task, deciding which task runs and which can interrupt which, and
 the only source of preemption — see [`rtic.md`](rtic.md).
 
 **The interrupt controller has none.** No priority registers, no threshold, no
-claim/complete. Two registers, one bit per source:
+claim/complete (there is no PLIC; removed in `857c45d`). Two registers, one bit per source:
 
     0x0  enable    RW   bit n: source n may raise the CPU line
     0x4  pending   RW   bit n: source n has triggered; write 1 to clear
@@ -142,10 +141,8 @@ writes write nothing.
 ### Why the controller cannot preempt, whatever it offers
 
 It gives the CPU **one** line. When that fires the CPU traps and `mstatus.MIE`
-is cleared, per the privileged specification, so a source going pending
-mid-handler does nothing until that handler finishes. PLIC 1.0.0 line 93 says it
-from the other side: *"the PLIC provides no concept of interrupt preemption or
-nesting"*.
+is cleared (privileged spec), so a source going pending mid-handler
+does nothing until that handler finishes.
 
 ### Deferring a source
 

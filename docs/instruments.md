@@ -1,11 +1,6 @@
 # Instruments: checks that cannot report the failure they exist to catch
 
-The recurring defect on this project is not an unfixed bug. It is a **check that
-passes for a reason unrelated to what it claims to measure** — and every one cost
-more than the bug would have, because it also removed the suspicion.
-
-**Index:** [`README.md`](README.md) · the board's own rules
-[`board-arbiter.md`](board-arbiter.md)
+Recurring defect: a check that passes for a reason unrelated to what it claims to measure. It costs more than the bug because it removes the suspicion. Index: [`README.md`](README.md). Board rules: [`board-arbiter.md`](board-arbiter.md).
 
 ## The four shapes
 
@@ -48,12 +43,6 @@ figure attributed to the wrong build is worse than no figure
 
 ## Why the cost is asymmetric
 
-A missing check leaves a known gap. A **passing** check that cannot fail closes
-the question — so the next reader inherits a wrong answer and no reason to look.
-Every HyperRAM throughput figure in this project was deleted rather than
-annotated for exactly this reason: five overlapping faults were live and no
-number could be matched to which were still present
-([`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)).
-
-**A superseded measurement is deleted, not annotated.** A number kept beside a
-warning that it is wrong is longer than no number and still gets quoted.
+- A missing check leaves a known gap; a passing check that cannot fail closes the question and leaves the next reader a wrong answer.
+- HyperRAM throughput figures were deleted, not annotated: five overlapping faults were live and no number could be matched to which ([`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)).
+- A superseded measurement is deleted, not annotated; a number kept beside a warning that it is wrong still gets quoted.
