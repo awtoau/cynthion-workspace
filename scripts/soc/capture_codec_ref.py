@@ -172,8 +172,7 @@ def random_valid_block(rng: random.Random, window: int = 1024, max_raw: int = 10
 
 def _aoat_frames():
     """AOAT frames from awto-dji's testkit when a checkout is reachable (optional)."""
-    for root in (Path(__file__).resolve().parents[3] / "awto-dji",
-                 Path("/mnt/2tb/git/awto-dji")):
+    for root in (Path(__file__).resolve().parents[3] / "awto-dji",):
         kit = root / "scripts" / "re" / "aoa_testkit.py"
         if kit.is_file():
             try:
