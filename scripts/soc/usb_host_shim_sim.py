@@ -920,7 +920,8 @@ async def xfer_retry(csr, **kw):
     return result
 
 
-async def control(csr, addr, bm, req, value, index, *, out=b"", in_len=0):
+async def control(csr, addr, bm, req, value, index, *, out=b"", in_len=0,
+                  mps=CONTROL_MAX_PACKET_SIZE):
     """SETUP + data + status. Returns (ok, data bytes)."""
     setup = await host_transact(csr, type=TYPE_SETUP, address=addr, endpoint=0,
                                 payload=setup_packet(bm, req, value, index,
@@ -935,14 +936,14 @@ async def control(csr, addr, bm, req, value, index, *, out=b"", in_len=0):
                 return False, bytes(data)
             data += got["data"]
             toggle ^= 1
-            if len(got["data"]) < CONTROL_MAX_PACKET_SIZE:
+            if len(got["data"]) < mps:
                 break
         status = await xfer_retry(csr, type=TYPE_OUT, address=addr, endpoint=0, data_pid=1)
     else:
-        for off in range(0, len(out), CONTROL_MAX_PACKET_SIZE):
+        for off in range(0, len(out), mps):
             sent = await xfer_retry(csr, type=TYPE_OUT, address=addr, endpoint=0,
                                     data_pid=toggle,
-                                    payload=out[off:off + CONTROL_MAX_PACKET_SIZE])
+                                    payload=out[off:off + mps])
             if not sent["done"] or sent["resp"] != RESP_ACK:
                 return False, b""
             toggle ^= 1
@@ -951,12 +952,15 @@ async def control(csr, addr, bm, req, value, index, *, out=b"", in_len=0):
 
 
 async def enumerate_device(csr, address):
-    """GET_DESCRIPTOR at 0, SET_ADDRESS, SET_CONFIGURATION 1. Returns (vid, pid) or None."""
-    ok, desc = await control(csr, 0, 0x80, REQ_GET_DESCRIPTOR, 0x0100, 0, in_len=18)
-    if not ok or len(desc) != 18:
+    """The driver's order: 8 bytes at 0 for bMaxPacketSize0, SET_ADDRESS, 18 bytes, SET_CONFIGURATION 1."""
+    ok, head = await control(csr, 0, 0x80, REQ_GET_DESCRIPTOR, 0x0100, 0, in_len=8, mps=8)
+    if not ok or len(head) != 8 or head[7] != CONTROL_MAX_PACKET_SIZE:
         return None
     ok, _ = await control(csr, 0, 0x00, REQ_SET_ADDRESS, address, 0)
     if not ok:
+        return None
+    ok, desc = await control(csr, address, 0x80, REQ_GET_DESCRIPTOR, 0x0100, 0, in_len=18)
+    if not ok or len(desc) != 18:
         return None
     ok, _ = await control(csr, address, 0x00, REQ_SET_CONFIGURATION, 1, 0)
     if not ok:

@@ -1,6 +1,6 @@
 # AOA adaptor on Cynthion — design for review
 
-**Status:** proposal; stage 1 gateware built and simulated (see "What exists"), nothing run on hardware. Source: read-only study 2026-11-02 (Sonnet agent; claims below UNSURE where marked).
+**Status:** proposal; stage 1 gateware, AOA phone model, firmware driver and `usb <port>` verbs written (see "What exists"); gateware sequence simulated, nothing run on hardware. Source: read-only study 2026-11-02 (Sonnet agent; claims below UNSURE where marked).
 **Index:** [`usb-host-options.md`](usb-host-options.md) (host-core study) · [`hardware.md`](hardware.md)
 
 ## Goal
@@ -57,7 +57,13 @@ Legend: **I** implemented and simulated; **U** not proven on a board (everything
   - Register map, tag format, switching rules, SIE-trap handling: [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md#role-mux-and-byte-stream-on-target_phy-usb_host-window).
   - PAC regenerated ([`firmware/cynthion-soc-pac`](../firmware/cynthion-soc-pac)); `USB_HOST` peripheral and interrupt 10 exist for firmware. I
 - Cost (SIE + shim + two 512 B SIE FIFOs + two 128-entry async FIFOs): see "Stage 1 cost" below.
-- **Not done:** no firmware (no `usb <port>` verbs, no enumeration code, no AOA sequence); no VBUS drive tied to the role (stays the gated `vbus` command); never run on hardware (host chirp, `nxt` gaps, RxError, bit-level framing, D+/D- swap are U); not instanced on aux/control; AOA model device not written.
+- **AOA phone model:** [`gateware/probes/usb_host/aoa_phone.py`](../gateware/probes/usb_host/aoa_phone.py): two LUNA devices behind one UTMI port. Pre-AOA `18d1:4ee2` answers 51 (protocol 2), records 52 strings (byte sum and length per wIndex), 53 detaches it (SE0 for `detach_cycles`); then `18d1:2d00` (`2d01` with `adb=True`) with a bulk OUT 1 to IN 1 echo. I
+  - Sim group `aoa` in [`usb_host_shim_sim.py`](../scripts/soc/usb_host_shim_sim.py), 7 checks: the driver's order through the host CSRs (enumerate, 51, 52 x6, 53, bus reset until re-attach, enumerate, 31-byte bulk echo). I
+  - Finding: `LINK.reset_done` clears ~6 cycles after the `bus_reset` strobe (CDC); a poll straight after the strobe reads the old 1. The driver waits for the clear, then the set.
+  - Finding: bytes staged for a `start` the shim drops (`busy_drop`) stay in the SIE FIFO and go out with the next transfer. The driver stages only when `LINK.idle` and not `reset_active`.
+- **Firmware driver:** [`firmware/cynthion-soc/src/usb_host.rs`](../firmware/cynthion-soc/src/usb_host.rs) (`Host`): role, bus reset, control (setup + data + status), bulk in/out, enumerate, `aoa()`. Strings from a const table (`AOA_DJI`: DJI, T600, DJI, v1.2.3.4, www.dji.com, 12345678). Every wait is bounded and reports op, limit, elapsed. No engine (QEMU, no board): every call returns `no host engine on this target`. Written; the Rust is not exercised by any simulation. U
+- **Shell:** `usb <port> role|reset|desc|setup|in|out|tx|rx|addr|aoa` ([`shell/usb_host.rs`](../firmware/cynthion-soc/src/shell/usb_host.rs), syntax only). Only `target_a` / `target_c` reach the engine; other ports answer `no host engine on <port>`. QEMU gate ([`soc_test.py`](../scripts/soc_test.py)) checks every verb answers. U on hardware
+- **Not done:** no VBUS drive tied to the role (stays the gated `vbus` command); never run on hardware (host chirp, `nxt` gaps, RxError, bit-level framing, D+/D- swap are U); not instanced on aux/control; no AOA 2.0, no bulk pump or CDC bridge.
 - SIE traps now handled in the shim: `rx_len` wrap (`RXLEN` counts UTMI bytes), completion edge (`EV_DONE`, IRQ), `start` while busy dropped. Left to the caller: data toggle. Flagged only: NYET read as ACK (`RESP.nyet`). Not handled: split transactions. I/U
 
 ### Stage 1 cost
@@ -131,11 +137,14 @@ Legend: **I** implemented and simulated; **U** not proven on a board (everything
 - **Port-generic, not host-only.** One ULPI stream engine per PHY, and a runtime **role** per PHY: `device` (today's CDC on AUX), `host`, `raw` (RV bit-bangs), `analyzer`, `off`. Any PHY can be used for anything; the verbs hang off the existing `usb <port>` command, not a new `usbh`.
 - Board limits to respect: three PHYs for four connectors. `target_phy` serves the TARGET-C/A pair (passthrough); `control_phy` is shared with Apollo; `aux_phy` carries the console. `usb3343` register access exists only on `target_phy` today. The console must stay reachable while AUX is re-roled (fallback: the Apollo UART path, which conflicts with JTAG).
 - Missing piece (gateware): per PHY, a mux between the LUNA device stack / host SIE / FIFO shim, plus TX FIFO (TXCMD + bytes) and RX FIFO (RXCMD + bytes + line-state events). ~200-400 LUT per PHY, 0 BRAM (LUTRAM FIFOs). `target_phy` first (hand-over from `UlpiRegisters`).
-- Proposed verbs (firmware on top of the shim; `<port>` = `aux|control|target_a|target_c`):
-  - `usb <port> role device|host|raw|off`, `usb <port> power on|off` (VBUS via the existing gated `vbus`), `usb <port> reset` (bus reset + speed), `usb <port>` (status: role, line state, speed, VBUS mA; exists in part)
-  - `usb <port> tx <hex..>` / `rx` (raw packets), `setup <8 bytes>` + `in <ep> <len>` (control transfer by hand)
-  - `usb <port> desc` (GET_DESCRIPTOR), `usb <port> aoa` (51, 52×6, 53, wait re-attach)
-- Exists today: `usb3343 status` (PHY registers, line state), `usb target_a` (rail), `vbus`, `pac1954`. No raw TX/RX, no role switch.
+- Verbs (built, `target_a`/`target_c` only; other ports `no host engine on <port>`):
+  - `usb <port> role [off|regs|host|raw]` sets (host waits for the entry reset) and prints role, link, speed, FIFO levels
+  - `usb <port> reset` (bus reset), `desc` (device descriptor), `setup <8 hex>` (SETUP stage), `in <ep> <len>`, `out <ep> <hex..>`, `addr [n]`
+  - `usb <port> tx <hex..>` / `rx` (raw role: queue one ULPI packet / drain the RX FIFO, `c:` = RXCMD)
+  - `usb <port> aoa` (enumerate, 51, 52 x6, 53, re-attach, SET_CONFIGURATION, bulk pair)
+  - Not built: `power on|off` (use the gated `vbus`); status `usb <port>` unchanged.
+- Waits (all in `usb_host.rs`, each cites its source): role switch 1.88 ms; entering host 126 ms; bus reset 63 ms; transfer 1.6 ms; control setup/status 50 ms and data 500 ms (USB 2.0 9.2.6.4); AOA re-attach 5 s (`aoa_probe.py`); bulk from the console 100 ms.
+- Also: `usb3343 status` (PHY registers, line state), `usb target_a` (rail), `vbus`, `pac1954`.
 - Prior art: LUNA has no host gateware (only `ulpi.py`). GSG's RV-plus-serial tool is Moondancer (GCP over USB), device-side emulation only. Only host reference: Tiliqua's USB MIDI host (apfaudio/tiliqua PR 65, closed 2024-11-05). Vendored GUH SIE is the sim-proven core.
 
 ## Pixel on TARGET-A, 2026-11-02
@@ -155,7 +164,7 @@ Legend: **I** implemented and simulated; **U** not proven on a board (everything
 ## Plan
 0. **Stage 0 tool:** [`scripts/tools/aoa_probe.py`](../scripts/tools/aoa_probe.py) plays the accessory from the PC with the DJI identity above, then lists the `18d1:2d00/2d01` endpoints. Needs the Pixel on a PC USB port (not the Cynthion) and the permission dialog answered. Its `usbmon` capture is the byte-exact target for the RV.
 1. **Stage 0, PC only:** libusb script as accessory against a phone: 51, 52×6, 53, wait for `18d1:2d00`, bulk echo with an Android test app. Capture with usbmon. Pin the DJI RC's exact behaviour first (Q1).
-2. **Stage 1, simulation:** shim built, `soc_sims.py` green (I). Still open: AOA model device on `model.py`'s `USBDevice` (51/52/53, re-attach as `18d1:2d00`).
+2. **Stage 1, simulation:** shim built, `soc_sims.py` green (I). AOA phone model and `aoa` sim group done (I).
 3. **Stage 2, board:** re-parent `target_phy` → VBUS to TARGET-A → print a phone's device descriptor → run the sequence → bridge to ACM. Pass: PC reads the test app's bytes from `/dev/ttyACM*`, SoC log shows `18d1:2d00`.
 
 ## Questions for Dan (answer in a few words)
