@@ -38,6 +38,8 @@ const TR_DATA: usize = 0x1f;
 
 const CTRL_BUS_RESET: u8 = 1 << 0;
 const CTRL_START: u8 = 1 << 1;
+const CTRL_CLR_TX: u8 = 1 << 2;
+const CTRL_CLR_RX: u8 = 1 << 3;
 
 const LINK_RESET_ACTIVE: u8 = 1 << 5;
 const LINK_IDLE: u8 = 1 << 6;
@@ -277,6 +279,17 @@ impl Host {
                        || r.rd(LINK) & LINK_RESET_DONE != 0)?;
             clock::wait(clock::millis(RESET_RECOVERY_MS));
         }
+        Ok(())
+    }
+
+    /// LINK.speed is high speed (0); anything else is treated as full speed.
+    pub fn high_speed(&self) -> Result<bool, Error> {
+        Ok((self.host()?.rd(LINK) >> 2) & 3 == 0)
+    }
+
+    /// CTRL.clr_tx + clr_rx: empty both shim FIFOs (before the data path takes the engine).
+    pub fn clear_fifos(&self) -> Result<(), Error> {
+        self.host()?.wr(CTRL, CTRL_CLR_TX | CTRL_CLR_RX);
         Ok(())
     }
 

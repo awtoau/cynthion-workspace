@@ -73,10 +73,17 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     };
     match word {
         b"" | b"status" => status(uart, index, devices),
+        b"dp" if index <= 1 => {
+            crate::shell::datapath::command(uart, &mut devices.datapath, &devices.usb_host, args)
+        }
         word if host::VERBS.contains(&word) => {
             // One engine, on target_phy: only target_a / target_c reach it.
             if index <= 1 {
                 host::command(uart, &mut devices.usb_host, word, args);
+                match word {
+                    b"reset" | b"role" | b"aoa" => devices.datapath.forget_bus(),
+                    _ => devices.datapath.pump_used(),
+                }
             } else {
                 let _ = writeln!(uart, "no host engine on {}", PORTS[index].0);
             }
@@ -85,7 +92,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             Some((name, what, missing)) => planned(uart, index, name, what, missing),
             None => {
                 let _ = writeln!(uart, "usage: usb {} [status|disable|enable|role|reset|desc|\
-setup|in|out|tx|rx|addr|aoa]", PORTS[index].0);
+setup|in|out|tx|rx|addr|aoa|dp]", PORTS[index].0);
             }
         },
     }

@@ -311,6 +311,9 @@ pub const BOARD: Option<Board> = Some(Board {
 #[cfg(feature = "qemu")]
 pub const BOARD: Option<Board> = None;
 
+/// `datapath.DataPath` window. Not in `top.py` yet (#578); becomes the PAC base when wired.
+pub const DATAPATH: Option<usize> = None;
+
 /// Where block RAM starts, and how much of it there is.
 ///
 /// The WHOLE window, not this image's slice of it: on the board that is 64 KiB

@@ -98,6 +98,7 @@ mod bist;
 mod board;
 mod bus;
 mod clock;
+mod datapath;
 // The concurrency measurement for #115: a synthetic USB device-emulation load
 // and a preemptive dispatcher for it to run under. Both off by default, and
 // nothing below reaches either without the feature, so the shipping image is
@@ -201,6 +202,8 @@ pub struct Devices {
     type_c: typec::Controllers,
     /// The one host engine (TARGET_PHY); `None` base on a target without it.
     usb_host: usb_host::Host,
+    /// The data path on that engine (#574); `None` base until it is in `top.py` (#578).
+    datapath: datapath::DataPath,
 }
 
 impl Devices {
@@ -216,6 +219,7 @@ impl Devices {
                 Some(board) => Some(board.usb_host),
                 None => None,
             }),
+            datapath: datapath::DataPath::new(target::DATAPATH),
         }
     }
 }
