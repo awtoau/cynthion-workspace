@@ -76,6 +76,12 @@ and the `regs_*` hand-off are ports, so aux/control can be instanced later.
   debug aid, absent from the shipping image (`TR_STATE.3` = 0).
 - `host` TX bytes flow into the SIE's own 512 B FIFO as written, so `clr_tx` does NOT remove
   them from there; the SIE sends whatever it holds at the next `start`. Stage, then start.
+
+## Engine port (`engine_port=True`; sync domain; `docs/data-path.md`)
+- `eng_sel` high: `eng_addr`/`eng_ep` replace ADDR/EP, `eng_start` starts like CTRL.start,
+  `eng_rx_*` pops the RX FIFO. `eng_tx_*` pushes TX bytes (tag 0) when no CSR push that cycle.
+- `eng_done` is the `done` strobe; `eng_resp`/`eng_len`/`eng_pid` are valid with it.
+- Off (default): no extra logic; CSR behaviour is identical either way.
 """
 
 import sys
@@ -165,8 +171,9 @@ class UsbPort(wiring.Component):
 
     def __init__(self, *, name="target", fifo_depth=128, sie_fifo_depth=512,
                  switch_limit=SWITCH_LIMIT, init_limit=INIT_LIMIT,
-                 xfer_limit=XFER_LIMIT, trace_depth=0):
+                 xfer_limit=XFER_LIMIT, trace_depth=0, engine_port=False):
         self._trace_depth    = trace_depth
+        self._engine_port    = engine_port
         self._name           = name
         self._fifo_depth     = fifo_depth
         self._sie_fifo_depth = sie_fifo_depth
@@ -243,7 +250,16 @@ class UsbPort(wiring.Component):
             builder.add(reg_name, reg, offset=offset)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
+        eng = {}
+        if engine_port:
+            eng = {
+                "eng_sel": In(1), "eng_start": In(1), "eng_addr": In(7), "eng_ep": In(7),
+                "eng_tx_data": In(8), "eng_tx_valid": In(1), "eng_tx_ready": Out(1),
+                "eng_rx_data": Out(8), "eng_rx_valid": Out(1), "eng_rx_ready": In(1),
+                "eng_done": Out(1), "eng_resp": Out(3), "eng_len": Out(16), "eng_pid": Out(8),
+            }
         super().__init__({
+            **eng,
             "bus":          In(csr.Signature(addr_width=5, data_width=8)),
             "irq":          Out(1),
             # The pins, usb domain.
@@ -367,9 +383,18 @@ class UsbPort(wiring.Component):
             m.d.comb += [push.eq(1), push_tag.eq(TAG_LAST_STP), push_byte.eq(l.w_data)]
         with m.Elif(c.w_stb):
             m.d.comb += [push.eq(1), push_tag.eq(TAG_LAST_NOSTP), push_byte.eq(c.w_data)]
+        push_any = push
+        if self._engine_port:
+            eng_push = Signal()
+            push_any = push | eng_push
+            csr_push = d.w_stb | l.w_stb | c.w_stb
+            m.d.comb += self.eng_tx_ready.eq(~csr_push & role_ok_tx & tx.w_rdy)
+            with m.If(~csr_push & self.eng_tx_valid):
+                m.d.comb += [eng_push.eq(1), push_tag.eq(TAG_DATA),
+                             push_byte.eq(self.eng_tx_data)]
         m.d.comb += [
             tx.w_data.eq(Cat(push_byte, push_tag)),
-            tx.w_en.eq(push & role_ok_tx & tx.w_rdy),
+            tx.w_en.eq(push_any & role_ok_tx & tx.w_rdy),
             tx_ovf.eq(push & ~(role_ok_tx & tx.w_rdy)),
         ]
         with m.If(tx.w_en & (push_tag != TAG_DATA)):
@@ -400,8 +425,13 @@ class UsbPort(wiring.Component):
         # ============ RX pop (sync) =====================================
         rx_pop = Signal()
         rx_under = Signal()
+        pop_req = rx_w.r_stb | flushing_rx
+        if self._engine_port:
+            pop_req = pop_req | (self.eng_sel & self.eng_rx_ready)
+            m.d.comb += [self.eng_rx_valid.eq(self.eng_sel & rx.r_rdy),
+                         self.eng_rx_data.eq(rx.r_data[0:8])]
         m.d.comb += [
-            rx_pop.eq((rx_w.r_stb | flushing_rx) & rx.r_rdy),
+            rx_pop.eq(pop_req & rx.r_rdy),
             rx.r_en.eq(rx_pop),
             rx_w.r_data.eq(Mux(rx.r_rdy, rx.r_data[0:8], 0)),
             rx_under.eq(rx_w.r_stb & ~rx.r_rdy),
@@ -644,6 +674,8 @@ class UsbPort(wiring.Component):
 
         # ============ usb: host driver ===================================
         ctrl_start = ctrl.start.w_stb & ctrl.start.w_data[0]
+        if self._engine_port:
+            ctrl_start = ctrl_start | (self.eng_sel & self.eng_start)
         start_t, xfer_ack = Signal(), Signal()    # sync toggle / usb toggle
         done_t = Signal()                           # usb toggle: transfer finished
         done_sync = to_domain(done_t, "sync")
@@ -668,7 +700,11 @@ class UsbPort(wiring.Component):
         brst_prev = Signal()
         m.d.usb += brst_prev.eq(brst_usb)
 
-        addr_u, ep_u = to_domain(addr_r, "usb"), to_domain(ep_r, "usb")
+        addr_src, ep_src = addr_r, ep_r
+        if self._engine_port:
+            addr_src = Mux(self.eng_sel, self.eng_addr, addr_r)
+            ep_src = Mux(self.eng_sel, self.eng_ep, ep_r)
+        addr_u, ep_u = to_domain(addr_src, "usb"), to_domain(ep_src, "usb")
         # addr/ep are written before `start` toggles and held until `done`; the
         # synchronised copies are stable by the time the toggle arrives (>= 2 cycles).
 
@@ -823,6 +859,9 @@ class UsbPort(wiring.Component):
         h_resp_u, h_len_u, h_pid_u = h_resp, h_len, rx_pid
         with m.If(done_pulse):
             m.d.sync += [res_resp.eq(h_resp_u), res_len.eq(h_len_u), res_pid.eq(h_pid_u)]
+        if self._engine_port:
+            m.d.comb += [self.eng_done.eq(done_pulse), self.eng_resp.eq(h_resp_u),
+                         self.eng_len.eq(h_len_u), self.eng_pid.eq(h_pid_u)]
         m.d.comb += [
             self._resp.f.response.r_data.eq(res_resp),
             self._resp.f.nyet.r_data.eq(res_pid == NYET_PID),
