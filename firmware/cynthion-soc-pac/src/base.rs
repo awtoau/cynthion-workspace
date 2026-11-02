@@ -163,4 +163,4 @@ pub const CPU_HAS_RDTIME: bool = true;
 
 /// L1 cache geometry, as `top.py` asked for it.
 pub const CPU_CACHE_SETS: u32 = 64;
-pub const CPU_CACHE_WAYS: u32 = 2;
+pub const CPU_CACHE_WAYS: u32 = 1;

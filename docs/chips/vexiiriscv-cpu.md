@@ -6,6 +6,8 @@ the same reason the flash and the HyperRAM do — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
 somewhere they can be found.
 
+> Config reduced to the upstream reference on 2026-11-02 (4 KiB 1-way caches, no BTB): measurements below that mention the BTB or 8 KiB 2-way caches describe the previous core.
+>
 > Provisional numbers: the core has changed (L1s were 4 KiB direct, 8 KiB direct, now 8 KiB 2-way: [#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292); dispatcher superloop then RTIC: [#245](https://github.com/awtoau/cynthion-workspace/issues/245); `opt-level` chosen against a cache that no longer exists: [#167](https://github.com/awtoau/cynthion-workspace/issues/167)).
 > - Trust figures that state date, commit and configuration; assume the rest predate the current core.
 > - Full verification needs the cache geometry x opt-level x dispatcher x clock matrix: [#277](https://github.com/awtoau/cynthion-workspace/issues/277); [#291](https://github.com/awtoau/cynthion-workspace/issues/291) makes a regression explain itself.
@@ -31,11 +33,11 @@ Structure and rules: [`../plans/performance-sections.md`](../plans/performance-s
 |---|---|---|
 | issue width | 1 lane, 1 decoder, in order | `GENERATE_FLAGS`, `ParamSimple` defaults |
 | **IPC ceiling** | **1.00** | one lane retires at most one instruction per cycle |
-| I-cache | 8 KiB — 64 sets × **2 ways** × 64 B line | `--fetch-l1-sets 64 --fetch-l1-ways 2` |
-| D-cache | 8 KiB — 64 sets × **2 ways** × 64 B line | `--lsu-l1-sets 64 --lsu-l1-ways 2` |
-| line length | 64 B | `LsuL1Plugin_logic_banks_0_mem` in the generated Verilog is 1024 words; 4 KiB over 64 sets |
+| I-cache | 4 KiB — 64 sets × 1 way × 64 B line | `--fetch-l1-sets 64 --fetch-l1-ways 1` |
+| D-cache | 4 KiB — 64 sets × 1 way × 64 B line | `--lsu-l1-sets 64 --lsu-l1-ways 1` |
+| line length | 64 B | fixed by VexiiRiscv |
 | D-cache hit | 1 cycle by construction | block RAM is single-cycle on this part |
-| BTB | 512 sets, 1 chunk, 16-bit hash | `--with-btb` at `Param.scala` defaults |
+| BTB | **none** (reference has none) | `--with-btb` absent; `soc_cpu_arms.py` arm `btb` adds it back |
 | return stack | **0** entries — `rasDepth` follows `--with-ras`, which is absent | `cpu.py` |
 | perf counters | `mhpmcounter3..6` + `mcycle`/`minstret` | `--performance-counters 4` |
 | **compressed instructions** | **on, and 50.1% of `.text`** | `--with-rvc`, and `riscv32imac` — see below |
@@ -295,12 +297,12 @@ chain.
 |---|---|
 | ISA | RV32IMAC, `--with-rdtime` |
 | issue width | 1 lane, 1 decoder |
-| I-cache | **8 KiB** — 64 sets × 2 ways × 64 B line (`CACHE_SETS`/`CACHE_WAYS` in `gateware/soc/top.py`; the 128×1 literals in `cpu.py` `GENERATE_FLAGS` are overridden) |
-| D-cache | **8 KiB** — 64 sets × 2 ways × 64 B line (same) |
+| I-cache | **4 KiB** — 64 sets × 1 way × 64 B line (`CACHE_SETS`/`CACHE_WAYS` in `gateware/soc/top.py`) |
+| D-cache | **4 KiB** — 64 sets × 1 way × 64 B line (same) |
 | buses | three masters: `ibus`, `dbus` (cached), `iobus` (uncached, for peripherals) |
 | interrupts | one machine-external wire; concentration is the [controller](../soc-interrupts.md)'s job |
 | debug | `--debug-jtag-instruction`, ER1/ER2 on the TAP Apollo already owns |
-| prediction | `BtbPlugin`, 512 sets, relaxed; no `GSharePlugin`, no `RasPlugin` |
+| prediction | none (BTB removed 2026-11-02; see [reference](#core-configuration-upstream-reference-plus-diagnostics)) |
 
 **All three bus flags are needed.** `--fetch-wishbone --lsu-wishbone
 --lsu-l1-wishbone` — a cached core still has an uncached LSU path, and omitting
@@ -404,6 +406,43 @@ buys applies only to conditional branches the BTB already has a target for.
 **`RasPlugin`.** `--with-ras` is `rasDepth = 4` inside `BtbPlugin`, so it is
 cheap in area, and a shell returns constantly. It was not measured; it is the
 obvious next one.
+
+## Core configuration: upstream reference plus diagnostics
+
+Reference = upstream `vexriscv_cynthion+jtag` (luna-soc, used by the facedancer SoC). Read off its generated Verilog.
+
+| | upstream reference | this SoC |
+|---|---|---|
+| ISA | rv32imac (mul, div, AMO, RVC) | rv32imac + `rdtime` |
+| I-cache | 4 KiB, 1 way, 32 B line | 4 KiB, 1 way, 64 B line |
+| D-cache | 2 KiB, 1 way, 32 B line | 4 KiB, 1 way, 64 B line (one geometry constant, `top.py` `CACHE_SETS`) |
+| branch prediction | static, no BTB | none (no BTB, no RAS, no gshare) |
+| counters | `mcycle`/`minstret`, 4 hpm in the jtag variant | `--performance-counters 4` (kept: `bench`, `metrics`, `flash`, RTIC workload read them) |
+| debug | JTAG debug module | `--debug-jtag-instruction` (kept) |
+
+Firmware needs (`firmware/cynthion-soc`, target `riscv32imac`): A (`AtomicU32::fetch_add` in `timer.rs`, `irq.rs`, `usb_report.rs`), M, C (`.text` 56,366 B vs 75,200 B uncompressed), `rdtime` (`clock.rs`), hpm CSRs (`bench.rs`, `metrics.rs`, `flash.rs`).
+
+Synthesis-only knob table (`scripts/soc/soc_cpu_knobs.py`, `synth_ecp5` of the core module alone, 2026-11-02, delta vs the previous shipping config 64x2 + BTB; COMB = LUT4+PFUMX+L6MUX21+CCU2C; deltas under ~200 COMB are mapper noise):
+
+| knob (one at a time) | COMB | FF | DP16KD | note |
+|---|---|---|---|---|
+| baseline (64x2, BTB) | 6818 | 3806 | 14 | LUTRAM 168 |
+| no BTB (+relaxed flags) | -565 | -386 | -2 | |
+| perf counters 4 -> 0 | -38 | -94 | 0 | noise |
+| no counters + no rdtime | -519 | -183 | 0 | rdtime needed; not applied |
+| no debug module | -6 | -568 | 0 | FF only; kept |
+| no RVA | -196 | -86 | 0 | noise; firmware needs A |
+| no RVM | +172 | -378 | 0 | MULT18X18D 4 -> 0; noise in COMB |
+| no div (mul kept) | -233 | -172 | 0 | firmware uses `/` `%` |
+| no RVC | -390 | -173 | 0 | `.text` x1.33; not applied |
+| iterative shifter | -43 | +39 | 0 | noise |
+| caches 64x1 (4 KiB each) | -248 | -201 | -6 | |
+| caches 32x1 (2 KiB each) | -288 | -204 | -7 | |
+| caches 128x1 (8 KiB each) | -517 | -138 | -2 | non-monotone: noise |
+| **applied: 64x1 caches, no BTB** | **-1090** | **-587** | **-8** | 5728 / 3219 / 6 |
+
+- Mapper noise exceeds the cache-size trend (128x1 below 64x1); the BTB, and the cache ways via DP16KD, are the clear savings.
+- Whole-SoC build of the applied config (2026-11-02, `ck80-dqs0-sync60`, `--no-parallel-refine`): bitstream produced; LUT4 16,087/24,288, DP16KD 28/56, PFUMX 2,893, L6MUX21 647.
 
 ## Regenerating and reading the core
 

@@ -73,7 +73,7 @@ ARMS = {
                      "o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo",
                      "i_EmbeddedRiscvJtag_logic_debug_reset"]},
 
-    # L1 GEOMETRY. `base` is `top.py`'s 64x2. 3 ways does not exist: SpinalHDL's
+    # L1 GEOMETRY. `base` is `top.py`'s 64x1. 3 ways does not exist: SpinalHDL's
     # PLRU asserts isPow2 on the way count.
     "l1-64x1": {"sets": 64, "ways": 1},
     "l1-128x1": {"sets": 128, "ways": 1},
@@ -96,15 +96,28 @@ ARMS = {
                                         "--lsu-l1-sets": "64",
                                         "--lsu-l1-ways": "2"}},
 
+    # `base` is the reference feature set (upstream `cynthion+jtag` VexRiscv: imac,
+    # no BTB, one way) -- docs/chips/vexiiriscv-cpu.md. Speed features come back
+    # as arms. Vexii lines are 64 B: 64x1 / 32x1 = 4 / 2 KiB.
+    "btb": {"add": ["--with-btb", "--relaxed-btb", "--relaxed-branch"]},
+    "l1-32x1": {"sets": 32, "ways": 1},
+
+    # ISA knobs, measurement only: the firmware needs A (fetch_add), M, C.
+    "no-rva": {"drop": [("--with-rva", False)]},
+    "no-rvm": {"drop": [("--with-rvm", False)]},
+    "no-div": {"add": ["--without-div"]},
+    "no-rvc": {"drop": [("--with-rvc", False)]},
+    "iter-shift": {"add": ["--with-iterative-shift"]},
+
     # PIPELINE RELAXATIONS. Each moves work into a later stage: a cycle of
-    # latency for a shorter combinational path. `--relaxed-btb` and
-    # `--relaxed-branch` are already on in `base`.
+    # latency for a shorter combinational path.
     "relaxed-src-shift": {"add": ["--relaxed-src", "--relaxed-shift"]},
     "relaxed-all": {"add": ["--relaxed-src", "--relaxed-shift", "--relaxed-div",
                             "--relaxed-mul-inputs", "--relaxed-btb-hit"]},
 
-    # BTB size. 512 sets is `Param.scala`'s default and `base`.
-    "btb-128": {"add": ["--btb-sets", "128"]},
+    # BTB size; 512 sets is `Param.scala`'s default.
+    "btb-128": {"add": ["--with-btb", "--relaxed-btb", "--relaxed-branch",
+                        "--btb-sets", "128"]},
 
     # NO `buffers` ARM. `--with-aligner-buffer --with-dispatcher-buffer`
     # generates a core byte-identical to `base`: `--with-rvc` already forces the
