@@ -14,7 +14,7 @@
 | 1 | AOA peer | **A** (Cynthion hosts a phone). C (tap) later, built on A. |
 | 2 | phone port | **either**: A and C share one data bus and `target_phy`. Native C cable works: `vbus charge` powers TARGET-A and C and presents Rp on C. A-to-C cable on A also fine (accepted). |
 | 3 | speed | **high speed preferred**; full speed is the fallback. |
-| 4 | PC driver | composite device: libusb interface for the AOA mirror + stock CDC-ACM for console/diag (trade-off below). |
+| 4 | PC driver | **libusb** (Dan, 2026-11-02, after the trade-off below). The AOA mirror is a vendor bulk interface read through libusb. A stock CDC-ACM console stays alongside it as a convenience unless dropped. |
 | 5-6 | streams / console | **one USB port to the PC carries everything**: the AOA mirror, diagnostics and console. Simpler cabling; the link never runs at 100% so there is room. |
 | 7 | A-to-C cable | yes. |
 | 8 | bitstream | **dedicated** SoC bitstream (below). |
