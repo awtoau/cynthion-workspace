@@ -3,9 +3,7 @@
 How this firmware schedules work, and what constrains it. **This is the design.**
 Numbers appear only where they bound something.
 
-**Index:** [`README.md`](README.md) · CPU
-[`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) · interrupts
-[`soc-interrupts.md`](soc-interrupts.md)
+Index: [`README.md`](README.md). CPU: [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) (cache geometry). Interrupts: [`soc-interrupts.md`](soc-interrupts.md).
 
 ## The model
 
@@ -58,25 +56,22 @@ case and costs the mean; that is the trade taken deliberately.
 `Mono::start()` claims it — so adopting a monotonic is not an addition, it moves
 **every** periodic job at once, including the tick that stamps every log line.
 
-A CLINT monotonic exists and is measured — 7 µs worst late — behind
-`--features rticmono`, as a separate binary. It is written here because
-`rtic-monotonics` 2.2.1 ships two RISC-V backends, ESP32-C3 and C6 SYSTIMER, and
-neither is a CLINT one. Independent work, not derived from either — [#508](https://github.com/awtoau/cynthion-workspace/issues/508).
-
-Adopting it is the open question, and the single comparator is the whole of the
-cost.
+A CLINT monotonic exists and is measured (7 µs worst late) behind
+`--features rticmono`, as a separate binary: `rtic-monotonics` 2.2.1 has two
+RISC-V backends (ESP32-C3, C6 SYSTIMER), neither CLINT; ours is independent work
+([#508](https://github.com/awtoau/cynthion-workspace/issues/508)).
+Adopting it is open; the single comparator is the whole cost.
 
 ## The constraint that shapes it: the I-cache
 
 A property of the machine, not of the runtime.
 
-The I-cache is **8 KiB, 64 sets × 2 ways**. The RTIC build's hot footprint is
+The I-cache is **8 KiB, 64 sets × 2 ways × 64 B** (`gateware/soc/top.py` `CACHE_SETS`/`CACHE_WAYS`; `cpu.py` literal defaults are 128×1; canonical [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)). The RTIC build's hot footprint is
 **5,440 B** against the bare build's 4,032 B — the dispatcher's `.text` costs
 about 1.4 KB of footprint, and footprint is what transfers between builds.
 
 It fits at 8 KiB. It did not at 4 KiB, which is why both L1s were grown ([#110](https://github.com/awtoau/cynthion-workspace/issues/110),
-[#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292)), spending block RAM that is now at 79%. That is a real trade and the
-reason the cache size is part of this design rather than an unrelated setting.
+[#283](https://github.com/awtoau/cynthion-workspace/issues/283), [#292](https://github.com/awtoau/cynthion-workspace/issues/292)), spending block RAM ([chips/ecp5/bram-budget.md](chips/ecp5/bram-budget.md)). The cache size is part of this design.
 
 **If the cache ever shrinks**, the 424-byte hand-written dispatcher closes the
 same latency defect with a footprint that fits. It stays in the tree as that

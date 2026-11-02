@@ -20,7 +20,7 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 - Fabric size = LUTs and FFs. Room exists: 58% LUT4, 30% DFF at `b403978`, on a die that is a 25F marked 12F.
 - Firmware size = speed. I-cache is 8 KiB (64 sets x 2 ways x 64 B, `gateware/soc/top.py` `CACHE_SETS`/`CACHE_WAYS`; `cpu.py` literal defaults are 128x1, overridden; canonical [chips/vexiiriscv-cpu.md](chips/vexiiriscv-cpu.md)).
   - `firmware/cynthion-soc/Cargo.toml`: `opt-level` `z` -> `3` grew `.text` 79% and gave 5.4x IPC.
-  - [rtic.md](rtic.md): hot footprint 5,632 B, larger than the cache before any runtime.
+  - Hot footprint vs the cache: [rtic.md](rtic.md).
   - Every firmware change needs a `.text` delta beside it.
 - BRAM: 49 of 56 recorded in [soc-review-baseline.json](soc-review-baseline.json) (`432d29b`); budget in [chips/ecp5/bram-budget.md](chips/ecp5/bram-budget.md).
 
