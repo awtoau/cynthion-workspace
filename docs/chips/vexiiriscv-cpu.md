@@ -354,7 +354,7 @@ cores could never fetch and were pruned as trivially small. Repaired, CPU alone:
 Kept because the failure is silent: a harness that prevents the thing it measures
 from working reports a small, plausible number rather than an error.
 
-## The fetch floor, and the branch predictor (NEW, 2026-08-03)
+## The fetch floor, and the branch predictor
 
 `bench` walks seven instructions per access with **every one hitting the
 I-cache**, so its block RAM sequential row is a direct reading of the fetch path

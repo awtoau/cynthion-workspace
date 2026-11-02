@@ -93,3 +93,39 @@ Window rationale: the alternative to halving was a 64-bit divide, which on rv32 
 "Proved in simulation, not on hardware. ... Both carry negative controls that are *run* — a turnaround one clock late, an inverted parity bit, an undefined acknowledge, a contending target — each asserting the corruption is reported."
 
 "What a board still has to settle: that the 105 MHz domain closes timing" (timing claim dropped from the live doc).
+
+## docs/chips/cynone-sideband.md (removed)
+
+## 13. Where earlier documents were wrong
+
+Recorded so a reader who finds the old text elsewhere — in git history, in a
+docstring, in an issue — knows which way it was settled.
+
+| claim | where it appeared | settled |
+|---|---|---|
+| Push-pull while driving; open drain rejected because the RC would set the rate ceiling | `debris/docs/fpga-adv-sideband.md` §1 and §11 | **Wrong.** Open drain shipped at both ends ([#88](https://github.com/awtoau/cynthion-workspace/issues/88)) and the soak refuted the RC argument. §1. |
+| `ApolloAdvertiser` is a **25 Hz** square wave | `sideband_advertise.py` docstring, `architecture.md` 25, `upstream-boundary.md` | **50 Hz.** `repos/apollo/apollo_fpga/gateware/advertiser.py:42-48` sets `half_period` to 10 ms and toggles each time, so the period is 20 ms. The accompanying "low for half of every 20 ms" was always right, and so is `hardware.md`'s "50 Hz, toggles every 10 ms". |
+| `fpga_adv_transceive()` at `fpga_adv.c:437` | `debris/docs/fpga-adv-sideband.md` §3.3, `architecture.md` 24 | The function is `fpga_adv_command()` at `:418`; `:437` is the mode guard. |
+| `scripts/sideband_soak.py` and `sideband_contention_probe.py` are not in the tree | `debris/docs/sideband-review.md` §5 | They were retired to `debris/scripts/` in `25087b8`, not lost. The measurements they produced remain reproducible from there. |
+| Baud is 115200 | [#209](https://github.com/awtoau/cynthion-workspace/issues/209), describing firmware `a7b8283` | Correct **for that firmware**. `b48d4bf` raised both ends to 230400; the two must move together. |
+
+## docs/chips/w25q32-config-flash.md (removed)
+
+### Correction to what this workspace recorded
+
+Two statements in the existing notes are wrong and are corrected here:
+
+| was recorded | correct |
+|---|---|
+| SR3 `0x60`, **"ADS clear"** (this document) | **there is no ADS bit on this part.** ADS/ADP are 4-byte-addressing bits and exist only on ≥256 Mbit parts. SR3 bit S23 is Reserved. `0x60` means DRV=25%, WPS=0, and nothing else |
+| *"QPI mode can address in as few as 8 clocks"* | **this part has no QPI mode.** The claim is true of the FV and of the JV-IM, not of what is fitted |
+
+## docs/chips/w25q32-config-flash.md (removed)
+
+### Superseded
+
+| was recorded | now |
+|---|---|
+| divisor 0 produces no clock; SCK capped at sync/2 | **wrong.** Divisor 0 reads byte-exact at every rung, at exactly half the cycle count of divisor 1 |
+| 120 MHz FAIL, 160 MHz FAIL | both were divisor-0 points, disbelieved for the reason above. 120 MHz passes |
+| 80 MHz is the fastest verified | 144 MHz, five modes |
