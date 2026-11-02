@@ -193,3 +193,45 @@ Geometry table sizes in the pre-fix doc were wrong for 2-way rows (listed 32×2 
 >
 > Numbers with a stated date, commit and configuration are the trustworthy ones.
 > Treat the rest as a starting point for a re-measurement.
+
+## docs/chips/fusb302b-type-c.md (removed)
+
+~~**Nothing in this tree configures these parts.**~~ **Superseded.** The RISC-V
+SoC firmware now configures both at boot — see *From the SoC shell* below.
+
+## docs/chips/pac1954-power-monitor.md, Performance intro (removed)
+
+**Three rates and one resolution.** Two of the rates were wrong on the same day
+and for the same reason — a figure nobody had checked against the part. The bus
+went 80 kHz → 1 MHz
+([#269](https://github.com/awtoau/cynthion-workspace/issues/269)); the sample
+rate went 8 SPS → 1024 SPS
+([#273](https://github.com/awtoau/cynthion-workspace/issues/273)). The current
+LSB is still twice what it could be, and that one is open.
+
+## docs/chips/pac1954-power-monitor.md, Known limitations (bus) (removed)
+
+- ~~Bus runs at 100 kHz; the part supports 400 kHz.~~ **Both numbers were wrong**
+  and neither had a source. The SoC's bus ran at **80 kHz** and the part does
+  **1 MHz** Fast-mode Plus and **3.4 MHz** High-Speed (DS20006539B p. 7) — so the
+  gap understated was 12.5×, not 4×. The SoC path is at 1 MHz now
+  ([#269](https://github.com/awtoau/cynthion-workspace/issues/269)). **The four
+  JTAG probe bitstreams are still at 100 kHz**
+
+## docs/chips/pac1954-power-monitor.md, Known limitations (SLOW) (removed)
+
+- ~~`SLOW` is driven low for the 1024 SPS default, but the actual sample timing
+  has not been verified against the datasheet.~~ **It was not driven at all**, and
+  R85 pulls it up, so the part ran at 8 SPS. Verified and fixed in
+  [`7d3b83c`](https://github.com/awtoau/cynthion-workspace/commit/7d3b83c) — see
+  the Performance section.
+
+## docs/chips/ecp5/reconfigure-initn-gap.md (removed)
+
+That claim originally rested on the open tooling's primitive list plus a
+supporting argument: that MachXO2 has `PCNTR` for exactly this and the ECP5
+does not, so the absence is deliberate rather than an oversight.
+
+**The supporting argument was wrong.** Lattice Diamond 3.14 is installed
+locally, and its simulation libraries are the vendor's own declaration of what
+each family exposes. Comparing them:

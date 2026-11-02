@@ -19,13 +19,7 @@ Datasheet references are **DS20006539B**,
 [`sources/PAC195X-Family-DS20006539B.pdf`](../../sources/PAC195X-Family-DS20006539B.pdf),
 96 pp.
 
-**Three rates and one resolution.** Two of the rates were wrong on the same day
-and for the same reason — a figure nobody had checked against the part. The bus
-went 80 kHz → 1 MHz
-([#269](https://github.com/awtoau/cynthion-workspace/issues/269)); the sample
-rate went 8 SPS → 1024 SPS
-([#273](https://github.com/awtoau/cynthion-workspace/issues/273)). The current
-LSB is still twice what it could be, and that one is open.
+**Three rates and one resolution.** Bus 1 MHz ([#269](https://github.com/awtoau/cynthion-workspace/issues/269)); sample rate 1024 SPS ([#273](https://github.com/awtoau/cynthion-workspace/issues/273)); the current LSB is still twice what it could be (open).
 
 ### 1. Theoretical maximum
 
@@ -477,21 +471,12 @@ Output goes to the console and to `tmp/power_probe.log`.
 
 ## Known limitations
 
-- ~~Bus runs at 100 kHz; the part supports 400 kHz.~~ **Both numbers were wrong**
-  and neither had a source. The SoC's bus ran at **80 kHz** and the part does
-  **1 MHz** Fast-mode Plus and **3.4 MHz** High-Speed (DS20006539B p. 7) — so the
-  gap understated was 12.5×, not 4×. The SoC path is at 1 MHz now
-  ([#269](https://github.com/awtoau/cynthion-workspace/issues/269)). **The four
+- The part does **1 MHz** Fast-mode Plus and **3.4 MHz** High-Speed (DS20006539B p. 7); the SoC path runs 1 MHz ([#269](https://github.com/awtoau/cynthion-workspace/issues/269)). **The four
   JTAG probe bitstreams are still at 100 kHz** — `period_cyc = 600` in
   [`../../gateware/probes/pins/i2c_scan.py`](../../gateware/probes/pins/i2c_scan.py),
   [`../../gateware/probes/pins/fusb302_id.py`](../../gateware/probes/pins/fusb302_id.py),
   [`../../gateware/probes/power_monitor/power_monitor_gateware.py`](../../gateware/probes/power_monitor/power_monitor_gateware.py)
   and [`../../gateware/probes/sideband/sideband_gateware.py`](../../gateware/probes/sideband/sideband_gateware.py).
-- ~~`SLOW` is driven low for the 1024 SPS default, but the actual sample timing
-  has not been verified against the datasheet.~~ **It was not driven at all**, and
-  R85 pulls it up, so the part ran at 8 SPS. Verified and fixed in
-  [`7d3b83c`](https://github.com/awtoau/cynthion-workspace/commit/7d3b83c) — see
-  the Performance section.
 - `VPOWERn` (32-bit) has never been read — it is derivable from VBUS × VSENSE.
   Not equivalently, though: the accumulator integrates *every* conversion, so it
   is the only thing here that can see an event between two 50 ms polls.

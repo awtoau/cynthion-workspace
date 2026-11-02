@@ -155,8 +155,7 @@ register that sets a comparator threshold, and the result appears in `STATUS0` a
 `COMP` — so getting an actual voltage means binary-searching six bits. `VBUSOK` in
 `STATUS0` bit 7 needs no configuration and answers "is this port powered" directly.
 
-~~**Nothing in this tree configures these parts.**~~ **Superseded.** The RISC-V
-SoC firmware now configures both at boot — see *From the SoC shell* below.
+The RISC-V SoC firmware configures both at boot — see *From the SoC shell* below.
 
 **Not measured:** anything requiring configuration — attach detection, CC
 orientation, PD negotiation, per-port voltage.
