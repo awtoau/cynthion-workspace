@@ -30,9 +30,10 @@ ACCESSORY_PIDS = (0x2D00, 0x2D01)
 REQ_GET_PROTOCOL, REQ_SEND_STRING, REQ_START = 51, 52, 53
 STRING_FIELDS = 6       # manufacturer, model, description, version, uri, serial
 
-# Waiting for the phone to drop and re-enumerate as an accessory: ~1.5 s measured
-# on a phone by eye; 5 s is ~3x. Poll every 100 ms: enumeration is not faster.
-REATTACH_LIMIT_S = 5.0
+# Phone drops and re-enumerates as an accessory: 4.0 s and >5 s on the Pixel 3 XL
+# (tmp/logs/aoa-probe.log, 2026-11-02); 8 s is ~1.25x a 6.5 s worst case.
+# Poll every 100 ms: enumeration is not faster.
+REATTACH_LIMIT_S = 8.0
 POLL_S = 0.1
 
 log = logging.getLogger("aoa_probe")
