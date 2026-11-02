@@ -5,19 +5,15 @@
 
 """Does every PLL output that becomes an edge clock exist in the bank ECLK mux?
 
-The fault this catches has no other alarm. `HyperRAMDQSPHY` takes its `ECLK` from
-a `fast`/`hr_fast` domain; if that domain is driven from CLKOS2 the bank ECLK
-input mux cannot select it, nextpnr routes it through the fabric tap instead, and
-says so as `log_info` -- not a warning, not an error. Nothing in the build output,
-the metrics row or the timing report names it, and the design still runs. It just
-runs on a clock whose skew nobody bounded, which on a capture-phase rig is the
-measurement itself.
+The fault this catches has no other alarm. If an edge-clock domain is driven
+from CLKOS2 the bank ECLK input mux cannot select it, nextpnr routes it through
+the fabric tap instead, and says so as `log_info` -- not a warning, not an error.
+Nothing in the build output, the metrics row or the timing report names it, and
+the design still runs, on a clock whose skew nobody bounded.
 
-Three generators can produce an edge clock and all three are checked:
+The one generator that can produce an edge clock is checked:
 
     gateware/soc/clocks.py                       `fast`      (shipping SoC)
-    gateware/soc/hyperram_clocks.py              `hr_fast`   (SoC BIST variant)
-    gateware/probes/hyperram/hyperram_ceiling_top.py  `fast`  (standalone applet)
 
 The legal source list is READ FROM prjtrellis, not written down here, so the
 assertion tracks the silicon rather than a comment. `test_trellis_agrees_with_the
@@ -132,13 +128,9 @@ def _generators():
     """Every generator that can produce an edge clock, with one configured."""
     _platform()                                    # puts `gateware/**` on the path
     from clocks import SocClocks
-    from hyperram_clocks import HyperRAMDomains
-    from hyperram.hyperram_ceiling_top import HyperRAMClocks
 
     return [
         ("soc/clocks.py `fast`", SocClocks(sync_mhz=60.0, with_fast=True)),
-        ("soc/hyperram_clocks.py `hr_fast`", HyperRAMDomains(ck_mhz=120.0, dqs=True)),
-        ("probes ceiling `fast`", HyperRAMClocks(sync_mhz=100.0, with_fast=True)),
     ]
 
 

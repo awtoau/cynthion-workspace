@@ -372,13 +372,13 @@ def cmd_optlevel(extra: list[str]) -> int:
 
 
 @command("the HyperRAM harnesses: what each measures, whether it ran, and run one",
-         args="[identify|regfuzz|ceiling|readclksel|fifo|ladder|measure|dqs-pins] "
+         args="[identify|regfuzz|ceiling|fifo|ladder|measure] "
               "[-- args]",
          kind="action")
 def cmd_hyperram(extra: list[str]) -> int:
     """Bare `./dev.py hyperram` prints the inventory and touches nothing.
 
-    Named in `needs_hardware` because every harness but `dqs-pins` configures the
+    Named in `needs_hardware` because every harness configures the
     FPGA, so `gate` and `ci` must never acquire it.
     """
     return run_tool([PY, script("hyperram_harnesses.py")], extra)

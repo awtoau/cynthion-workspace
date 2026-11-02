@@ -1117,23 +1117,19 @@ class HyperRAMCeiling(Elaboratable):
         # Reading the halves separately says which one is false, which the state
         # number never could.
         #
-        # WHETHER THE READBACK MAY BE REPORTED AT ALL. Three rules over the
+        # WHETHER THE READBACK MAY BE REPORTED AT ALL. Two rules over the
         # three register reads, each one a residue seen on the board (#358):
-        # a lagging path cannot answer two consecutive CR0 reads alike, a held
-        # path answers CR0 and CR1 alike, and a byte-slipped one breaks the
-        # replication a register read has in both halves of the fabric word.
+        # a lagging path cannot answer two consecutive CR0 reads alike, and a
+        # held path answers CR0 and CR1 alike.
         #
         # Rules, not a phase table: which phases are good is a per-board
         # measurement, and a hardcoded window would fabricate trust off it.
         readback_reread_ok = Signal()
         readback_distinct = Signal()
-        readback_halves_ok = Signal()
         m.d.comb += [
             readback_reread_ok.eq(device_readback_again == device_readback),
             readback_distinct.eq(device_readback != device_readback_cr1),
         ]
-        # 16-bit word, so there is no second half to match.
-        m.d.comb += readback_halves_ok.eq(1)
 
         # THE READ PATH'S STATE: the controller handshake, and whether the
         # readback the CPU is about to print stands up.
@@ -1164,8 +1160,7 @@ class HyperRAMCeiling(Elaboratable):
                      Const(0, 4),
                      readback_reread_ok,                # bit 8
                      readback_distinct,                 # bit 9
-                     readback_halves_ok,                # bit 10
-                     Const(0, 21)))
+                     Const(0, 22)))
 
         #
         # Die temperature. DTROUT[7] is the valid flag; sampling without it

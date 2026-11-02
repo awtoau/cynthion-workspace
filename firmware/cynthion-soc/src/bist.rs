@@ -84,7 +84,7 @@ pub mod reg {
     pub const FSM_STATE: usize = 28;
     /// The READ PATH's state: the controller handshake in bits 0..3 -- `idle`,
     /// `recovery elapsed`, `start`, `stalled` (sticky) -- and the readback trust
-    /// rules in bits 8..10, see [`pure::trust`].
+    /// rules in bits 8..9, see [`pure::trust`].
     ///
     /// Not an FSM state: in the engine the controller's state number was
     /// declared and never bound, so it read zero and looked like "state 0". Bits

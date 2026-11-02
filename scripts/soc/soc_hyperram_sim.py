@@ -36,48 +36,14 @@ order -- are judged in `gateware/probes/hyperram/controller_model_tb.sv` against
 `scripts/hyperram/hyperram_model_sim.py` runs it and carries a defect run for each, so a
 check that stops discriminating fails instead of reading as coverage.
 
-**It cannot check DQS timing, and nothing here pretends to.** `DQSBUFM`,
-`IDDRX2DQA` and `DDRDLLA` have no simulation model; the read strobe's alignment
-is the property #92 is about and it is decided on silicon.
-
-The pin-group question, which is the other half of #92, is answered from the
-device database by `scripts/hyperram/hyperram_dqs_pins.py` and is not repeated here.
-
 ## Each section runs the wrong arrangement too
 
 Every section drives the same controller and the same model twice: once the way
 this workspace does it, and once the way that was tried first. A check that only
 shows the fix passing is a check that would have passed before the fix.
 
-  1. **One command per request.** That a request produces exactly one CS#
-     assertion, and that it completes. What the CA CONTAINS is case 2b of
-     `controller_model_tb.sv`.
-
-  2. **Upstream's forced long branch.** `extra_latency | 1`, in source. The
-     latency COUNT is swept at six codes in both modes by the bridge, which
-     grades the controller's first data beat against the device's own decode.
-
-  3. **Held, not pulsed.** `final_word` and `perform_write`/`write_data` must
-     stay asserted for the whole transfer (`docs/upstream-boundary.md`). The
-     pulsed drivers are run against the model and asserted to produce the wrong
-     bus behaviour -- which is the point: they produce plausible wrong answers,
-     not failures. Caller-side faults, so they stay.
-
-  4. **The gap between transactions, MEASURED.** `HyperRAMDQSInterface`'s
-     `RECOVERY` state carries `# TODO: implement recovery`, so nothing in
-     upstream keeps CS# high. The two controllers are compared against each
-     other; whether the gap clears tCSHI is the device's judgement, and
-     `hyperram_model.v` makes it.
-
  4b. **The same gap on the non-DQS controller**, and through the SoC's window:
      the master above may not shorten what the protocol layer leaves.
-
-  5. **Structural, against the PHY source.** The three reasons upstream's PHY
-     cannot be instantiated on r1.4, asserted rather than described.
-
- 5b. **`latency_clocks` is a live input.** Counted on `HANDLE_LATENCY`
-     occupancy, not on `read_ready`: a strobe measures the MODEL's latency
-     rather than the controller's, which is the whole of #331.
 
   6. **Wishbone memory window.** The real port is delayed before grant, then
      exercised with reads, full writes, and partial writes. A pulsed request is
@@ -94,8 +60,6 @@ shows the fix passing is a check that would have passed before the fix.
      under that master is asserted to reproduce `hr cross`'s exact line --
      `8/16 correct, bad 1010101010101010`, `want 200f0e0d got 0e0d200f`.
 
- 9b. **As built.** The one combination this repository synthesises.
-
  10. **The same fault on reads.** `hr cross` writes and reads through one path,
      so the two skews cancel and a total read fault showed as a half write
      fault. Checked separately against pre-filled memory.
@@ -107,7 +71,7 @@ shows the fix passing is a check that would have passed before the fix.
 
  12. **Every transaction ENDS.** A device that never answers, one that answers 7
      of the 8 beats asked for, and a consumer that stops asking -- on both
-     controllers, and on upstream's two as the negative control, which hang in
+     controller, and on upstream's as the negative control, which hangs in
      all three. Every transaction driven through `run`/`run16` is judged against
      `completion_bound`.
 
@@ -116,7 +80,6 @@ shows the fix passing is a check that would have passed before the fix.
 """
 
 import argparse
-import math
 import sys
 from pathlib import Path
 
@@ -137,15 +100,12 @@ from amaranth.lib import wiring
 from amaranth.sim import Simulator
 from amaranth_soc import wishbone
 
-from peripherals.hyperram_dqs_controller import HyperRAMDQSController
 from peripherals.hyperram_controller import (HyperRAMController,
                                              min_read_latency_clocks)
-# Upstream's two controllers are imported for ONE purpose: to be the negative
-# control. Sections 4 and 4b run them through the same harness as ours, so
+# Upstream's controller is imported for ONE purpose: to be the negative
+# control. Section 4b runs it through the same harness as ours, so
 # "the vendored controller keeps tCSHI" is a claim with something behind it.
-from luna.gateware.interface.psram import (HyperBusDQSPHY, HyperBusPHY,
-                                            HyperRAMDQSInterface,
-                                            HyperRAMInterface)
+from luna.gateware.interface.psram import HyperBusPHY, HyperRAMInterface
 
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks
@@ -158,8 +118,6 @@ from bus.wishbone_pipe import RegisteredResponse
 
 # `sync`. Only the ratio to the device matters here: nothing in this file measures
 # a real duration, and since #346 nothing judges one either.
-SYNC_MHZ = 120.0
-SYNC_HZ = SYNC_MHZ * 1e6
 
 # tCSHI is NOT restated here any more. Its only use was judging the gap, and the
 # judge is `hyperram_model.v` -- which carries the T166 6 ns from the same
@@ -177,10 +135,6 @@ T_CSM_NS = 4000.0
 # another. On this path `HyperRAMPHY` emits one CK per `sync` cycle, so it is CK.
 NON_DQS_SYNC_MHZ = 192.0
 
-
-def latency_beats():
-    """`HANDLE_LATENCY` runs one beat per remaining count, plus the zero beat."""
-    return HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS + 1
 
 # How long a run may take before the harness gives up, in `sync` cycles. Not a
 # timing measurement: a controller that never leaves a state would otherwise hang
@@ -217,475 +171,6 @@ TEST_ADDRESS = 0x0035_A1C7
 # 0x00 or 0xff, so a beat delivered in the wrong order, duplicated, or left at a
 # bus default is visible in the value rather than only in a count.
 TEST_DATA = 0x1234_5678
-
-
-def _upstream_source():
-    """LUNA's `psram.py`, read from wherever it is actually imported from."""
-    import luna.gateware.interface.psram as psram_module
-    return Path(psram_module.__file__).read_text()
-
-
-class ModelHyperRAM:
-    """A W956A8 as seen from the `HyperBusDQSPHY` record.
-
-    Reacts to chip select, the gearing and the data bytes, and to nothing else --
-    it is not told what the controller intends. Everything it reports it worked
-    out from the bus.
-
-    One `sync` cycle is one beat: eight lines, four device edges, 32 bits. Byte
-    order on the wire is `dq[31:24]` first, matching `ODDRX2DQA`'s D0..D3 in the
-    PHY, and the same order is used when returning read data.
-
-    What it deliberately does NOT model is the DQS read strobe's alignment.
-    `datavalid` is asserted on the beat the data is presented, which is what the
-    hardware would do if the strobe were perfectly aligned. That assumption is
-    the thing silicon has to check, and stating it here is the point: every
-    result in this file is conditional on it.
-    """
-
-    def _latency_beats(self):
-        return self.latency
-
-    def __init__(self, *, contents=None, verbose=False, latency=None,
-                 deliver=None):
-        self.memory = dict(contents or {})
-        self.verbose = verbose
-        self.latency = latency_beats() if latency is None else latency
-        # Read beats this device will serve before going silent. `None` is a
-        # device that always answers; 0 is one that never does, which is the shape
-        # of the board's wedge and the case `READ_DATA` had no exit from (#316).
-        self.deliver = deliver
-
-        # What the run is for the caller to inspect.
-        self.commands = []          # one dict per decoded command
-        self.written = []           # (address, 32-bit value) in order
-        self.read_beats = 0
-        self.trace = []
-        # Transactions that never brought `idle` back inside `completion_bound`,
-        # and what `timed_out` read at the end of the last one.
-        self.incomplete = 0
-        self.durations = []
-        self.timed_out = None
-        self.burst_beats = None
-        self.beats_taken = 0
-
-        self._state = "idle"
-        self._ca_bytes = []
-        self._beat = 0
-        self._address = 0
-        self._read = True
-        self._prev_cs = 0
-        self._cs_high_beats = 10**6  # nothing before the first transaction
-        # The SHORTEST CS#-high gap this run saw, in `sync` cycles. MEASURED, not
-        # judged: counting violations stops discriminating as soon as tCSHI falls
-        # under one cycle -- at T166's 6 ns and sync 120 it does, and upstream's
-        # no-recovery controller then passes the same check ours does. Whether a
-        # gap clears the part's bound is `hyperram_model.v`'s answer. (#341, #346)
-        self.cs_high_min = None
-        self._cs_low_beats = 0
-        self.cs_low_max = 0
-
-    def _decode(self):
-        ca = 0
-        for byte in self._ca_bytes[:6]:
-            ca = (ca << 8) | byte
-        address = (((ca >> 16) & ((1 << 29) - 1)) << 3) | (ca & 0b111)
-        command = {
-            "read": bool((ca >> 47) & 1),
-            "register_space": bool((ca >> 46) & 1),
-            "linear": bool((ca >> 45) & 1),
-            "address": address,
-            "ca": ca,
-        }
-        self.commands.append(command)
-        self._read = command["read"]
-        self._address = address
-        return command
-
-    def step(self, *, cs, dq_o, dq_e, clk_en):
-        """One `sync` beat. Returns (dq_i, datavalid, burstdet)."""
-        dq_i, datavalid, burstdet = 0, 0, 0
-
-        if cs:
-            self._cs_low_beats += 1
-            self.cs_low_max = max(self.cs_low_max, self._cs_low_beats)
-        else:
-            self._cs_low_beats = 0
-
-        if not cs:
-            # CS# high. Count how long, so the next transaction can be judged
-            # against tCSHI without the controller being asked about it.
-            self._cs_high_beats += 1
-            if self._prev_cs:
-                self._state = "idle"
-                self._ca_bytes = []
-                self._beat = 0
-            self._prev_cs = cs
-            return dq_i, datavalid, burstdet
-
-        if not self._prev_cs:
-            # CS# just fell: a new transaction. The gap it followed is recorded
-            # here, before anything about the command is known.
-            if self._cs_high_beats < 10**6:
-                self.cs_high_min = min(self.cs_high_min or 10**6,
-                                       self._cs_high_beats)
-            self._cs_high_beats = 0
-            self._state = "command"
-            self._ca_bytes = []
-            self._beat = 0
-
-        self._prev_cs = cs
-
-        if self._state == "command":
-            if clk_en and dq_e:
-                for shift in (24, 16, 8, 0):
-                    self._ca_bytes.append((dq_o >> shift) & 0xff)
-                if len(self._ca_bytes) >= 8:
-                    self._decode()
-                    self._state = "latency"
-                    self._beat = 0
-
-        elif self._state == "latency":
-            self._beat += 1
-            if self._beat >= self._latency_beats():
-                self._state = "data"
-                self._beat = 0
-
-        elif self._state == "data":
-            # NO CLOCK, NO TRANSFER. Checking `dq_e` alone lands a word in this
-            # model even with CK stopped -- which is exactly the failure being
-            # investigated in #186, where the
-            # controller registers its last word and leaves for RECOVERY in the
-            # same cycle, so the data reaches the pins after CK has stopped.
-            #
-            # With the gate missing, upstream's controller and one with a flush
-            # state were INDISTINGUISHABLE here: both "wrote" the word. The
-            # command phase already gated on `clk_en`; the data phase did not.
-            if not clk_en:
-                return dq_i, datavalid, burstdet
-
-            if self._read:
-                if self.deliver is not None and self.read_beats >= self.deliver:
-                    # The device has stopped answering. `datavalid` stays low and
-                    # the address does not advance, which is what a part in Deep
-                    # Power Down looks like from here.
-                    return dq_i, datavalid, burstdet
-                dq_i = self.memory.get(self._address, 0)
-                datavalid = 1
-                # BURSTDET is the ECP5's "I found the strobe" flag. The model
-                # raises it with the first valid beat of a read, because a design
-                # that reads correctly with BURSTDET low is not using DQS.
-                burstdet = 1
-                self.read_beats += 1
-                self._address += 1
-            elif dq_e:
-                self.memory[self._address] = dq_o
-                self.written.append((self._address, dq_o))
-                self._address += 1
-
-        if self.verbose:
-            self.trace.append(
-                f"cs={cs} state={self._state} clk_en={clk_en} "
-                f"dq_o={dq_o:08x} dq_e={dq_e} dv={datavalid}")
-        return dq_i, datavalid, burstdet
-
-
-class Harness(Elaboratable):
-    """The DQS controller with its record brought out for a Python model.
-
-    `upstream=True` instantiates luna's class instead of the vendored one, so a
-    check can show a fault existing there and absent here in the same harness.
-    Without that, "our controller keeps tCSHI" is a claim with no control: a
-    model that never detects a violation would pass it just as well.
-    """
-
-    def __init__(self, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
-                 tcsm_ns=None):
-        self.phy = HyperBusDQSPHY()
-        self.sync_mhz = sync_mhz
-        if upstream:
-            self.psram = HyperRAMDQSInterface(phy=self.phy)
-        else:
-            # Defaults to luna's latency so the sections written against that
-            # keep measuring what they were written for. `latency` is how the
-            # BOARD's setting gets tested -- `vexii_bootram` builds with
-            # HYPERRAM_LATENCY_CLOCKS = 4, and until this parameter existed the
-            # simulation had never once run the configuration this repo ships.
-            self.psram = HyperRAMDQSController(
-                phy=self.phy, sync_mhz=sync_mhz,
-                high_latency_clocks=(
-                    latency if latency is not None
-                    else HyperRAMDQSInterface.HIGH_LATENCY_CLOCKS),
-                **({} if tcsm_ns is None else {"tcsm_ns": tcsm_ns}))
-
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.psram = self.psram
-        return m
-
-
-async def beat(ctx, dut, model):
-    """One `sync` cycle: show the model the bus, hand back what the device drives.
-
-    Returns whether a word moved this cycle, so a caller can raise `final_word` on
-    a chosen beat rather than on a chosen cycle.
-    """
-    dq_i, datavalid, burstdet = model.step(
-        cs=ctx.get(dut.phy.cs),
-        dq_o=ctx.get(dut.phy.dq.o),
-        dq_e=ctx.get(dut.phy.dq.e),
-        clk_en=ctx.get(dut.phy.clk_en),
-    )
-    ctx.set(dut.phy.dq.i, dq_i)
-    ctx.set(dut.phy.datavalid, datavalid)
-    ctx.set(dut.phy.burstdet, burstdet)
-    # Section 7b steps this from a shim that carries only the record.
-    psram = getattr(dut, "psram", None)
-    moved = (psram is not None
-             and (ctx.get(psram.read_ready) or ctx.get(psram.write_ready)))
-    await ctx.tick()
-    return moved
-
-
-async def run(ctx, dut, model, *, address, read, data=None,
-              hold_final_word=True, hold_write=True, gap=None,
-              register_space=False, single_page=False, beats=1):
-    """One transaction, driven the way a caller chooses to drive it.
-
-    `hold_final_word` and `hold_write` are the two traps from
-    `docs/upstream-boundary.md`, made switchable so the wrong arrangement can be
-    run against the same model rather than described.
-
-    `gap` is how many idle beats to leave before asserting the request. `None`
-    means "as few as the controller allows", which is what back-to-back
-    transactions do and what violates tCSHI.
-
-    `beats` is how many words to ask for: `final_word` rises on the last one.
-    `beats=0` never raises it at all, which is a consumer that stalled and the
-    case tCSM exists for.
-
-    EVERY transaction is judged against `completion_bound`. Before #316 this loop
-    simply ran out and the section carried on, so the file was green while the
-    board sat in `READ_DATA` for ever.
-    """
-    psram = dut.psram
-
-    # Idle beats BEFORE the request, and the model is stepped through every one
-    # of them. Ticking without stepping the model would leave the gap invisible
-    # to the thing that measures it, and section 4 would then pass because
-    # nothing was counted rather than because the gap was kept.
-    for _ in range(gap or 0):
-        await beat(ctx, dut, model)
-
-    ctx.set(psram.register_space, 1 if register_space else 0)
-    ctx.set(psram.single_page, 1 if single_page else 0)
-    ctx.set(psram.address, address)
-    ctx.set(psram.perform_write, 0 if read else 1)
-    if data is not None:
-        ctx.set(psram.write_data, data)
-    ctx.set(psram.final_word, 1 if beats == 1 else 0)
-    ctx.set(psram.start_transfer, 1)
-    await ctx.tick()
-    ctx.set(psram.start_transfer, 0)
-
-    if not hold_final_word:
-        # Pulsed rather than held: released one beat after the request. The
-        # controller reads it in READ_DATA/WRITE_DATA, which is many beats later.
-        ctx.set(psram.final_word, 0)
-    if not hold_write:
-        ctx.set(psram.perform_write, 0)
-        if data is not None:
-            ctx.set(psram.write_data, 0)
-
-    finished, moved, cycles = False, 0, 0
-    for _ in range(completion_bound(dut.sync_mhz)):
-        moved += await beat(ctx, dut, model)
-        cycles += 1
-        if beats > 1 and moved >= beats - 1:
-            ctx.set(psram.final_word, 1)
-        if ctx.get(psram.idle) and model._state == "idle":
-            finished = True
-            break
-
-    model.incomplete += not finished
-    model.durations.append(cycles)
-    # Beats the CONTROLLER took, which is not what the device clocked out: the
-    # cycle RECOVERY needs to stop CK emits one more word that nobody consumes.
-    model.beats_taken = moved
-    model.timed_out = (ctx.get(psram.timed_out)
-                       if hasattr(psram, "timed_out") else None)
-    model.burst_beats = getattr(psram, "_burst_beats", None)
-
-    ctx.set(psram.final_word, 0)
-    ctx.set(psram.perform_write, 0)
-    ctx.set(psram.register_space, 0)
-
-
-def simulate(body, *, upstream=False, sync_mhz=SYNC_MHZ, latency=None,
-             model_latency=None, deliver=None, tcsm_ns=None):
-    """Run `body(ctx, dut, model)` and return the model it used.
-
-    `model_latency` sets the DEVICE's latency independently of the controller's.
-    Leaving it None lets the model take luna's class constant -- convenient, and
-    the reason a harness that does that cannot show the two disagreeing.
-
-    `deliver` caps how many read beats the device serves before going silent.
-    """
-    dut = Harness(upstream=upstream, sync_mhz=sync_mhz, latency=latency,
-                  tcsm_ns=tcsm_ns)
-    model = ModelHyperRAM(latency=model_latency, deliver=deliver)
-
-    async def testbench(ctx):
-        await body(ctx, dut, model)
-
-    sim = Simulator(Fragment.get(dut, None))
-    sim.add_clock(1 / SYNC_HZ, domain="sync")
-    sim.add_testbench(testbench)
-    sim.run()
-    return model
-
-
-def section_command(checks, emit):
-    """1. The command bytes, and the 16-bit reading of them."""
-    emit("\n1. The command the device decodes\n")
-
-    async def body(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
-
-    model = simulate(body)
-
-    check_completed(checks, model, "the command read")
-    checks.check("one command was issued", len(model.commands) == 1,
-                 f"{len(model.commands)} decoded")
-    if not model.commands:
-        return
-    command = model.commands[0]
-
-    emit(f"        one command, decoded at {command['address']:#010x}")
-    # WHAT THE CA CONTAINS is not asserted here any more: address, R/W#, address
-    # space and burst type were graded against `encode_ca`, a second decoder in
-    # this same file. They are case 2b of `controller_model_tb.sv`, where the
-    # reference is a model held equal to Winbond's own. (#346)
-
-
-def section_latency(checks, emit):
-    """2. Why upstream's forced long branch is right for this part."""
-    emit("\n2. The forced long branch, in upstream's source\n")
-
-    async def body(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
-
-    check_completed(checks, simulate(body), "the fixed-latency read")
-
-    # The latency COUNT is not asserted here. It was checked against a model whose
-    # latency is `latency_beats()` -- the controller's own constant -- so it could
-    # not fail for a part reason. `controller_model_tb.sv` sweeps CR0[7:4] at six
-    # codes in both modes and grades the controller's first data beat against the
-    # device's own decode; `--negative-control` proves a 1 CK error is caught.
-    checks.check("upstream forces the long branch unconditionally",
-                 "extra_latency | 1" in _upstream_source())
-    emit(f"        CR0 0x8f2f selects FIXED latency, so the device takes the")
-    emit(f"        long count every time and RWDS says nothing about it.")
-    emit(f"        `extra_latency | 1` is therefore CORRECT for this part as")
-    emit(f"        configured; the #90 defect only pays after CR0 is set to")
-    emit(f"        variable latency, which is what #338 measures.")
-
-
-def section_held(checks, emit):
-    """3. Held, not pulsed -- the two traps already paid for."""
-    emit("\n3. Control signals held for the whole transfer\n")
-
-    async def good(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=False,
-                  data=TEST_DATA)
-
-    model = simulate(good)
-    wrote = dict(model.written)
-    checks.check("held: the word arrives at the address asked for",
-                 wrote.get(TEST_ADDRESS) == TEST_DATA,
-                 f"device holds {wrote}")
-
-    async def pulsed_write(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=False,
-                  data=TEST_DATA, hold_write=False)
-
-    model = simulate(pulsed_write)
-    wrote = dict(model.written)
-    checks.check("pulsed `perform_write`/`write_data`: the device does NOT get it",
-                 wrote.get(TEST_ADDRESS) != TEST_DATA,
-                 f"device holds {wrote}, which is the value that was meant")
-    emit(f"        pulsed write left the device holding {wrote or 'nothing'}")
-
-    async def pulsed_final(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True,
-                  hold_final_word=False)
-
-    model = simulate(pulsed_final)
-    checks.check("pulsed `final_word`: the burst does not end where it was meant to",
-                 model.read_beats != 1,
-                 f"{model.read_beats} beats, which is what a held final_word gives")
-    # And it still ENDS. Nothing in the transfer can end it -- the caller dropped
-    # the only signal that could -- so before #316 this ran to the harness limit
-    # and the section passed anyway.
-    check_completed(checks, model, "pulsed `final_word`")
-    emit(f"        pulsed final_word ran {model.read_beats} beats "
-         f"where holding it gives 1")
-
-
-def section_recovery(checks, emit):
-    """4. The gap between transactions, on the DQS controller.
-
-    MEASURED here and judged elsewhere. Whether a gap clears tCSHI is a fact about
-    the part, and a Python model judging it against a copy of the number the
-    controller was handed decides nothing. `hyperram_model.v` carries the monitor;
-    what is left here is the comparison between the two controllers, which needs
-    no datasheet number at all. (#346)
-    """
-    emit("\n4. The gap the DQS controller's RECOVERY state leaves\n")
-
-    checks.check("upstream's RECOVERY state is still a TODO",
-                 "# TODO: implement recovery" in _upstream_source(),
-                 "upstream implemented it; the vendored copy may be redundant")
-
-    async def back_to_back(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
-        await run(ctx, dut, model, address=TEST_ADDRESS + 1, read=True, gap=0)
-
-    # THE NEGATIVE CONTROL, and it is the whole value of this section. Upstream's
-    # controller is run through the same harness to prove the gap separates them.
-    #
-    # It is the GAP and not a violation count: with tCSHI at T166's 6 ns and sync
-    # 120, one cycle (8.33 ns) already clears it, so upstream's `# TODO: implement
-    # recovery` would score zero violations too. Upstream leaves the ONE cycle its
-    # caller's state count happens to give; ours leaves what the counter was told
-    # to. (#341)
-    control = simulate(back_to_back, upstream=True)
-    checks.check("upstream's controller leaves ONE cycle and nothing more",
-                 control.cs_high_min == 1,
-                 f"{control.cs_high_min} cycles -- if upstream already held a gap "
-                 f"this harness cannot tell the two apart")
-
-    model = simulate(back_to_back)
-    check_completed(checks, model, "back-to-back DQS reads")
-    # The controller's own count, read off the controller. Whether that count is
-    # long enough for the PART is `hyperram_model.v`'s tCSHI monitor, exercised on
-    # the non-DQS controller in `controller_model_tb.sv` with `+cs_hold_ns` as the
-    # control that proves it fires. (#346)
-    required = model_recovery_cycles(HyperRAMDQSController, HyperBusDQSPHY,
-                                     SYNC_MHZ)
-    checks.check("...and the gap is the count RECOVERY was given",
-                 model.cs_high_min == required,
-                 f"{model.cs_high_min} cycles against {required}")
-    # At sync 120 the two agree, because T166's 6 ns is under one cycle there and
-    # upstream's accidental single cycle already clears it. What separates them at
-    # EVERY clock is that ours moves when `recovery_cycles` is driven and upstream
-    # has nothing to drive -- `scripts/hyperram/hyperram_timing_levers_sim.py`. (#341)
-    if required == 1:
-        emit("        at this clock tCSHI is under one cycle, so upstream's "
-             "accident clears it too -- the lever sweep is the discriminator")
-
-    emit(f"        shortest gap -- upstream: {control.cs_high_min} cycle(s), "
-         f"vendored: {model.cs_high_min}, its own count {required}")
 
 
 def model_recovery_cycles(controller, phy, sync_mhz):
@@ -900,69 +385,6 @@ def section_recovery_non_dqs(checks, emit):
          f"{refill_model.cs_high_min}; the count is {required}")
 
 
-def section_as_built(checks, emit):
-    """9b. The configuration this repository actually synthesises.
-
-    Every other section runs luna's defaults. `vexii_bootram` builds with
-    HYPERRAM_LATENCY_CLOCKS = 4 at SYNC_MHZ = 60, and until this section existed
-    nothing had ever simulated that combination -- which is how a green
-    simulation sat beside a board reporting `burstdet NEVER` and every read
-    returning the timeout sentinel.
-
-    The model's latency still follows the controller here, so this does NOT test
-    whether 4 is the right count against the device's 14 CK; section 2 reports
-    that gap. What it tests is everything else at the as-built settings: that the
-    transaction completes, that CS# recovery still holds, and that a write lands
-    where it was addressed.
-    """
-    emit("\n9b. As built: SYNC_MHZ 60, HIGH_LATENCY_CLOCKS 4\n")
-
-    from bootram import HYPERRAM_LATENCY_CLOCKS
-
-    built = dict(sync_mhz=60.0, latency=HYPERRAM_LATENCY_CLOCKS)
-
-    async def one_write(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=False,
-                  data=TEST_DATA)
-
-    model = simulate(one_write, **built)
-    wrote = dict(model.written)
-    landed = wrote.get(TEST_ADDRESS) == TEST_DATA
-    # REPORTED, not asserted: the controller is given 4 while the model keeps
-    # luna's 5, which is a latency MISMATCH and not a fact about either side.
-    # Where the part serves its first beat is `hyperram_dqs_model_sim.py --stage
-    # probe`, measured on the twin and on Winbond's model at every code.
-    emit(f"        as-built write lands: {landed} "
-         f"(controller 4, model {latency_beats()} -- a mismatch, not a verdict)")
-
-    async def one_read(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
-
-    model = simulate(one_read, **built)
-    check_completed(checks, model, "as built")
-    checks.check("as built: a read issues a command the device decodes",
-                 len(model.commands) == 1,
-                 f"{len(model.commands)} commands decoded, want 1")
-
-    async def back_to_back(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True, gap=0)
-        await run(ctx, dut, model, address=TEST_ADDRESS + 2, read=True, gap=0)
-
-    model = simulate(back_to_back, **built)
-    emit(f"        as-built shortest CS#-high gap: {model.cs_high_min} beats "
-         f"at sync 60 MHz")
-    emit(f"        HYPERRAM_LATENCY_CLOCKS = {HYPERRAM_LATENCY_CLOCKS}, "
-         f"sync 60 MHz")
-
-
-# 7b, "which 16-bit word of a DQS write reaches the device FIRST", was HERE and
-# asserted nothing: its harness never got `jtag_ack`, so nothing reached the model
-# and the section printed a report about an empty capture. It read as coverage.
-# The question is answered by `hyperram_dqs_model_sim.py --stage order`, against
-# the twin and Winbond's model, with a deliberately rewired run required to fail.
-# (#206, #346)
-
-
 def latency_cycles_held(*, latency=None, max_latency_clocks=14):
     """Cycles the non-DQS controller spends in HANDLE_LATENCY on one read.
 
@@ -1048,30 +470,6 @@ def section_latency_input(checks, emit):
                  hasattr(HyperRAMController(phy=HyperBusPHY(), sync_mhz=60.0),
                          "fixed_latency"),
                  "no `fixed_latency` signal on the controller")
-
-
-def section_structural(checks, emit):
-    """5. The reasons upstream's PHY cannot be instantiated here."""
-    emit("\n5. Structural: our PHY against upstream's, in source\n")
-
-    ours = (ROOT / "gateware" / "soc" / "peripherals" / "hyperram_dqs_phy.py").read_text()
-    upstream = _upstream_source()
-
-    checks.check("upstream assigns bus.clk as a single net",
-                 "o_Z=self.bus.clk," in upstream,
-                 "upstream changed; re-check whether this PHY is still needed")
-    checks.check("ours drives the differential clock's TRUE pin only",
-                 "self.bus.clk.p[0]" in ours and "self.bus.clk.n" not in ours)
-    checks.check("ours drives RESET#, which upstream leaves floating",
-                 "self.bus.reset.io[0]" in ours
-                 and "self.bus.reset" not in upstream)
-    checks.check("ours takes the polarity from the resource, not from a literal",
-                 "port.invert[index]" in ours)
-    checks.check("ours needs the `fast` domain, and says so",
-                 'ClockSignal("fast")' in ours)
-    checks.check("ours keeps upstream's controller rather than copying it",
-                 "from luna.gateware.interface.psram import HyperBusDQSPHY" in ours
-                 and "class HyperRAMDQSInterface" not in ours)
 
 
 def section_wishbone(checks, emit):
@@ -2111,7 +1509,6 @@ def section_escape(checks, emit):
     emit("\n12. Every transaction ends, whatever the device does\n")
 
     bound16 = completion_bound(NON_DQS_SYNC_MHZ)
-    bound32 = completion_bound(SYNC_MHZ)
 
     async def silent_read(ctx, dut, model):
         await run16(ctx, dut, model, address=TEST_ADDRESS, read=True)
@@ -2172,8 +1569,8 @@ def section_escape(checks, emit):
     checks.check("...a write nobody ends is flagged too",
                  stalled.timed_out == 1, f"timed_out={stalled.timed_out}")
 
-    # REGISTER TRANSACTIONS, which the DQS path reaches by a different route --
-    # `SHIFT_COMMAND1` straight into `WRITE_DATA`, no latency at all.
+    # REGISTER TRANSACTIONS: `SHIFT_COMMAND1` straight into `WRITE_DATA`, no
+    # latency at all.
     reg_write = simulate16(register_write)
     check_completed(checks, reg_write, "non-DQS register write")
     checks.check("...and a register write ends on its own, unflagged",
@@ -2181,41 +1578,8 @@ def section_escape(checks, emit):
     reg_read = simulate16(register_read, deliver=0)
     check_completed(checks, reg_read, "non-DQS register read, silent device")
 
-    # The DQS controller, same three shapes.
-    async def silent_read32(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=True)
-
-    async def stalled_write32(ctx, dut, model):
-        await run(ctx, dut, model, address=TEST_ADDRESS, read=False,
-                  data=TEST_DATA, beats=0)
-
-    async def register_write32(ctx, dut, model):
-        await run(ctx, dut, model, address=0, read=False, data=0x8f2f,
-                  register_space=True)
-
-    dqs_control = simulate(silent_read32, upstream=True, deliver=0)
-    checks.check("upstream's DQS READ_DATA never returns from a silent device",
-                 dqs_control.incomplete == 1,
-                 f"upstream finished in {dqs_control.durations} cycles")
-    dqs_write_control = simulate(stalled_write32, upstream=True)
-    checks.check("...nor its WRITE_DATA from a stalled consumer",
-                 dqs_write_control.incomplete == 1,
-                 f"upstream finished in {dqs_write_control.durations} cycles")
-
-    dqs_silent = simulate(silent_read32, deliver=0)
-    check_completed(checks, dqs_silent, "DQS, silent device")
-    checks.check("...and the DQS controller flags it",
-                 dqs_silent.timed_out == 1, f"timed_out={dqs_silent.timed_out}")
-    dqs_stalled = simulate(stalled_write32)
-    check_completed(checks, dqs_stalled, "DQS, consumer that stops asking")
-    dqs_register = simulate(register_write32)
-    check_completed(checks, dqs_register, "DQS register write")
-    checks.check("...unflagged, since the caller's own path ended it",
-                 dqs_register.timed_out == 0,
-                 f"timed_out={dqs_register.timed_out}")
-
-    emit(f"        bound: {bound16} cycles at sync {NON_DQS_SYNC_MHZ:g} MHz, "
-         f"{bound32} at {SYNC_MHZ:g} -- 1.25x the controller's own tCSM budget")
+    emit(f"        bound: {bound16} cycles at sync {NON_DQS_SYNC_MHZ:g} MHz "
+         f"-- 1.25x the controller's own tCSM budget")
     emit(f"        silent device: upstream never returns, ours returns in "
          f"{silent.durations[0]} cycles with timed_out={silent.timed_out}")
     emit(f"        7 of 8 beats:  upstream never returns, ours returns in "
@@ -2264,14 +1628,6 @@ def section_tcsm(checks, emit):
                  f"took {chopped.beats_taken} beats against a cap of {budget}")
     checks.check("...and the caller is told the controller ended it",
                  chopped.timed_out == 1, f"timed_out={chopped.timed_out}")
-
-    dqs = simulate(
-        lambda ctx, dut, model: run(ctx, dut, model, address=TEST_ADDRESS,
-                                    read=True, beats=0))
-    dqs_ns = cs_low_ns(dqs.cs_low_max, SYNC_MHZ)
-    checks.check("the DQS controller chops inside tCSM too",
-                 dqs_ns <= T_CSM_NS,
-                 f"CS# Low up to {dqs_ns:.0f} ns against tCSM {T_CSM_NS:.0f}")
 
     # THE CONTROL FOR THE CHECK ITSELF: a controller told tCSM is 4.8 us. Its chop
     # lands at 4.3 us -- a real violation, and INSIDE the give-up limit of 5.2 us,
@@ -2333,8 +1689,7 @@ def section_tcsm(checks, emit):
         f"{n} {cs_low_ns(m.cs_low_max, NON_DQS_SYNC_MHZ):.0f} ns"
         for n, m in shapes.items()))
     emit(f"        CS# Low, longest run: upstream {control.cs_low_max} cycles, "
-         f"ours {chopped.cs_low_max} ({ours_ns:.0f} ns), DQS {dqs.cs_low_max} "
-         f"({dqs_ns:.0f} ns) -- tCSM {T_CSM_NS:.0f} ns")
+         f"ours {chopped.cs_low_max} ({ours_ns:.0f} ns) -- tCSM {T_CSM_NS:.0f} ns")
     emit(f"        word cap {budget} beats, taken {chopped.beats_taken}; the device "
          f"clocked out {chopped.read_beats}, the extra one on the RECOVERY cycle")
     emit(f"        the check's own control: a 1.2x tCSM build chops at "
@@ -2372,10 +1727,8 @@ def main():
     emit("no fact about the PART is asserted here -- see the docstring, and #346")
 
     checks = Checks(emit)
-    for section in (section_command, section_latency, section_held,
-                    section_as_built,
-                    section_recovery, section_recovery_non_dqs,
-                    section_latency_input, section_structural, section_wishbone,
+    for section in (section_recovery_non_dqs,
+                    section_latency_input, section_wishbone,
                     section_shared_engine, section_line_refill,
                     section_line_write, section_line_read_bubble,
                     section_clock_stop, section_register_clock_stop,

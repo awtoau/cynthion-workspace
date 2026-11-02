@@ -11,13 +11,13 @@ happens to be set, which is the fault class this rig keeps producing: `busy` was
 capture phase did to it (#366).
 
 Structural, because nothing else can be: `HyperRAMCeiling` instantiates ECP5 hard
-blocks (DQSBUFM, EHXPLLL, DTR), so the elaborated design cannot be run in
+blocks (EHXPLLL, DTR), so the elaborated design cannot be run in
 Amaranth's simulator and no board test can reach a signal that never leaves the
 FPGA. What CAN be settled here is whether the report's driver is the engine's own
 state or a constant -- and that is the whole of both defects.
 
-The end-to-end behaviour lives in `scripts/hyperram/hyperram_dqs_model_sim.py --stage
-config`, which runs the real controller against the device model.
+The end-to-end behaviour lives in `scripts/hyperram/hyperram_model_sim.py`, which
+runs the real controller against the device model.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ hyperram_axis_wiring = pytest.importorskip(
 
 @pytest.fixture(scope="module")
 def build():
-    """The DQS build, prepared once. `sel` reaches the PHY only here (#343)."""
-    return hyperram_axis_wiring.prepare(dqs=True, sync_mhz=60.0)
+    """The build, prepared once."""
+    return hyperram_axis_wiring.prepare(sync_mhz=60.0)
 
 
 def _assignments(fragment):
@@ -95,8 +95,8 @@ def _bit_of(value, name):
     raise AssertionError(f"`{name}` is not in this register")
 
 
-# The three rules, and the residue each one catches (#358, #366).
-TRUST_RULES = ["readback_reread_ok", "readback_distinct", "readback_halves_ok"]
+# The two rules, and the residue each one catches (#358, #366).
+TRUST_RULES = ["readback_reread_ok", "readback_distinct"]
 
 
 def test_the_readback_trust_rules_are_exported(build):
@@ -127,7 +127,7 @@ def test_the_firmware_reads_the_trust_rules_where_the_engine_puts_them(build):
     pure = (ROOT / "firmware" / "cynthion-soc" / "src" / "bist" / "pure.rs").read_text()
     _fragment, _params, results = build
     ctrl_state = _result(results, REG_CTRL_STATE)
-    for rule, name in zip(TRUST_RULES, ["REREAD", "DISTINCT", "HALVES"]):
+    for rule, name in zip(TRUST_RULES, ["REREAD", "DISTINCT"]):
         match = re.search(rf"pub const {name}: u32 = 1 << (\d+);", pure)
         assert match, f"`trust::{name}` is gone from pure.rs"
         assert int(match.group(1)) == _bit_of(ctrl_state, rule), \

@@ -6,7 +6,7 @@
 """
 The client for the board arbiter. Starts the server itself if it is not up.
 
-    ./scripts/board/board.py run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \\
+    ./scripts/board/board.py run --variant ck80-sync60 \\
                            "bist smoke" "bist latency 8"
     ./scripts/board/board.py shell "info"          # no configure; whatever is loaded
     ./scripts/board/board.py confirm               # is a design running, and which

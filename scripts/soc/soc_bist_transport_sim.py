@@ -75,8 +75,8 @@ from peripherals.hyperram_bist import HyperRAMBist  # noqa: E402
 from peripherals.bist_csr import BistCsrTransport  # noqa: E402
 
 # The CPU is pinned and the engine is not; that independence is the point of the
-# variant, so the simulation must not run them at the same rate. `hr` is CK/2 on
-# the DQS path, so CK 160 is 80 MHz against a 30 MHz CPU.
+# variant, so the simulation must not run them at the same rate: CK 80 is 80 MHz
+# against a 30 MHz CPU.
 SYNC_MHZ = 30.0
 HR_MHZ = 80.0
 
@@ -85,14 +85,12 @@ class Fixture(Elaboratable):
     """The peripheral, with `sync` and `hr` as genuinely separate domains."""
 
     def __init__(self, dut=None):
-        self.dut = dut if dut is not None else HyperRAMBist(ck_mhz=2 * HR_MHZ,
-                                                            dqs=True)
+        self.dut = dut if dut is not None else HyperRAMBist(ck_mhz=HR_MHZ)
 
     def elaborate(self, platform):
         m = Module()
         m.domains.sync = ClockDomain()
         m.domains.hr = ClockDomain()
-        m.domains.hr_fast = ClockDomain()
         m.submodules.dut = self.dut
         return m
 
@@ -168,14 +166,13 @@ class OverWishbone(Elaboratable):
     """
 
     def __init__(self, hr_mhz):
-        self.dut = HyperRAMBist(ck_mhz=2 * hr_mhz, dqs=True)
+        self.dut = HyperRAMBist(ck_mhz=hr_mhz)
         self.bridge = WishboneCSRBridge(self.dut.bus, data_width=32)
 
     def elaborate(self, platform):
         m = Module()
         m.domains.sync = ClockDomain()
         m.domains.hr = ClockDomain()
-        m.domains.hr_fast = ClockDomain()
         m.submodules.dut = self.dut
         m.submodules.bridge = self.bridge
         return m
@@ -216,7 +213,6 @@ def read_over_wishbone(number, *, window, hr_mhz=None, limit=64):
     sim = Simulator(Fragment.get(fixture, CynthionPlatformRev1D4()))
     sim.add_clock(1e-6 / SYNC_MHZ, domain="sync")
     sim.add_clock(1e-6 / hr_mhz, domain="hr")
-    sim.add_clock(1e-6 / (2 * hr_mhz), domain="hr_fast")
 
     got = {}
 
@@ -264,7 +260,6 @@ def read_register(number, *, window, dut=None, hr_mhz=None):
     sim = Simulator(Fragment.get(fixture, CynthionPlatformRev1D4()))
     sim.add_clock(1e-6 / SYNC_MHZ, domain="sync")
     sim.add_clock(1e-6 / hr_mhz, domain="hr")
-    sim.add_clock(1e-6 / (2 * hr_mhz), domain="hr_fast")
 
     got = {}
 
@@ -318,7 +313,7 @@ def main() -> int:
     slow_mhz = SYNC_MHZ / 4
     dragged = read_register(
         REG_ID, window=result_window, hr_mhz=slow_mhz,
-        dut=TransportInsideRenamer(ck_mhz=2 * slow_mhz, dqs=True))
+        dut=TransportInsideRenamer(ck_mhz=slow_mhz))
     checks.check(
         f"a bridge clocked by `hr` at {slow_mhz:g} MHz does NOT read back the "
         f"ident (got {dragged:#010x}) -- so the first check can fail, and the "
@@ -327,7 +322,7 @@ def main() -> int:
 
     try:
         read_register(REG_ID, window=result_window,
-                      dut=TransportBeforeEngine(ck_mhz=2 * HR_MHZ, dqs=True))
+                      dut=TransportBeforeEngine(ck_mhz=HR_MHZ))
     except ValueError as error:
         bound_nothing = "no registers were declared" in str(error)
     else:

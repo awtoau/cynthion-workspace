@@ -198,7 +198,7 @@ impl core::fmt::Display for Tally {
     }
 }
 
-/// `REG_CTRL_STATE` bits 8..10: whether the engine's CR0/CR1 readback stands up.
+/// `REG_CTRL_STATE` bits 8..9: whether the engine's CR0/CR1 readback stands up.
 ///
 /// The readback shares its capture window with the data path, so a cell run at a
 /// phase outside the window returns a held or slid word -- and the report was
@@ -210,9 +210,6 @@ pub mod trust {
     pub const REREAD: u32 = 1 << 8;
     /// CR0 and CR1 came back different. A path holding one word answers alike.
     pub const DISTINCT: u32 = 1 << 9;
-    /// Both words carry their 16 bits in both halves, as a register read does.
-    /// A byte-slipped capture does not.
-    pub const HALVES: u32 = 1 << 10;
 }
 
 /// What may be said about the part's configuration, given the trust bits.
@@ -249,11 +246,6 @@ pub fn readback(write_cycles: u32, ctrl_state: u32, cr0: u32, cr1: u32) -> Readb
         return Readback::Withheld(
             "CR0 and CR1 read back identical -- the read path is handing back \
              one held word, not the registers");
-    }
-    if ctrl_state & trust::HALVES == 0 {
-        return Readback::Withheld(
-            "a register read arrives in both halves of the word and these do \
-             not match -- the capture is slipped by whole bytes");
     }
     Readback::Reported { cr0: cr0 as u16, cr1: cr1 as u16 }
 }
@@ -410,7 +402,7 @@ mod tests {
         assert!(matches!(cell(0, 0, 4096, 4096).verdict(), Verdict::NoResult));
     }
 
-    const ALL_TRUST: u32 = trust::REREAD | trust::DISTINCT | trust::HALVES;
+    const ALL_TRUST: u32 = trust::REREAD | trust::DISTINCT;
 
     /// THE BOARD'S OWN NUMBERS, #366. After a cell at a failing capture phase
     /// `bist status` printed `CR1 = 0xbf2f` -- the PREVIOUS CR0 -- and read
@@ -428,7 +420,7 @@ mod tests {
     /// reports when every bit is wrong would pass the test above and nothing else.
     #[test]
     fn every_trust_rule_can_withhold_on_its_own() {
-        for rule in [trust::REREAD, trust::DISTINCT, trust::HALVES] {
+        for rule in [trust::REREAD, trust::DISTINCT] {
             assert!(matches!(readback(1, ALL_TRUST & !rule, 0x8f2f_8f2f, 0xff81_ff81),
                              Readback::Withheld(_)),
                     "rule {rule:#x} cannot withhold on its own");

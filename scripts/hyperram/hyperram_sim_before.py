@@ -9,7 +9,7 @@
 
 A new check that has only ever been run against the fixed design says nothing:
 it may be measuring the fix, or it may pass on anything. This loads
-`hyperram_controller.py` and `hyperram_dqs_controller.py` from `<commit>` into
+`hyperram_controller.py` from `<commit>` into
 `sys.modules` under their real names, leaves the simulation itself at the working
 tree, and runs it -- so the failures printed are the checks that can discriminate.
 
@@ -32,7 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
-CONTROLLERS = ("hyperram_controller", "hyperram_dqs_controller")
+CONTROLLERS = ("hyperram_controller",)
 
 
 def main():

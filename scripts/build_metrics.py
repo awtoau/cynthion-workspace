@@ -817,7 +817,7 @@ def gateware_config() -> dict:
     Two sources:
 
       * module-level scalar constants of `gateware/soc/top.py` -- `SYNC_MHZ`,
-        `CACHE_SETS`, `HYPERRAM_DQS`, `FLASH_PHY_FAST` and whatever lands next;
+        `CACHE_SETS`, `FLASH_PHY_FAST` and whatever lands next;
       * `GENERATE_FLAGS` in `gateware/soc/cpu/cpu.py`, split into one column per
         flag, so `--with-btb` is `btb`, `--relaxed-btb` is `relaxed_btb` and
         `--performance-counters 4` is `performance_counters = 4`.
@@ -1229,7 +1229,7 @@ def cmd_selftest(args) -> int:
     check("critical path start point captured",
           any(t["path_from"] for t in record["timing"]))
     check("configuration columns present",
-          all(k in build for k in ("sync_mhz", "cache_sets", "hyperram_dqs",
+          all(k in build for k in ("sync_mhz", "cache_sets",
                                    "flash_phy_fast", "btb", "relaxed_btb",
                                    "performance_counters")))
     check("firmware sections recorded", "fw_text_bytes" in build)

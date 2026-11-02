@@ -45,8 +45,8 @@ LOG = ROOT / "tmp" / "logs" / "board-proof.log"
 
 # Two variants that differ in what they elaborate, so proof `queue` compares two
 # real bitstreams rather than two copies of one.
-VARIANTS = ("bist1-ck120-dqs1-mirror0-mirrordiv4",
-            "bist0-ck100-dqs1-mirror0-mirrordiv4")
+VARIANTS = ("ck80-sync60",
+            "ck72-sync60")
 
 # `bist all 8` measured 4.59 s over 4096 cells on this board (2026-08-12).
 # Long enough to be preempted mid-command, and its budget is 1.3x the measure.

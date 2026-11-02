@@ -10,7 +10,7 @@ Run any HyperRAM harness, and say what each measures and whether it has ever run
     ./dev.py hyperram --markdown            # the same table, for a doc
     ./dev.py hyperram identify
     ./dev.py hyperram ceiling -- --build
-    ./dev.py hyperram measure -- --note "DQS, CK 120"
+    ./dev.py hyperram measure -- --note "CK 80"
     ./dev.py hyperram ladder -- --clocks 60 120
 
 ## Every harness is TWO files with the SAME name
@@ -39,7 +39,7 @@ Wishbone master bubbles, so holding a transaction open corrupts the write. That
 master is `HyperRAMWishbone` in `gateware/soc/bootram.py` (`sustained`
 defaults to False for exactly this reason), and **not one of the eleven tops
 under `gateware/probes/hyperram/` goes near it.** Every one drives
-`HyperRAMController` or `HyperRAMDQSController` from its own FSM, which supplies
+`HyperRAMController` from its own FSM, which supplies
 and consumes a word per cycle by construction, so none of them can express the
 fault.
 
@@ -91,21 +91,14 @@ HARNESSES = {
     ),
     "ceiling": (
         "hyperram_ceiling.py", "hyperram_ceiling_top.py",
-        "the device CK at which reads stop verifying, both PHYs, with BURSTDET "
-        "and a per-word error count under a legal tCSM burst cap",
+        "the device CK at which reads stop verifying, with a per-word error "
+        "count under a legal tCSM burst cap",
         "yes, but every rung it produced is VOID -- see "
         "docs/chips/hyperram/bist-plan.md. The apparatus had four faults at "
         "once, and no figure from it survives. What does survive is a fact "
-        "about our design rather than the part: the FABRIC caps CK, because "
-        "the non-DQS PHY clocks it at CK and the DQS one at CK/2. Where that "
-        "cap sits is measured per build and recorded in #410; top.py refuses a "
+        "about our design rather than the part: the FABRIC caps CK. "
+        "Where that cap sits is measured per build and recorded in #410; top.py refuses a "
         "rung past it rather than letting nextpnr find out.",
-    ),
-    "readclksel": (
-        "hyperram_readclksel_sweep.py", "hyperram_ceiling_top.py",
-        "the eight DQS capture phases at one CK, and how wide the passing window is",
-        "NO -- af28b08 says so outright: 'nothing here has run on hardware'. "
-        "A procedure, not a measurement.",
     ),
     "fifo": (
         "hyperram_fifo.py", "hyperram_fifo.py",
@@ -122,13 +115,6 @@ HARNESSES = {
         "yes, repeatedly, and it is THE ONE that measures the #185 path: 5.43 "
         "MB/s sequential and 20.71 MB/s four-deep are its numbers (37ac105), as "
         "is the 1.89x from four loads deep (a7e4147)",
-    ),
-    "dqs-pins": (
-        "hyperram_dqs_pins.py", None,
-        "whether DQSBUFM can reach this board's HyperRAM pins, from the prjtrellis "
-        "database -- no board involved",
-        "yes -- left DQS group 8, bank 7, RWDS on the strobe pin; it is what "
-        "settled #92 (5795b9a). Runs anywhere, in about a second.",
     ),
 }
 
@@ -149,8 +135,7 @@ ORPHAN_TOPS = {
 # and `hyperram_burst_test.py` had never run and could not (one never builds, the
 # other's only driver carries a literal '/path/to/cynthion/constraints');
 # `hyperram_burst_test_sim.py` ran once and failed verification while exiting
-# zero; `hyperram_dqs_top.py` had never run and would hang if it did, because
-# `perform_write` rises in `m.d.sync` on the start edge; `hyperram_speed.py` and
+# zero; `hyperram_speed.py` and
 # its `hyperram_ladder.py` runner produced a figure that is invalid as a
 # sustained rate, holding CS# low ~17 us against CR1's 4 us tCSM.
 #
@@ -207,8 +192,8 @@ def main():
         print(__doc__.split("## Every harness")[0].rstrip())
         print("\nharnesses:\n")
         print(table())
-        print("\n  dqs-pins needs no board at all; ceiling and readclksel have a")
-        print("  --build mode that stops before one. Everything else reaches it.")
+        print("\n  ceiling has a --build mode that stops before the board. "
+              "Everything else reaches it.")
         # 0, not the usual usage 2: printing the inventory IS the default action
         # here, and #189 exists because nobody could find it.
         return 0

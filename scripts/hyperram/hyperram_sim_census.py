@@ -12,13 +12,14 @@
     device     moved onto the twin, where the reference is not our own guess
     redundant  deleted, already checked elsewhere
     wrong      deleted, encoded a belief since refuted
+    dqs-removed  deleted with the parked DQS code (tag `dqs-last`)
 
 An assertion with no home is what made the previous attempt useless, so this
 checks the correspondence both ways:
 
   * every assertion in the file appears in the table, classified `caller`
   * every `caller` row still exists in the file
-  * every `device`/`redundant`/`wrong` row is GONE from the file -- a re-added
+  * every `device`/`redundant`/`wrong`/`dqs-removed` row is GONE from the file -- a re-added
     conformance check is caught here rather than read as coverage
 
     scripts/hyperram/hyperram_sim_census.py            # exit 0 if the two agree
@@ -41,7 +42,7 @@ AUDIT = ROOT / "docs" / "chips" / "hyperram" / "sim-audit.md"
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_sim_census.log"
 
 KEPT = "caller"
-GONE = ("device", "redundant", "wrong")
+GONE = ("device", "redundant", "wrong", "dqs-removed")
 
 log = logging.getLogger("hyperram-sim-census")
 

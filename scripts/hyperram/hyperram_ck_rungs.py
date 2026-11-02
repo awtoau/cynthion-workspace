@@ -8,19 +8,16 @@ Cover a CK range at a given step, using as few bitstreams as the PLL allows.
 
     ./scripts/hyperram/hyperram_ck_rungs.py                       # 100-200 MHz, 5 MHz steps
     ./scripts/hyperram/hyperram_ck_rungs.py --low 100 --high 200 --step 5
-    ./scripts/hyperram/hyperram_ck_rungs.py --dqs                 # the other path
 
 ## What it is counting
 
-`HyperRAMDomains` can put up to `MAX_RUNGS` CK values in ONE bitstream on the
-non-DQS path: they are output dividers of a shared VCO and `DCSC` selects
+`HyperRAMDomains` can put up to `MAX_RUNGS` CK values in ONE bitstream: they are
+output dividers of a shared VCO and `DCSC` selects
 between them at run time. So the cost of a sweep is bitstreams, not rungs, and
 this is the arithmetic that says how many.
 
 `MAX_RUNGS` is 2 and that is the silicon: `DCSC` is a 2:1 mux and the two DCS
-bels do not cascade. The DQS path is 1 -- `hr_fast` is an edge clock, the bank
-ECLK input mux takes CLKOP/CLKOS only, and `hr = hr_fast / 2` leaves nothing to
-select. See `gateware/soc/hyperram_clocks.py`.
+bels do not cascade. See `gateware/soc/hyperram_clocks.py`.
 
 Output goes to `tmp/logs/hyperram_ck_rungs.log` as well as the terminal.
 """
@@ -35,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 
 from hyperram_clocks import (MAX_RUNGS, reachable_ck,  # noqa: E402
-                             solve_hr_pll, solve_hr_pll_rungs)
+                             solve_hr_pll_rungs)
 
 LOG = ROOT / "tmp" / "logs" / "hyperram_ck_rungs.log"
 
@@ -75,8 +72,6 @@ def main():
     parser.add_argument("--high", type=float, default=200.0)
     parser.add_argument("--step", type=float, default=5.0)
     parser.add_argument("--input-mhz", type=float, default=60.0)
-    parser.add_argument("--dqs", action="store_true",
-                        help="the DQS path, which is one rung per bitstream")
     args = parser.parse_args()
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -85,10 +80,8 @@ def main():
         handlers=[logging.StreamHandler(), logging.FileHandler(LOG, mode="w")])
     log = logging.getLogger()
 
-    reach = reachable_ck(args.low, args.high, dqs=args.dqs, input_mhz=args.input_mhz)
-    path = "dqs" if args.dqs else "non-dqs"
-    log.info("%s: %d reachable CK in %g..%g MHz", path, len(reach),
-             args.low, args.high)
+    reach = reachable_ck(args.low, args.high, input_mhz=args.input_mhz)
+    log.info("%d reachable CK in %g..%g MHz", len(reach), args.low, args.high)
     log.info("  %s", " ".join(f"{ck:g}" for ck in reach))
 
     # Snap each grid point to the nearest reachable CK; a rung that does not
@@ -98,19 +91,12 @@ def main():
     targets = sorted({min(reach, key=lambda ck: abs(ck - t)) for t in grid})
     log.info("%d distinct rungs cover a %g MHz grid", len(targets), args.step)
 
-    per_build = 1 if args.dqs else MAX_RUNGS
+    per_build = MAX_RUNGS
     builds = cover(targets, per_build, args.input_mhz)
     log.info("%d bitstreams at %d rung(s) each:", len(builds), per_build)
     for combo in builds:
-        # The DQS path clocks the fabric at CK/2 and gears `hr_fast` off the
-        # same VCO, so its solver is the single-rung one and its divisors are
-        # not this one's.
-        if args.dqs:
-            solved = solve_hr_pll(combo[0] / 2, args.input_mhz, with_fast=True)
-            vco = f"VCO {solved[0]:g} MHz div {list(solved[3:])}"
-        else:
-            solved = solve_hr_pll_rungs(list(combo), args.input_mhz)
-            vco = f"VCO {solved[0]:g} MHz div {solved[3]}"
+        solved = solve_hr_pll_rungs(list(combo), args.input_mhz)
+        vco = f"VCO {solved[0]:g} MHz div {solved[3]}"
         log.info("  %-24s %s", " ".join(f"{ck:g}" for ck in combo), vco)
 
     log.info("%d bitstreams against %d one-rung builds", len(builds), len(targets))

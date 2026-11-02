@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Raise the HyperRAM's clock until the data stops verifying, both PHYs.
+# Raise the HyperRAM's clock until the data stops verifying.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
@@ -10,22 +10,16 @@ Finds the clock the W956A8 actually stops working at, and what failure looks lik
     ./scripts/hyperram/hyperram_ceiling.py --run          # board only, uses what is built
     ./scripts/hyperram/hyperram_ceiling.py                # both
 
-## The ladder is in device CK, so the two PHYs are comparable
+## The ladder is in device CK
 
-`HyperRAMPHY` clocks the part at `sync`; `HyperRAMDQSPHY` clocks it at **twice**
-`sync`, because `ODDRX2F` toggles the outgoing clock twice per `sync` cycle. A
-sweep indexed by `sync` would compare a part running at 120 MHz against one
-running at 240 and call it a PHY comparison. Every rung here is a CK, and both
-PHYs are built for each rung -- non-DQS at `sync = CK`, DQS at `sync = CK/2`.
+`HyperRAMPHY` clocks the part at `sync`, so every rung here is a CK and
+`sync = CK`.
 
 ## Why a failure has to be characterised, not just counted
 
 The recorded traps on this interface all produced *plausible wrong answers*
 rather than failures, so "it passed" is a claim that needs support:
 
-  * **BURSTDET** separates a working strobe from a fixed-latency count that
-    happened to land right. A DQS rung that passes with BURSTDET clear has
-    demonstrated nothing about DQS.
   * **The error count, not a flag.** One bad word in ten million and ten million
     bad words are different faults; only the second means "too fast".
   * **The first mismatch, kept with its address.** A half-word slip, a stuck
@@ -66,14 +60,13 @@ from devlog import emit  # noqa: E402
 from hyperram.hyperram_ceiling_top import (  # noqa: E402
     APPLET_ID, BURST_WORDS, DIE_PRESENT, REG_BAD_GOT, REG_BAD_INDEX,
     REG_BAD_WANT, REG_CAPTURE_ADDR, REG_CAPTURE_DATA, REG_CLOCK, REG_CONFIG,
-    REG_CONTROL, REG_DIE, REG_ERRORS, REG_ID, REG_READCLKSEL,
+    REG_CONTROL, REG_DIE, REG_ERRORS, REG_ID,
     REG_READ_CYCLES, REG_STATUS, REG_WORDS,
     REG_WRITE_CYCLES, solve_pll)
 
-# The ladder, in device CK. Starts at 120 -- the rate the non-DQS path is
-# already verified at, so the sweep begins from a known-good rung rather than
-# from a guess -- and every rung is reachable by BOTH paths (non-DQS needs
-# `sync` = CK, DQS needs `sync` = CK/2 with an even CLKOP_DIV).
+# The ladder, in device CK. Starts at 120 -- the rate the path is already
+# verified at, so the sweep begins from a known-good rung rather than from a
+# guess.
 #
 # The part is rated 166 MHz. Rungs above it are the question the user asked, not
 # an assumption that they will work.
@@ -93,22 +86,21 @@ MAX_POLLS = 4000
 MASK32 = 0xFFFF_FFFF
 
 
-def rungs(ck_list, paths):
-    """(ck, dqs, sync) for each rung each PHY can actually reach."""
+def rungs(ck_list):
+    """(ck, sync) for each rung the PLL can actually reach."""
     out = []
     for ck in ck_list:
-        for dqs in paths:
-            sync = ck / 2 if dqs else float(ck)
-            # Asked of the solver rather than of a table: a rung the PLL cannot
-            # actually make would otherwise be built at whatever it produced
-            # instead, and reported under the frequency it was asked for.
-            if solve_pll(sync, fast_ratio=2 if dqs else None):
-                out.append((float(ck), dqs, sync))
+        sync = float(ck)
+        # Asked of the solver rather than of a table: a rung the PLL cannot
+        # actually make would otherwise be built at whatever it produced
+        # instead, and reported under the frequency it was asked for.
+        if solve_pll(sync):
+            out.append((float(ck), sync))
     return out
 
 
-def tag_of(ck, dqs):
-    return f"{'dqs' if dqs else 'sdr'}-ck{ck:g}"
+def tag_of(ck):
+    return f"sdr-ck{ck:g}"
 
 
 def timing_of(build_dir):
@@ -128,15 +120,15 @@ def timing_of(build_dir):
     return (verdict == "PASS", float(achieved), float(target), name)
 
 
-def build_one(ck, dqs, sync):
+def build_one(ck, sync):
     """Run yosys, nextpnr and ecppack for one rung. Never touches the board."""
-    out = BUILD_ROOT / tag_of(ck, dqs)
+    out = BUILD_ROOT / tag_of(ck)
     script = (
         "import sys\n"
         f"sys.path[:0]={[str(ROOT / 'gateware'), str(ROOT / 'gateware' / 'probes'), str(ROOT / 'repos' / 'apollo')]!r}\n"
         "from hyperram.hyperram_ceiling_top import HyperRAMCeiling\n"
         "from board import CynthionPlatformRev1D4\n"
-        f"d = HyperRAMCeiling(sync_mhz={sync!r}, dqs={dqs!r})\n"
+        f"d = HyperRAMCeiling(sync_mhz={sync!r})\n"
         "CynthionPlatformRev1D4().build(d, build_dir=%r, do_program=False)\n"
         "print('BUILD OK')\n" % str(out)
     )
@@ -280,12 +272,12 @@ def poll(dut, target_words, sync_hz, bytes_per_word):
     }
 
 
-def run_one(ck, dqs, sync, target_words, readclksel=0b010):
+def run_one(ck, sync, target_words):
     """Configure this rung and measure it. Returns a result dict."""
-    tag = tag_of(ck, dqs)
+    tag = tag_of(ck)
     build_dir = BUILD_ROOT / tag
     bitstream = build_dir / "top.bit"
-    result = {"ck_mhz": ck, "dqs": dqs, "sync_mhz": sync, "tag": tag,
+    result = {"ck_mhz": ck, "sync_mhz": sync, "tag": tag,
               "verdict": "incomplete"}
 
     tim = timing_of(build_dir)
@@ -343,9 +335,6 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
         emit(f"  {tag}: applet {applet:#010x}, expected "
              f"{APPLET_ID:#010x} -- refusing to measure")
         return result
-
-    dut.registers.register_write(REG_READCLKSEL, readclksel)
-    result["readclksel"] = readclksel if dqs else None
 
     # The gateware states the clock it was built for. Checked against the host's
     # own idea rather than assumed: a rate computed from a requested frequency
@@ -413,9 +402,6 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     result.update(window)
     result["die_before"] = die_before & 0x3F if die_before & DIE_PRESENT else None
     result["die_after"] = die_after & 0x3F if die_after & DIE_PRESENT else None
-    result["dll_locked"] = bool(status & (1 << 4))
-    result["dll_ready"] = bool(status & (1 << 5))
-    result["burstdet"] = bool(status & (1 << 6))
     result["passes"] = (status >> 16) & 0xFFFF
 
     # Theoretical: eight data lines, DDR, at the part's own clock -- two bytes
@@ -469,13 +455,11 @@ def run_one(ck, dqs, sync, target_words, readclksel=0b010):
     result["error_rate"] = rate
 
     emit(
- f"  CK {ck:>5.1f} {'DQS' if dqs else 'SDR':>3} sync {sync:>6.1f}  "
- f"phase {readclksel if dqs else '-'}  "
+ f"  CK {ck:>5.1f} sync {sync:>6.1f}  "
  f"read {result['read_mbps']:>6.1f} MB/s ({result['read_pct']:>4.1f}%)  "
  f"write {result['write_mbps']:>6.1f}  "
  f"words {window['words']:>11,}  errors {window['errors']:>11,}  "
  f"ctrl {'ok' if result['negative_control']['passed'] else 'FAIL'}  "
- f"{'BD' if result['burstdet'] else '--'}  "
  f"die {result['die_before']}->{result['die_after']}  "
  f"{result['verdict']}")
     if "first_bad" in result:
@@ -514,13 +498,8 @@ def main():
     parser.add_argument("--run", action="store_true", help="run only")
     parser.add_argument("--ck", type=float, nargs="+", default=DEFAULT_CK,
                         help="device CK rungs, MHz")
-    parser.add_argument("--paths", nargs="+", default=["sdr", "dqs"],
-                        choices=["sdr", "dqs"])
     parser.add_argument("--words", type=int, default=DEFAULT_WORDS,
                         help="words per rung before a verdict")
-    parser.add_argument("--readclksel", type=int, nargs="+", default=[0b010],
-                        choices=range(8),
-                        help="DQSBUFM read phases to measure (default: 2)")
     parser.add_argument("--jobs", type=int, default=8,
                         help="parallel builds; the board is not involved")
     args = parser.parse_args()
@@ -528,8 +507,7 @@ def main():
     do_build = args.build or not args.run
     do_run = args.run or not args.build
 
-    paths = [p == "dqs" for p in args.paths]
-    ladder = rungs(args.ck, paths)
+    ladder = rungs(args.ck)
 
     BUILD_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -543,44 +521,38 @@ def main():
              f"a time -- the board is not involved")
         built = {}
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = {pool.submit(build_one, ck, dqs, sync):
-                       (ck, dqs, sync) for ck, dqs, sync in ladder}
-            for future, (ck, dqs, sync) in futures.items():
+            futures = {pool.submit(build_one, ck, sync):
+                       (ck, sync) for ck, sync in ladder}
+            for future, (ck, sync) in futures.items():
                 ok, out, _ = future.result()
-                built[(ck, dqs)] = ok
+                built[ck] = ok
                 tim = timing_of(out)
                 note = ""
                 if tim:
                     note = (f"{'MET' if tim[0] else 'FAIL'} "
                             f"{tim[1]:.1f}/{tim[2]:.1f} MHz on {tim[3]}")
-                emit(f"  {tag_of(ck, dqs):>12}  sync {sync:>6.1f}  "
+                emit(f"  {tag_of(ck):>12}  sync {sync:>6.1f}  "
                      f"{'built' if ok else 'BUILD FAILED':<12} {note}")
 
     results = []
     if do_run:
         emit("\nrunning, ascending CK -- each rung is configured "
              "into SRAM, which a power cycle undoes")
-        for ck, dqs, sync in sorted(ladder, key=lambda r: (r[1], r[0])):
-            phases = args.readclksel if dqs else [0b010]
-            for phase in phases:
-                results.append(run_one(ck, dqs, sync, args.words,
-                                       readclksel=phase))
+        for ck, sync in sorted(ladder):
+            results.append(run_one(ck, sync, args.words))
 
         RESULTS.write_text(json.dumps(results, indent=2))
         emit(f"\nresults: {RESULTS}")
 
-        for dqs in sorted(set(d for _, d, _ in ladder)):
-            good = [r for r in results
-                    if r["dqs"] == dqs and r["verdict"] == "pass"]
-            name = "DQS" if dqs else "non-DQS"
-            if good:
-                best = max(good, key=lambda r: r["ck_mhz"])
-                emit(f"{name}: highest clean CK "
-                     f"{best['ck_mhz']:g} MHz, "
-                     f"{best['read_mbps']:.1f} MB/s read "
-                     f"({best['read_pct']:.1f}% of theoretical)")
-            else:
-                emit(f"{name}: no rung verified clean")
+        good = [r for r in results if r["verdict"] == "pass"]
+        if good:
+            best = max(good, key=lambda r: r["ck_mhz"])
+            emit(f"highest clean CK "
+                 f"{best['ck_mhz']:g} MHz, "
+                 f"{best['read_mbps']:.1f} MB/s read "
+                 f"({best['read_pct']:.1f}% of theoretical)")
+        else:
+            emit("no rung verified clean")
 
     return 0
 

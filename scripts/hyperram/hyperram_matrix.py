@@ -137,7 +137,7 @@ def main():
                         help="seconds to wait for one 128-cell sweep (it takes <1)")
     args = parser.parse_args()
 
-    rungs = args.ck if args.ck else reachable_ck(100, 200, dqs=True)
+    rungs = args.ck if args.ck else reachable_ck(100, 200)
     emit(f"hyperram matrix: {len(rungs)} CK rungs x 128 cells, "
          f"{args.passes} passes each")
     emit(f"  CK: {', '.join(f'{c:g}' for c in rungs)}")
