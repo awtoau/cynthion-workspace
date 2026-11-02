@@ -27,6 +27,14 @@ const RX_LEVEL: usize = 0x12;
 const TX_DATA: usize = 0x14;
 const TX_LAST: usize = 0x15;
 const TX_LEVEL: usize = 0x17;
+const TR_CTRL: usize = 0x18;
+const TR_STATE: usize = 0x19;
+const TR_CNT_LO: usize = 0x1a;
+const TR_CNT_HI: usize = 0x1b;
+const TR_IDX_LO: usize = 0x1c;
+const TR_IDX_HI: usize = 0x1d;
+const TR_SEL: usize = 0x1e;
+const TR_DATA: usize = 0x1f;
 
 const CTRL_BUS_RESET: u8 = 1 << 0;
 const CTRL_START: u8 = 1 << 1;
@@ -526,5 +534,33 @@ impl Host {
             return Ok(None);
         }
         Ok(Some((tag & 1 != 0, r.rd(RX_DATA))))
+    }
+
+    /// Debug trace (CYNTHION_USB_TRACE build): write TR_CTRL.
+    pub fn trace_ctrl(&mut self, v: u8) -> Result<(), Error> {
+        self.regs()?.wr(TR_CTRL, v & 15);
+        Ok(())
+    }
+
+    /// `(state, present, entries)`.
+    pub fn trace_status(&self) -> Result<(u8, bool, u16), Error> {
+        let r = self.regs()?;
+        let s = r.rd(TR_STATE);
+        Ok((s & 3, s & 8 != 0, r.rd(TR_CNT_LO) as u16 | (r.rd(TR_CNT_HI) as u16) << 8))
+    }
+
+    /// One 36-bit trace entry as 5 little-endian bytes. Load wait: the usb-domain
+    /// latch takes ~8 cycles (0.15 us); 5 us is 30x.
+    pub fn trace_entry(&self, i: u16) -> Result<[u8; 5], Error> {
+        let r = self.regs()?;
+        r.wr(TR_IDX_LO, i as u8);
+        r.wr(TR_IDX_HI, (i >> 8) as u8);
+        wait_until("trace load", 5, || r.rd(TR_STATE) & 4 == 0)?;
+        let mut out = [0u8; 5];
+        for (k, b) in out.iter_mut().enumerate() {
+            r.wr(TR_SEL, k as u8);
+            *b = r.rd(TR_DATA);
+        }
+        Ok(out)
     }
 }

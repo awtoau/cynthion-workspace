@@ -51,6 +51,13 @@ and the `regs_*` hand-off are ports, so aux/control can be instanced later.
     0x15 TX_LAST     w   push the last byte of a packet, then STP (raw)
     0x16 TX_CMD      w   push the last byte of a command, NO STP (raw register read)
     0x17 TX_LEVEL    r   TX FIFO entries (write-domain view)
+    0x18 TR_CTRL     w   [0] include bus-reset period [1] drop repeated cycles [2] arm now (else
+                         at the next `start`) [3] stop + clear (other bits ignored)
+    0x19 TR_STATE    r   [1:0] 0 idle 1 armed 2 recording 3 full  2 read busy  3 present
+    0x1a/0x1b TR_CNT r   entries recorded
+    0x1c/0x1d TR_IDX rw  entry to read; the HI write loads it (poll TR_STATE.2 clear)
+    0x1e TR_SEL      rw  byte of the loaded entry (0..4, little-endian)
+    0x1f TR_DATA     r   that byte
 
 ## FIFO entries
 - TX (10 bit): `{tag[1:0], byte}`; tag 0 data, 1 last+STP, 2 last without STP. `host` ignores tags.
@@ -65,6 +72,8 @@ and the `regs_*` hand-off are ports, so aux/control can be instanced later.
 - No completion strobe: the driver FSM edge-detects `idle` and raises `done` (and the IRQ).
 - NYET read as ACK: `RESP.nyet` from the first received PID. FLAGGED ONLY; PING is not issued.
 - Start while the SIE is not idle, or a response that never ends: `BUSY_DROP` / watchdog (`TIMEOUT`).
+- Trace (0x18..0x1f) exists only when built with `trace_depth` (CYNTHION_USB_TRACE=1); a
+  debug aid, absent from the shipping image (`TR_STATE.3` = 0).
 - `host` TX bytes flow into the SIE's own 512 B FIFO as written, so `clr_tx` does NOT remove
   them from there; the SIE sends whatever it holds at the next `start`. Stage, then start.
 """
@@ -74,6 +83,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from amaranth               import Module, Signal, Mux, Cat, ResetInserter, C
+from amaranth.lib.memory    import Memory
 from amaranth.lib           import wiring
 from amaranth.lib.cdc       import FFSynchronizer
 from amaranth.lib.fifo      import AsyncFIFO
@@ -102,6 +112,13 @@ REG_ADDR, REG_EP, REG_RESP = 0x08, 0x09, 0x0a
 REG_RXLEN_LO, REG_RXLEN_HI = 0x0c, 0x0d
 REG_RX_DATA, REG_RX_TAG, REG_RX_LEVEL = 0x10, 0x11, 0x12
 REG_TX_DATA, REG_TX_LAST, REG_TX_CMD, REG_TX_LEVEL = 0x14, 0x15, 0x16, 0x17
+REG_TR_CTRL, REG_TR_STATE, REG_TR_CNT_LO, REG_TR_CNT_HI = 0x18, 0x19, 0x1a, 0x1b
+REG_TR_IDX_LO, REG_TR_IDX_HI, REG_TR_SEL, REG_TR_DATA = 0x1c, 0x1d, 0x1e, 0x1f
+
+# Trace entry (36 bit): [7:0] data, [15:8] flags, [17:16] line state, [35:18] cycles
+# since the previous entry. Flags: dir nxt stp data_oe tx_valid rx_active rx_valid reset_active.
+TRACE_WIDTH = 36
+TR_IDLE, TR_ARMED, TR_REC, TR_FULL = 0, 1, 2, 3
 
 CTRL_BUS_RESET, CTRL_START, CTRL_CLR_TX, CTRL_CLR_RX = 1 << 0, 1 << 1, 1 << 2, 1 << 3
 
@@ -148,7 +165,8 @@ class UsbPort(wiring.Component):
 
     def __init__(self, *, name="target", fifo_depth=128, sie_fifo_depth=512,
                  switch_limit=SWITCH_LIMIT, init_limit=INIT_LIMIT,
-                 xfer_limit=XFER_LIMIT):
+                 xfer_limit=XFER_LIMIT, trace_depth=0):
+        self._trace_depth    = trace_depth
         self._name           = name
         self._fifo_depth     = fifo_depth
         self._sie_fifo_depth = sie_fifo_depth
@@ -188,6 +206,14 @@ class UsbPort(wiring.Component):
         self._tx_last  = csr.Register({"v": csr.Field(csr.action.W, 8)}, access="w")
         self._tx_cmd   = csr.Register({"v": csr.Field(csr.action.W, 8)}, access="w")
         self._tx_level = ro(("v", 8))
+        self._tr_ctrl  = csr.Register({"v": csr.Field(csr.action.W, 4)}, access="w")
+        self._tr_state = ro(("state", 2), ("busy", 1), ("present", 1))
+        self._tr_cnt_lo = ro(("v", 8))
+        self._tr_cnt_hi = ro(("v", 8))
+        self._tr_idx_lo = rw(8)
+        self._tr_idx_hi = rw(8)
+        self._tr_sel   = rw(3)
+        self._tr_data  = ro(("v", 8))
 
         builder = csr.Builder(addr_width=5, data_width=8)
         for reg_name, reg, offset in (
@@ -205,7 +231,15 @@ class UsbPort(wiring.Component):
                 ("tx_data", self._tx_data, REG_TX_DATA),
                 ("tx_last", self._tx_last, REG_TX_LAST),
                 ("tx_cmd", self._tx_cmd, REG_TX_CMD),
-                ("tx_level", self._tx_level, REG_TX_LEVEL)):
+                ("tx_level", self._tx_level, REG_TX_LEVEL),
+                ("tr_ctrl", self._tr_ctrl, REG_TR_CTRL),
+                ("tr_state", self._tr_state, REG_TR_STATE),
+                ("tr_cnt_lo", self._tr_cnt_lo, REG_TR_CNT_LO),
+                ("tr_cnt_hi", self._tr_cnt_hi, REG_TR_CNT_HI),
+                ("tr_idx_lo", self._tr_idx_lo, REG_TR_IDX_LO),
+                ("tr_idx_hi", self._tr_idx_hi, REG_TR_IDX_HI),
+                ("tr_sel", self._tr_sel, REG_TR_SEL),
+                ("tr_data", self._tr_data, REG_TR_DATA)):
             builder.add(reg_name, reg, offset=offset)
         self._bridge = csr.Bridge(builder.as_memory_map())
 
@@ -819,4 +853,123 @@ class UsbPort(wiring.Component):
             | (irq_en[2] & ev[1])
             | (irq_en[3] & (ev[2:8] != 0)))
 
+        # ============ trace (debug build only) ===========================
+        if self._trace_depth:
+            self._elaborate_trace(m, to_domain, sel_host, start_pulse, sie)
+        else:
+            m.d.comb += self._tr_state.f.present.r_data.eq(0)
+
         return m
+
+    def _elaborate_trace(self, m, to_domain, sel_host, start_pulse, sie):
+        """Cycle-stamped record of the ULPI pins and SIE strobes, read back by CSR."""
+        depth = self._trace_depth
+        abits = (depth - 1).bit_length()
+        mem = Memory(shape=TRACE_WIDTH, depth=depth, init=[])
+        m.submodules.trace_mem = mem
+        wport = mem.write_port(domain="usb")
+        rport = mem.read_port(domain="usb")
+
+        ctrl = self._tr_ctrl.f.v
+        tr_cmd = Signal(4)
+        tr_t = Signal()
+        stb_d = Signal(2)
+        m.d.sync += stb_d.eq(Cat(ctrl.w_stb, stb_d[0]))
+        with m.If(ctrl.w_stb):
+            m.d.sync += tr_cmd.eq(ctrl.w_data)
+        with m.If(stb_d[1]):     # the command bits cross two cycles before the toggle
+            m.d.sync += tr_t.eq(~tr_t)
+        cmd_u, t_u = to_domain(tr_cmd, "usb"), to_domain(tr_t, "usb")
+        t_prev = Signal()
+        m.d.usb += t_prev.eq(t_u)
+        new_cmd = Signal()
+        m.d.comb += new_cmd.eq(t_u != t_prev)
+
+        state = Signal(2)
+        inc_reset, compress = Signal(), Signal()
+        count = Signal(16)
+        since = Signal(18)
+        pin = self
+        reset_act = Signal()
+        m.d.comb += reset_act.eq(sel_host & sie.ctrl.status.reset_active)
+        data = Signal(8)
+        m.d.comb += data.eq(Mux(pin.dir_i, pin.data_i, pin.data_o))
+        flags = Cat(pin.dir_i, pin.nxt_i, pin.stp_o, pin.data_oe, sie.utmi.tx_valid,
+                    sie.utmi.rx_active, sie.utmi.rx_valid, reset_act)
+        ls = sie.utmi.line_state
+        ls_prev = Signal(2)
+        m.d.usb += ls_prev.eq(ls)
+        nd = Signal(18)
+        m.d.comb += nd.eq(Cat(data, flags, ls))
+        prev_nd, prev_ev = Signal(18), Signal()
+        ev = Signal()
+        m.d.comb += ev.eq(pin.dir_i | pin.nxt_i | pin.stp_o
+                          | (pin.data_oe & (pin.data_o != 0)) | (ls != ls_prev))
+        m.d.usb += [prev_nd.eq(nd), prev_ev.eq(ev)]
+        dup = Signal()
+        m.d.comb += dup.eq(compress & prev_ev & (prev_nd == nd))
+        gate = Signal()
+        m.d.comb += gate.eq(inc_reset | ~reset_act)
+
+        with m.If(new_cmd):
+            with m.If(cmd_u[3]):
+                m.d.usb += [state.eq(TR_IDLE), count.eq(0)]
+            with m.Else():
+                m.d.usb += [inc_reset.eq(cmd_u[0]), compress.eq(cmd_u[1]), count.eq(0),
+                            since.eq(0),
+                            state.eq(Mux(cmd_u[2], TR_REC, TR_ARMED))]
+        with m.Else():
+            with m.If((state == TR_ARMED) & start_pulse):
+                m.d.usb += [state.eq(TR_REC), since.eq(0)]
+            with m.If(state == TR_REC):
+                m.d.usb += since.eq(Mux(since == (1 << 18) - 1, since, since + 1))
+                with m.If(ev & gate & ~dup):
+                    m.d.comb += [wport.en.eq(1)]
+                    m.d.usb += [count.eq(count + 1), since.eq(1)]
+                    with m.If(count == depth - 1):
+                        m.d.usb += state.eq(TR_FULL)
+        m.d.comb += [wport.addr.eq(count[:abits]),
+                     wport.data.eq(Cat(nd, since))]
+
+        # Read side: sync writes the index, usb latches the word, sync reads bytes.
+        idx_lo, idx_hi = self._tr_idx_lo.f.v, self._tr_idx_hi.f.v
+        sel_w = self._tr_sel.f.v
+        idx_r, sel_r = Signal(16), Signal(3)
+        with m.If(idx_lo.w_stb):
+            m.d.sync += idx_r[0:8].eq(idx_lo.w_data)
+        with m.If(idx_hi.w_stb):
+            m.d.sync += idx_r[8:16].eq(idx_hi.w_data)
+        with m.If(sel_w.w_stb):
+            m.d.sync += sel_r.eq(sel_w.w_data)
+        m.d.comb += [idx_lo.r_data.eq(idx_r[0:8]), idx_hi.r_data.eq(idx_r[8:16]),
+                     sel_w.r_data.eq(sel_r)]
+        ld_t = Signal()
+        with m.If(idx_hi.w_stb):
+            m.d.sync += ld_t.eq(~ld_t)
+        ld_u = to_domain(ld_t, "usb")
+        idx_u = to_domain(idx_r, "usb")
+        # idx bits and the toggle cross separately (skew <= 1 cycle); latch 4 cycles on.
+        ld_prev, ack_t = Signal(), Signal()
+        ld_wait = Signal(3)
+        word = Signal(TRACE_WIDTH)
+        m.d.comb += [rport.addr.eq(idx_u[:abits]), rport.en.eq(1)]
+        m.d.usb += ld_prev.eq(ld_u)
+        with m.If(ld_u != ld_prev):
+            m.d.usb += ld_wait.eq(4)
+        with m.Elif(ld_wait != 0):
+            m.d.usb += ld_wait.eq(ld_wait - 1)
+            with m.If(ld_wait == 1):
+                m.d.usb += [word.eq(rport.data), ack_t.eq(ld_u)]
+        ack_s = to_domain(ack_t, "sync")
+        word_s = to_domain(word, "sync")
+        busy = Signal()
+        m.d.comb += busy.eq(ld_t != ack_s)
+        st_s = to_domain(state, "sync")
+        cnt_s = to_domain(count, "sync")
+        f = self._tr_state.f
+        m.d.comb += [
+            f.state.r_data.eq(st_s), f.busy.r_data.eq(busy), f.present.r_data.eq(1),
+            self._tr_cnt_lo.f.v.r_data.eq(cnt_s[0:8]),
+            self._tr_cnt_hi.f.v.r_data.eq(cnt_s[8:16]),
+            self._tr_data.f.v.r_data.eq((word_s >> (sel_r * 8))[0:8]),
+        ]
