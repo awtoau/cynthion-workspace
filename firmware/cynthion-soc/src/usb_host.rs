@@ -191,9 +191,31 @@ pub struct Pump {
     pub ticks: u32,
     /// Byte sum of everything received.
     pub sum: u32,
+    /// Ticks in transactions (token to handshake) and in draining the RX FIFO.
+    pub xact_ticks: u32,
+    pub fifo_ticks: u32,
     /// First wrong received byte: (offset, got, expected).
     pub bad: Option<(u32, u8, u8)>,
     pub err: Option<Error>,
+}
+
+/// What `pump_send` puts on the wire: the ramp, or AOAT frames the app's sink verifies.
+pub enum Gen {
+    Ramp(u8),
+    Aoat(crate::aoat::Aoat),
+}
+
+impl Gen {
+    fn fill(&mut self, buf: &mut [u8], off: u32) {
+        match self {
+            Gen::Ramp(seed) => {
+                for (i, b) in buf.iter_mut().enumerate() {
+                    *b = ramp(*seed, off + i as u32);
+                }
+            }
+            Gen::Aoat(a) => a.fill(buf),
+        }
+    }
 }
 
 /// Test stream: byte `off` = seed + off (aoa_testkit P_RAMP, counter at seed 0).
@@ -246,11 +268,14 @@ pub struct Host {
     pub ep_in: u8,
     pub ep_out: u8,
     naks: Cell<u32>,
+    /// Ticks spent in `transact` and in `read_rx`, summed by `stage`; a pump zeroes it.
+    prof: Cell<(u32, u32)>,
 }
 
 impl Host {
     pub const fn new(base: Option<usize>) -> Self {
-        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0, naks: Cell::new(0) }
+        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0, naks: Cell::new(0),
+               prof: Cell::new((0, 0)) }
     }
 
     pub fn addr(&self) -> Result<u8, Error> {
@@ -346,7 +371,10 @@ impl Host {
     /// Pop `len` payload bytes into `buf`; bytes beyond `buf` are discarded.
     fn read_rx(&self, r: Regs, buf: &mut [u8], len: u16) -> Result<usize, Error> {
         for i in 0..len as usize {
-            wait_until("rx fifo", FIFO_US, || r.rd(RX_TAG) & 2 != 0)?;
+            // Ready is the common case: no clock read unless the FIFO is empty.
+            if r.rd(RX_TAG) & 2 == 0 {
+                wait_until("rx fifo", FIFO_US, || r.rd(RX_TAG) & 2 != 0)?;
+            }
             let byte = r.rd(RX_DATA);
             if let Some(slot) = buf.get_mut(i) {
                 *slot = byte;
@@ -363,10 +391,20 @@ impl Host {
         let limit = clock::micros(limit_us);
         let mut errors = 0;
         loop {
+            let t0 = clock::now();
             let (resp, len) = self.transact(r, ty, ep, pid, out)?;
+            let t1 = clock::now();
+            let (x, f) = self.prof.get();
+            self.prof.set((x.wrapping_add(t0.elapsed(t1)), f));
             match resp {
                 RESP_ACK => {
-                    return if ty == TY_IN { self.read_rx(r, inbuf, len) } else { Ok(0) };
+                    if ty != TY_IN {
+                        return Ok(0);
+                    }
+                    let n = self.read_rx(r, inbuf, len);
+                    let (x, f) = self.prof.get();
+                    self.prof.set((x, f.wrapping_add(t1.elapsed(clock::now()))));
+                    return n;
                 }
                 RESP_NAK => self.naks.set(self.naks.get() + 1),
                 RESP_STALL => return Err(Error::Stall),
@@ -463,17 +501,26 @@ impl Host {
         }
     }
 
-    fn pump_send(&mut self, ep: u8, p: &mut Pump, len: u32, seed: u8, started: clock::Instant)
+    fn pump_send(&mut self, ep: u8, p: &mut Pump, len: u32, gen: &mut Gen, started: clock::Instant)
                  -> Result<(), Error> {
         let mps = self.bulk_mps()?;
         let mut buf = [0u8; 512];
-        let n = (len - p.bytes_out).min(mps as u32) as usize;
-        for (i, b) in buf[..n].iter_mut().enumerate() {
-            *b = ramp(seed, p.bytes_out + i as u32);
+        let mut n = (len - p.bytes_out).min(mps as u32) as usize;
+        if let Gen::Aoat(a) = gen {
+            if a.xfer {
+                n = n.min(a.frame_left() as usize);
+            }
         }
+        gen.fill(&mut buf[..n], p.bytes_out);
         self.bulk_out(ep, &buf[..n], Self::pump_left(started, "pump out")?)?;
         p.bytes_out += n as u32;
         p.packets += 1;
+        if let Gen::Aoat(a) = gen {
+            if a.xfer_zlp && a.frame_left() == a.frame_len() && a.frame_len() % mps as u32 == 0 {
+                self.bulk_out(ep, &[], Self::pump_left(started, "pump out zlp")?)?;
+                p.packets += 1;
+            }
+        }
         Ok(())
     }
 
@@ -482,12 +529,17 @@ impl Host {
         let mps = self.bulk_mps()?;
         let mut buf = [0u8; 512];
         let n = self.bulk_in(ep, &mut buf[..mps], Self::pump_left(started, "pump in")?)?;
-        for (i, &b) in buf[..n].iter().enumerate() {
-            p.sum = p.sum.wrapping_add(b as u32);
-            let at = p.bytes_in + i as u32;
-            if let Some(s) = seed {
-                if p.bad.is_none() && b != ramp(s, at) {
+        let mut sum = p.sum;
+        for &b in &buf[..n] {
+            sum = sum.wrapping_add(b as u32);
+        }
+        p.sum = sum;
+        if let (Some(s), None) = (seed, p.bad) {
+            for (i, &b) in buf[..n].iter().enumerate() {
+                let at = p.bytes_in + i as u32;
+                if b != ramp(s, at) {
                     p.bad = Some((at, b, ramp(s, at)));
+                    break;
                 }
             }
         }
@@ -497,11 +549,13 @@ impl Host {
     }
 
     fn pump_new() -> Pump {
-        Pump { bytes_out: 0, bytes_in: 0, packets: 0, naks: 0, ticks: 0, sum: 0, bad: None, err: None }
+        Pump { bytes_out: 0, bytes_in: 0, packets: 0, naks: 0, ticks: 0, sum: 0, xact_ticks: 0, fifo_ticks: 0,
+               bad: None, err: None }
     }
 
     fn pump_end(&self, mut p: Pump, naks0: u32, started: clock::Instant, r: Result<(), Error>) -> Pump {
         p.naks = self.naks.get() - naks0;
+        (p.xact_ticks, p.fifo_ticks) = self.prof.get();
         p.ticks = started.elapsed(clock::now());
         p.err = r.err();
         p
@@ -510,14 +564,31 @@ impl Host {
     /// `len` bytes of the ramp as consecutive bulk OUT packets; `zlp` ends a whole-packet
     /// multiple (or an empty transfer) with a zero-length packet.
     pub fn pump_out(&mut self, ep: u8, len: u32, seed: u8, zlp: bool) -> Result<Pump, Error> {
+        self.pump_stream(ep, len, Gen::Ramp(seed), zlp)
+    }
+
+    /// `pump_out` of whole AOAT frames (`len` a multiple of `frame`), verified by the app's sink.
+    pub fn pump_out_aoat(&mut self, ep: u8, len: u32, frame: u32, seed: u32, test: u16, xfer: bool,
+                         zlp: bool) -> Result<Pump, Error> {
+        if frame < crate::aoat::MIN_FRAME || len % frame != 0 {
+            return Err(Error::Bad("aoat: frame under 24 B or len not whole frames"));
+        }
+        let mut aoat = crate::aoat::Aoat::new(frame, len / frame, seed, test);
+        aoat.xfer = xfer;
+        aoat.xfer_zlp = xfer && zlp;
+        self.pump_stream(ep, len, Gen::Aoat(aoat), zlp && !xfer)
+    }
+
+    fn pump_stream(&mut self, ep: u8, len: u32, mut gen: Gen, zlp: bool) -> Result<Pump, Error> {
         let mps = self.bulk_mps()? as u32;
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
+        self.prof.set((0, 0));
         let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
         let mut r = Ok(());
         while r.is_ok() && p.bytes_out < len {
-            r = self.pump_send(ep, &mut p, len, seed, started);
+            r = self.pump_send(ep, &mut p, len, &mut gen, started);
         }
         if r.is_ok() && zlp && len % mps == 0 {
             r = Self::pump_left(started, "pump out").and_then(|left| self.bulk_out(ep, &[], left));
@@ -533,6 +604,7 @@ impl Host {
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
+        self.prof.set((0, 0));
         let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
         let mut r = Ok(());
         while r.is_ok() && p.bytes_in < len {
@@ -549,6 +621,8 @@ impl Host {
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
+        let mut gen = Gen::Ramp(seed);
+        self.prof.set((0, 0));
         let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
         let mut r = Ok(());
         while r.is_ok() && p.bytes_in < len {
@@ -556,7 +630,7 @@ impl Host {
             let end = p.bytes_in + chunk;
             let whole = chunk % mps == 0;
             while r.is_ok() && p.bytes_out < end {
-                r = self.pump_send(ep, &mut p, end, seed, started);
+                r = self.pump_send(ep, &mut p, end, &mut gen, started);
             }
             if r.is_ok() && whole && chunk < ECHO_CHUNK {
                 r = Self::pump_left(started, "echo zlp").and_then(|left| self.bulk_out(ep, &[], left));

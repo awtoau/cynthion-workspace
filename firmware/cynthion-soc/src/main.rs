@@ -89,6 +89,7 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr::{read_volatile, write_volatile};
 
+mod aoat;
 mod bench;
 // The HyperRAM BIST engine's driver (#226). Built into every image rather than
 // `#[cfg]`-gated: `Bist::present` reads the engine's ident and refuses to

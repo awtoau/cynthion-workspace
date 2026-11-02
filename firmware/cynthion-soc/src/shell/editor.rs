@@ -29,11 +29,11 @@ use crate::shell::rejoin::{explain, rejoin};
 use crate::shell::HELP;
 use crate::uart::Uart;
 
-/// Longest command line accepted. The old editor's buffer was 64.
-const COMMAND_LEN: usize = 64;
+/// Longest command line accepted: `usb target_a pump out 1 65536 1 aoat xfer zlp frame=4096 pattern=random test=1` is 97.
+const COMMAND_LEN: usize = 128;
 
 /// History ring, in bytes. Eight typical commands.
-const HISTORY_LEN: usize = 256;
+const HISTORY_LEN: usize = 512;
 
 /// `Uart` as an `embedded_io::Write`.
 ///

@@ -186,11 +186,31 @@ fn pump_args(args: &[u8]) -> Option<(u8, u32, Option<u8>, bool)> {
     for word in words {
         if word == b"zlp" {
             zlp = true;
+        } else if word == b"aoat" || word == b"xfer" || word.contains(&b'=') {
+            continue;
         } else {
             seed = Some(parse_decimal(word).filter(|&s| s < 256)? as u8);
         }
     }
     Some((ep, len, seed, zlp))
+}
+
+/// `aoat [xfer] [frame=N] [test=N]` after the pump words: (frame bytes, test id, one transfer per frame).
+fn aoat_opts(args: &[u8]) -> Option<Option<(u32, u16, bool)>> {
+    let words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
+    if !words.clone().any(|w| w == b"aoat") {
+        return Some(None);
+    }
+    let (mut frame, mut test) = (16384, 1);
+    let xfer = words.clone().any(|w| w == b"xfer");
+    for word in words {
+        match word.iter().position(|&b| b == b'=') {
+            Some(at) if &word[..at] == b"frame" => frame = parse_decimal(&word[at + 1..])?,
+            Some(at) if &word[..at] == b"test" => test = parse_decimal(&word[at + 1..]).filter(|&t| t < 65536)? as u16,
+            _ => {}
+        }
+    }
+    Some(Some((frame, test, xfer)))
 }
 
 fn report(uart: &mut Uart, what: &str, run: Result<usb_host::Pump, Error>) {
@@ -201,9 +221,10 @@ fn report(uart: &mut Uart, what: &str, run: Result<usb_host::Pump, Error>) {
     let us = crate::clock::to_micros(p.ticks).max(1);
     let bytes = (p.bytes_out + p.bytes_in) as u64;
     let rate = bytes * 100 / us as u64;
-    let _ = writeln!(uart, "{} out {} in {} bytes {} packets {} naks {} elapsed {} us {}.{:02} MB/s sum {:08x}",
+    let _ = writeln!(uart, "{} out {} in {} bytes {} packets {} naks {} elapsed {} us {}.{:02} MB/s sum {:08x} xact {} us fifo {} us",
                      what, p.bytes_out, p.bytes_in, bytes, p.packets, p.naks, us, rate / 100,
-                     rate % 100, p.sum);
+                     rate % 100, p.sum, crate::clock::to_micros(p.xact_ticks),
+                     crate::clock::to_micros(p.fifo_ticks));
     if let Some((at, got, want)) = p.bad {
         let _ = writeln!(uart, "mismatch at {} got {:02x} want {:02x}", at, got, want);
     }
@@ -218,12 +239,18 @@ fn pump(uart: &mut Uart, host: &mut Host, args: &[u8]) {
         None => (args, &args[..0]),
     };
     match (dir, pump_args(rest)) {
-        (b"out", Some((ep, len, seed, zlp))) => {
-            report(uart, "pump out", host.pump_out(ep, len, seed.unwrap_or(1), zlp))
-        }
+        (b"out", Some((ep, len, seed, zlp))) => match aoat_opts(rest) {
+            Some(Some((frame, test, xfer))) => report(
+                uart, "pump out",
+                host.pump_out_aoat(ep, len, frame, seed.unwrap_or(1) as u32, test, xfer, zlp)),
+            Some(None) => report(uart, "pump out", host.pump_out(ep, len, seed.unwrap_or(1), zlp)),
+            None => {
+                let _ = writeln!(uart, "usage: ... aoat [xfer] [frame=N] [test=N]");
+            }
+        },
         (b"in", Some((ep, len, seed, _))) => report(uart, "pump in", host.pump_in(ep, len, seed)),
         _ => {
-            let _ = writeln!(uart, "usage: usb <port> pump out <ep> <len> [seed] [zlp] | in <ep> <len> [seed]");
+            let _ = writeln!(uart, "usage: usb <port> pump out <ep> <len> [seed] [zlp] [aoat ..] | in <ep> <len> [seed]");
         }
     }
 }

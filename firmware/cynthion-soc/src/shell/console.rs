@@ -475,7 +475,7 @@ impl Shell {
 }
 
 /// The shadowed line's capacity, matching the editor's own command buffer.
-const LINE: usize = 64;
+const LINE: usize = 128;
 
 /// What one byte turned out to mean.
 ///
