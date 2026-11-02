@@ -41,8 +41,19 @@
 2. **Full buffer: stall the source or drop, configurable.** A CSR policy (`stall` | `drop`); `drop` writes an overflow marker and counts dropped bytes/packets.
 3. **Source: both** the passive `target_phy` tap and the host engine's RX FIFO, selectable by CSR. (Capturing both at once would need two compressors: not decided.)
 4. **PC path: out of scope for now**; whatever works first.
-5. **Pre-compression tap size: open, needs analysis.** Dan's note: status arrives over the data. ULPI inserts RXCMD status bytes (line state, RxActive/RxError, VBUS state) into the receive byte stream, so the RISC-V tap must sit on the framed *event* stream, not on raw data bytes. Analysis in progress: what the RISC-V needs to see, per event rate, and the resulting depth.
+5. **Pre-compression tap: counters + status + event log + packet-header ring (design B), about 1 KiB.** Analysis (2026-11-02, from the analyzer and GUH sources):
+   - **Dan's premise is true on the wire and false at every tap point in the repo.** ULPI sends status as RXCMD bytes inside the receive stream (LineState bits 1:0, VbusState 3:2, RxEvent 5:4, id_digital 6; the USB3343 has no interrupt pin, so events are in band). But `UTMITranslator` consumes RXCMD before the analyzer or GUH see anything: the framer gets `rx_data` / `rx_valid` / `rx_active` only, and status is latched into level signals. So the tap goes on the **framed stream**, never on raw ULPI.
+   - **Upstream records** (reuse them): packet = 16-bit length + 16-bit timestamp + bytes (4-byte header); event = `0xFF`, code, ts16 (4 bytes, codes 1..30: start/stop, speed, line state, VBUS, attach, reset, chirp, suspend/resume). The 16-bit timestamp wraps every 1.09 ms; a `NONE` event is written on wrap.
+   - **Lost before framing today:** `rx_error` (LED only), `host_disconnect`, `id_digital`, `session_end`; speed and direction are not in the packet record.
+   - **Tap content:** (a) counters (packets, bytes, per-PID, SOF, NAK, RxError, drops, overflows); (b) a live status CSR snapshot (raw line state, VbusState, host_disconnect, speed, rx_active, last RXCMD); (c) a **64-event log**, 4 B each (the upstream event record); (d) a **32-packet header ring**, 16 B each (pid, len, ts16, error flag, source/direction, first 8 bytes). Counters are read with a sequence counter for a consistent snapshot; the event log drains by interrupt.
+   - **No byte ring.** At 60 MB/s a 2 KiB block is 34 us of history: it cannot serve a polling RISC-V (a 1 ms poll needs ~60 KiB). A byte ring only makes sense as a trigger-frozen snapshot.
+   - **Why it is small:** a HS IN/NAK storm is ~25 MB/s of records; no tap can hold history, only "latest" plus loss-free counters. Status events are low-rate (tens per second; a reset/chirp burst is ~10-100 events in a few ms), so a 64-event log never overruns.
+   - **Compressor input is the framed records**, not bytes. Status events stay inline as the same 4-byte event records so ordering is exact. Block header carries first timestamp, speed and a counter snapshot. Under the `drop` policy packets are dropped and **events are kept**.
+   - **Framer gaps to fill:** an RxError flag on the packet record, a direction/source tag, speed in the block header, a wider timestamp (or keep the `NONE` wrap records).
+   - **Two sources, two framers feeding one compressor interface:** the passive `target_phy` needs a `UTMITranslator` placed behind it (it has none today: register path only) and infers direction from PID context; the host engine knows its own TX, so its framer synthesises records (token from TX, response from RX) from an 8-bit RX FIFO that has no packet boundaries.
+   - **Confirming test:** simulate a worst-case IN/NAK storm plus a reset/chirp burst through translator, framer and tap: the event log never overruns and counters stay consistent with packet totals. Then measure real RxError and mid-packet RXCMD rates on `target_phy` (UNSURE if non-zero).
+   - UNVERIFIED: the SoC's current BRAM count (49 of 56 was the 2026-08-12 figure; run `./dev.py metrics report`), the exact chirp event count.
 
 ## Open
-- Tap content and depth (item 5).
+- Confirm the tap by simulation (item 5).
 - Simultaneous capture from both sources.
