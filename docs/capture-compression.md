@@ -23,17 +23,15 @@
 - **No-expansion guarantee:** if a block would not shrink it is stored raw. Worst-case output is input plus a small header, so the writer's worst-case rate is the raw rate (compression improves the average only; backpressure/drop policy still needed: drop with an overflow marker and a counter).
 - **Decompressor in gateware:** `block number -> uncompressed bytes` through a read-only CSR window/FIFO to the RISC-V, and (later) as the stream to the PC. The RISC-V never runs a codec.
 
-## Algorithm: what to pick, and how to decide
-| option | what it removes | cost | verdict |
-|---|---|---|---|
-| packet-aware: elide repeated SOF/keepalive, RLE idle/repeated bytes, repeated-packet dedupe (hash of previous), delta timestamps | the dominant redundancy in USB traces (polling NAK storms, SOF, idle, repeated tokens) | LUTs only, 1 B/clk, no BRAM | **stage 1** |
-| byte LZ (LZ4-style, 256-1024 B window) | repeated structured payloads (DUML frames, descriptors) | window RAM (BRAM or LUTRAM), match logic | stage 2 only if stage 1's ratio is poor and BRAM allows |
-| deflate / zstd | most | far too large | no |
-- **Decide with data, not by argument:** an offline harness runs the candidate codecs on real captures (awto-dji `captures/` AOA streams, bench-app AOAT streams, Packetry exports) and synthetic worst cases, and reports ratio per codec. Hardware only after that.
-- Note: address-resolvable test data (AOAT `addr` pattern) compresses poorly by design; repeated DUML frames compress well. Report both.
+## Codec: LZ4 block format, pluggable (Dan, 2026-11-02: "use it, don't analyse")
+- **LZ4 block format** (token = 4-bit literal length | 4-bit match length, literals, 16-bit little-endian offset, 255-chain length extensions; min match 4; last 5 bytes literal), with a **history window of 256-1024 B**, a build-time parameter (default 1024 to match the 1 KiB block: offsets never exceed the block). Because it is the standard block format, any software LZ4 decoder reads our blocks and our decompressor reads any LZ4 encoder's output within the window, which gives free test vectors and a PC-side decode path.
+- **Pluggable:** a fixed streaming codec interface (bytes in with `last`, bytes out with `last`, a block-size limit) and a registry keyed by a codec id stored in each block's index entry (`0` raw/stored, `1` lz4; ids reserved for later codecs, e.g. a packet-aware RLE). `comp_mode` CSR selects the writer's codec; the reader dispatches on the block's id, so mode changes at a block boundary and old blocks stay readable.
+- **No-expansion rule stays:** a block that does not shrink is stored raw (id 0).
+- Memory (estimates, to be measured by synthesis of the module): compressor = history window + hash table (1 DP16KD each); decompressor = window (1 DP16KD); the ~7 spare blocks also have to hold the tap. If the budget bites, the window shrinks (256 B) before anything else changes.
+- Throughput target: one input byte per clock sustained on typical traffic (60 MB/s at 60 MHz); the module reports its measured worst-case bytes/clock in simulation. Cells only are reported; no timing figures.
 
 ## Verification
-- Python reference codec = the spec. Gateware compressor and decompressor are checked bit-exact against it in simulation: round trip on real traces, zero-length packets, all-zero/all-ones/alternating, random, max-length, block-boundary cases, mode switching mid-stream, overflow/drop markers.
+- The `lz4` block format is the spec; a small Python reference (and the `lz4` library when installed) is the oracle. Gateware compressor and decompressor are checked bit-exact against it in simulation: round trip on real traces, zero-length packets, all-zero/all-ones/alternating, random, max-length, block-boundary cases, mode switching mid-stream, overflow/drop markers.
 - Same sim harness style as `scripts/soc/` (registered in `soc_sims.py`).
 
 ## Decisions (Dan, 2026-11-02)
