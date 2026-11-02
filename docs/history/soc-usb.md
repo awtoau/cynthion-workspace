@@ -4696,3 +4696,1434 @@ upstream does, so we have to simulate what they instrument.
 **Needs hardware we lack.** Do not port. Mine `ranges.py`, `selftest.py` and the
 `Jenkinsfile` for specification, and close it.
 
+
+---
+
+## docs/apollo_samd11_mcu/: retired UART-watchdog / SPI-on-PA08-PA09 plans, and the first drafts of the kept docs (issues #15, #33, #53, #55, #56, #61, #65)
+
+### Source: docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md
+
+# Implementation Plan - Cynthion Serial Architecture Redesign
+
+**Status**: Ready for Phase 1  
+
+## Phase Overview
+
+| Phase | Task | Goal | Blockers |
+|-------|------|------|----------|
+| **1** | Toolchain Build | Get complete build working (firmware + gateware) | Resolve toolchain issues |
+| **2** | Apollo Firmware Fixes | DFU buffers, races, dual CDC ports | See Apollo Fixes section |
+| **3** | JTAG Always Available | Separate JTAG from moondancer control | Requires Phase 2 |
+| **4** | FPGA Stub Test | Minimal gateware, test serial path | Requires Phase 1 |
+| **5** | moondancer Diagnostic | Serial-only output, heartbeat protocol | Requires Phase 4 |
+| **6** | Serial Loop Test | AUX/TARGET/CONTROL port verification | Requires Phase 5 |
+| **7** | Full moondancer | Facedancer with serial-only architecture | Requires Phase 6 |
+| **8** | UART Watchdog | PA03/PA04 INT-based timeout detection | Requires Phase 7 |
+
+## Phase 1: Toolchain Build
+
+**Objective**: Get complete clean build of Apollo firmware, moondancer firmware, and gateware.
+
+**Status snapshot (2026-07-22)**:
+- Tracker issue: [#55] (https://github.com/awtoau/cynthion-workspace/issues/55)
+
+### P1.1: Environment Setup
+- [ ] Run prerequisite validation and environment setup via the canonical install flow
+  (`./scripts/install.py prereqs`, then setup as needed)
+
+**Commands to run**:
+```bash
+./scripts/install.py prereqs
+```
+
+### P1.2: Apollo Firmware Build
+- [ ] Clean build of Apollo firmware for Cynthion d11
+- [ ] Identify any compiler warnings/errors
+- [ ] Document build time, binary size
+- [ ] Verify firmware produces .elf/.bin artifacts
+
+Use the canonical workspace entry points (`cyn apollo build` or
+`./scripts/install.py setup`) rather than direct per-repo build commands here.
+
+### P1.3: moondancer Firmware Build
+- [ ] Clean build of moondancer RISC-V firmware
+- [ ] Identify any compiler warnings/errors
+- [ ] Document build time, binary size
+- [ ] Verify firmware produces .elf artifact
+
+**Command**:
+```bash
+cd awto-cynthion/firmware/moondancer && cargo build --release
+```
+
+### P1.4: Gateware Build (Analyzer)
+- [ ] Build analyzer gateware bitstream
+- [ ] Identify synthesis/place&route warnings
+- [ ] Document build time
+- [ ] Verify .bit artifact produced
+
+**Command**:
+```bash
+cd awto-cynthion/cynthion/python && python -m cynthion.gateware.analyzer.top --dry-run
+```
+
+### P1.5: Gateware Build (Facedancer)
+- [ ] Build facedancer gateware bitstream
+- [ ] Identify synthesis issues
+- [ ] Document build time
+- [ ] Verify .bit artifact produced
+
+**Command**:
+```bash
+cd awto-cynthion/cynthion/python && python -m cynthion.gateware.facedancer.top --dry-run
+```
+
+### P1.6: Document Build Issues
+- [ ] List all warnings/errors encountered
+- [ ] Categorize: toolchain version, dependency, code issue
+- [ ] Note any timeouts or resource exhaustion
+- [ ] Propose fixes for Phase 2+
+
+## Phase 2: Apollo Firmware Fixes
+
+**Objective**: Address DFU buffers, potential races, dual CDC serial ports.
+
+Mode-exclusivity design reference:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
+### P2.1: DFU Memory Buffer Optimization
+- [ ] Review current JTAG buffer sizing (256 bytes fixed)
+- [ ] Review DFU descriptor (4096 bytes configured)
+- [ ] Implement DFU memory pool for dynamic allocation
+- [ ] Benchmark: stack usage, timing, throughput
+
+**Files**:
+- `awto-apollo/firmware/src/jtag.c` — JTAG buffers
+- `awto-apollo/firmware/src/mcu/samd11/usb_descriptors.c` — DFU descriptor
+
+### P2.2: Race Condition Analysis
+- [ ] Review round-robin scheduler in main.c
+- [ ] Identify potential races between tud_task(), fpga_adv_task()
+- [ ] Identify potential races between UART operations and USB control
+- [ ] Add synchronization primitives where needed (atomic flags, spinlocks)
+
+**Files**:
+- `awto-apollo/firmware/src/main.c` — scheduler loop
+- `awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` — FPGA_ADV task
+- `awto-apollo/firmware/src/vendor.c` — USB control request handlers
+
+### P2.3: Dual CDC Interface (JTAG + Console)
+- [ ] Add second CDC interface to USB descriptors
+- [ ] Map /dev/ttyACM0 → JTAG (debug console)
+- [ ] Map /dev/ttyACM1 → Apollo console (moondancer relay)
+- [ ] Route UART input/output to correct CDC interface
+
+Current status:
+- Primary tracking is in [#55] (https://github.com/awtoau/cynthion-workspace/issues/55).
+- Earlier dual-CDC feasibility work is historical context from
+  [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) (closed as deferred).
+- If promoting the near-working second-port path, open a new child issue under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55).
+
+**Files**:
+- `awto-apollo/firmware/src/mcu/samd11/usb_descriptors.c` — dual CDC setup
+- `awto-apollo/firmware/src/console.c` — console output routing
+
+## Phase 3-8: Implementation
+
+See [../../debris/docs/apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired) for details on:
+- Phase 3: JTAG always available (separate from moondancer)
+- Phase 4: FPGA stub gateware test
+- Phase 5: moondancer diagnostic serial build
+- Phase 6: Serial loop verification
+- Phase 7: Full moondancer integration
+- Phase 8: UART watchdog on PA03/PA04
+
+## Success Criteria
+
+Phase 1 complete when:
+- [ ] Apollo firmware builds without errors
+- [ ] moondancer firmware builds without errors
+- [ ] Analyzer gateware elaborates without errors
+- [ ] Facedancer gateware elaborates without errors
+- [ ] No Python 2 code paths used
+- [ ] Build times documented
+
+### Source: docs/apollo_samd11_mcu/apollo_watchdog_architecture.md
+
+## Apollo Watchdog Architecture (Phase 3)
+
+### Problem
+Apollo (SAMD11 ARM Cortex-M0+ MCU) and Moondancer (RISC-V softcore on ECP5 FPGA) need robust supervision:
+- Currently: no watchdog protection
+- Risk: firmware hangs, no recovery mechanism
+- Impact: requires manual device restart
+
+### Apollo-Specific Solution: ARM Supervisor
+Apollo becomes the watchdog for moondancer:
+1. moondancer sends periodic "heartbeat" to Apollo
+2. Apollo monitors heartbeat over serial
+3. If heartbeat lost → Apollo asserts reset
+4. moondancer automatically restarts
+
+### Benefits
+- ✓ No additional hardware needed
+- ✓ Apollo (always-on) supervises moondancer
+- ✓ Automatic recovery on firmware hang
+- ✓ Future: can log reboot events
+
+### Implementation Phases
+1. **Phase 3a:** Serial heartbeat protocol design
+2. **Phase 3b:** Apollo supervisor firmware
+3. **Phase 3c:** moondancer integration (send heartbeat)
+4. **Phase 3d:** Testing & validation
+
+See [../../debris/docs/apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired) for the original proposal. The shipping link is the FPGA_ADV sideband:
+[`../chips/cynone-sideband.md`] (../chips/cynone-sideband.md).
+
+---
+
+### Source: docs/apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md
+
+## Apollo UART/SPI Design Conflict Analysis
+
+**Status**: Phase 2 Design Review  
+**Related Issues**: [#15] (https://github.com/awtoau/cynthion-workspace/issues/15), [#33] (https://github.com/awtoau/cynthion-workspace/issues/33)  
+**Reference Docs**: 
+- [`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md) — proposed UART redesign, **retired**
+- [`cynthion_architecture_scan_2026_05_22.md`] (cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
+- [`apollo_code_review.md`] (apollo_code_review.md) — Phase 2 code review findings
+
+### The Problem
+
+**Current Architecture Vulnerability** (Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15)):
+- moondancer enables `FPGA_ADV` pulse-train to request USB port
+- Apollo counts rising edges (>2 in 200ms) and surrenders CONTROL USB
+- **If moondancer crashes**: Advertiser stays enabled → Host loses all USB access
+- **Recovery**: Power cycle required
+
+**Current Pin Conflict**:
+- UART uses PA11/PA14 (same as JTAG TMS/TDI)
+- Forces choice between UART console debugging and JTAG access
+- Limits diagnostic capability
+
+### Hardware: ATSAMD11D14A
+
+**Pin Summary** (board-level pin usage):
+```
+ATSAMD11D14A @ 48 MHz, 4KB SRAM, 16KB flash
+
+Used Pins (currently):
+├── PA03  ← FPGA_INITN (status input)
+├── PA04  ← FPGA_DONE (status input)
+├── PA06  ← USB_SWITCH (mux control)
+├── PA08  → FPGA_PROGRAM (reset trigger, post-bootup only)
+├── PA09  ← FPGA_ADV (pulse-train input for USB negotiation)
+├── PA10  ← TDO (JTAG data out)
+├── PA11  ← TMS (JTAG mode select) [CONFLICT: also UART RX]
+├── PA14  → TDI (JTAG data in) [CONFLICT: also UART TX]
+├── PA15  → TCK (JTAG clock)
+├── PA16-PA17, PA22-PA23, PA27 → LEDs (5× blue/pink)
+
+Unassigned:
+├── PA00, PA01, PA02, PA05, PA07, PA12, PA13, PA18-PA21, PA24-PA26, PA28-PA31
+│   (Availability depends on the exact package and board routing.)
+└── PA05  ? CONTROL_RESET_DETECT (not currently defined in firmware)
+```
+
+### SERCOM Peripheral Options
+
+**SERCOM0** (SPI JTAG — already configured):
+```c
+// File: src/boards/cynthion_d11/spi.c:44-47
+PA14 → SERCOM0 PAD0 (MOSI)
+PA15 → SERCOM0 PAD1 (SCK)
+PA10 ← SERCOM0 PAD2 (MISO)
+```
+Status: ✅ Implemented, used for FPGA programming via bit-bang SPI
+
+**SERCOM2** (Dual-use candidate):
+```c
+// File: src/boards/cynthion_d11/uart.c:85-88 (CURRENT — conflicts with JTAG)
+PA11 ← SERCOM2 PAD3 (RX) [conflicts with TMS]
+PA14 → SERCOM2 PAD0 (TX) [conflicts with TDI]
+
+// File: src/boards/cynthion_d11/spi.c:92-95 (PLANNED but unimplemented)
+case SPI_FPGA_DEBUG:
+    _pm_enable_bus_clock(PM_BUS_APBC, SERCOM2);
+    _gclk_enable_channel(SERCOM2_GCLK_ID_CORE, GCLK_CLKCTRL_GEN_GCLK0_Val);
+    // TODO: pinmux never completed (line 56)
+```
+
+### Design Proposals
+
+#### Option 1: UART-Based Watchdog ⭐ **Recommended**
+
+**Reference**: [`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md) (retired)
+
+**Architecture**:
+```
+Apollo (SAMD11) ←→ moondancer (ECP5/VexRiscv)
+
+PA08 → SERCOM2 TX ──→ moondancer UART RX
+PA09 ← SERCOM2 RX ──← moondancer UART TX
+PA03 ← INT (watchdog) ← moondancer watchdog signal
+PA04 ← status ────── ← moondancer status output
+```
+
+**Benefits**:
+- ✅ Bidirectional communication (heartbeat/diagnostics)
+- ✅ Solves USB vulnerability: Apollo stays on CONTROL USB always
+- ✅ Frees JTAG pins PA11/PA14 for debugging
+- ✅ Hardware UART (reliable, no bit-banging)
+
+**Implementation** (3 phases):
+1. Apollo: Change SERCOM2 pinmux PA11/PA14 → PA08/PA09
+2. FPGA: Add UART slave CSR on facedancer gateware
+3. moondancer: Replace advertiser with UART response handler
+
+**Risks**:
+- ⚠️ Breaks backward compatibility (old UART on PA11/PA14 becomes unavailable)
+- ⚠️ FPGA gateware changes needed (adds complexity)
+
+---
+
+#### Option 2: Debug SPI on SERCOM2
+
+**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)] (cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
+
+**Architecture**:
+```
+Apollo (SAMD11) ←→ FPGA (ECP5)
+
+PA08 → SERCOM2 PAD0 (MOSI)
+PA09 → SERCOM2 PAD1 (SCK)
+PA10 ← SERCOM0 PAD2 (MISO) [shared with JTAG SPI]
+```
+
+**Status**: Clocking already configured, pinmux TODO
+
+**Benefits**:
+- ✅ Direct SPI access to FPGA debug/config
+- ✅ Uses existing infrastructure (clocking set up)
+- ✅ Can coexist with JTAG SPI (different chip selects)
+
+**Implementation**:
+1. Complete `src/boards/cynthion_d11/spi.c` case SPI_FPGA_DEBUG: pinmux
+2. Define PA08/PA09 SPI pin mappings in apollo_board.h
+3. Enable `_BOARD_HAS_DEBUG_SPI` for D11
+4. Test with existing debug tools
+
+**Risks**:
+- ⚠️ Still uses pulse-train for USB negotiation (vulnerability remains)
+- ⚠️ **Conflict with Option 1**: Both want PA08/PA09
+
+---
+
+#### Option 3: Hybrid (Requires SERCOM1 or SERCOM3-5)
+
+Move UART to different SERCOM to support both UART + Debug SPI:
+- Investigate PA00/PA01/PA05/PA07/PA12/PA13 for SERCOM1/SERCOM3-5 availability
+- Requires additional datasheet review for MUX options
+- More complex, lower priority
+
+---
+
+### Pin Reallocation Summary
+
+| Pin | Current | Option 1 (UART) | Option 2 (SPI) | Hardware SPI? |
+|-----|---------|-----------------|----------------|--------------|
+| PA03 | FPGA_INITN | INT watchdog | FPGA_INITN | SERCOM0 PAD1 |
+| PA04 | FPGA_DONE | status | FPGA_DONE | SERCOM0 PAD0 |
+| PA08 | FPGA_PROGRAM | SERCOM2 TX ✅ | SERCOM2 MOSI ✅ | **CONFLICT** |
+| PA09 | FPGA_ADV | SERCOM2 RX ✅ | SERCOM2 SCK ✅ | **CONFLICT** |
+| PA10 | TDO (JTAG) | TDO (freed) | TDO (MISO) | SERCOM0 PAD2 |
+| PA11 | TMS (JTAG) + UART RX | TMS (freed) | TMS (JTAG) | SERCOM2 PAD3 |
+| PA14 | TDI (JTAG) + UART TX | TDI (freed) | TDI (JTAG) | SERCOM0 PAD0 |
+| PA15 | TCK (JTAG) | TCK (JTAG) | TCK (JTAG) | SERCOM0 PAD1 |
+
+---
+
+### Recommendation
+
+**Implement Option 1 (UART Redesign)** because:
+
+1. **Solves critical vulnerability** (Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15)) — moondancer crash no longer breaks CONTROL USB
+2. **Enables true debugging** — bidirectional heartbeat/diagnostics
+3. **Frees JTAG pins** — PA11/PA14 available for actual JTAG debugging
+4. **Better long-term** — Debug SPI is convenient but not critical (existing bit-bang SPI works)
+5. **Simpler hardware** — UART is native SERCOM feature, no special pinmux needed
+
+**Next Steps**:
+- [ ] Finalize UART protocol specification
+- [ ] Implement Phase 1: Apollo firmware (SERCOM2 pinmux PA08/PA09)
+- [ ] Implement Phase 2: FPGA gateware (add UART slave CSR)
+- [ ] Implement Phase 3: moondancer firmware (UART response handler)
+- [ ] Test watchdog timeout scenarios
+
+---
+
+### udev Rules
+
+Install via `cyn setup` or manually:
+
+```udev
+# /etc/udev/rules.d/54-cynthion.rules
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615c", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615b", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+```
+
+---
+
+**For more help, see the full documentation files or run:**
+```bash
+./scripts/install.py --help
+cyn --help
+cyn list
+```
+
+### Source: docs/apollo_samd11_mcu/apollo_to_fpga_spi_design.md
+
+# Apollo-to-FPGA SPI Design
+
+**Status**: Design proposal  
+**Related Issues**: [#15] (https://github.com/awtoau/cynthion-workspace/issues/15), [#33] (https://github.com/awtoau/cynthion-workspace/issues/33)
+
+## Scope
+
+This document defines the SPI-only design path between Apollo (ATSAMD11D14A)
+and FPGA-facing debug/control surfaces. It intentionally excludes watchdog
+control protocol design, which is documented in
+[apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+## Problem
+
+The existing Apollo board support contains partial support for a dedicated
+FPGA debug SPI path on SERCOM2, but that path is not fully wired in firmware.
+Clocking is configured while pinmux setup was left incomplete.
+
+Consequence:
+- debug/maintenance flows rely on existing JTAG/SPI paths only
+- a cleaner Apollo-to-FPGA SPI transport is not currently available as a
+  dedicated interface
+
+## Hardware Context
+
+Board-level signals relevant to this design:
+- `PA08`
+- `PA09`
+- `PA10`
+
+Current firmware context:
+- `SERCOM0` is used for existing SPI/JTAG-related behavior
+- `SERCOM2` has a partial debug SPI setup path in firmware
+
+## Proposed SPI Topology
+
+Use `SERCOM2` as the dedicated Apollo-to-FPGA SPI controller for debug/control.
+
+Planned mapping:
+- `PA08` -> `SERCOM2 PAD0` (MOSI)
+- `PA09` -> `SERCOM2 PAD1` (SCK)
+- `PA10` <- `SERCOM0 PAD2` (MISO shared with existing path)
+
+Notes:
+- Shared MISO and board-level routing must be validated against actual
+  constraints before bring-up.
+- If shared-MISO behavior is unstable, this design should be revised to a fully
+  dedicated SPI routing.
+
+## Firmware Design
+
+Target files (Apollo firmware):
+- `src/boards/cynthion_d11/spi.c`
+- `src/boards/cynthion_d11/apollo_board.h`
+
+Required changes:
+1. Complete `SPI_FPGA_DEBUG` pinmux setup in `spi.c`.
+2. Define/confirm `PA08`/`PA09` debug SPI mappings in board headers.
+3. Gate feature with board capability macro (for example
+   `_BOARD_HAS_DEBUG_SPI`) so unsupported revisions fail clearly.
+4. Add concise runtime logging for SPI initialization failure modes.
+
+## Verification Plan
+
+1. Build-time checks
+- Verify firmware compiles with debug SPI feature enabled.
+- Verify unsupported boards fail with explicit messages.
+
+2. Electrical/protocol checks
+- Confirm clock and MOSI activity on expected pins.
+- Confirm stable MISO reads across repeated transfers.
+
+3. Functional checks
+- Read/write a known debug register via SPI path.
+- Validate no regression in existing JTAG/SPI behavior.
+
+## Risks
+
+Low:
+- Uses existing MCU peripheral capability.
+
+Medium:
+- Shared-signal interactions with existing SPI/JTAG paths.
+
+High:
+- Hidden board-routing assumptions that invalidate the shared-MISO plan.
+
+## Out of Scope
+
+- Watchdog heartbeat protocol and timeout semantics.
+- USB role-switching policy changes.
+- moondancer supervisory behavior.
+
+Those remain in
+[apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+### Source: docs/apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md
+
+# Cynthion Architecture Scan Report
+
+**Date**: 2026-05-22  
+**Scope**: awtoau repositories (apollo, cynthion, luna, saturn-v, facedancer, packetry, hardware)  
+**Focus**: UART/Serial communication design decisions, pulse-train mechanism, watchdog/failsafe design
+
+## Key Findings
+
+### 1. ApolloAdvertiser Implementation (apollo_fpga/gateware/advertiser.py)
+
+**Design**: Generates a 20ms square wave on FPGA_ADV pin (PA09)
+- Half-period: 10ms (calculated as 10% of 100ms in code comment)
+- Creates rising edges every 10ms
+- = ~10 rising edges per 200ms detection window
+
+**Added**: Commit 0b4b855 (Oct 16, 2023) by mndza (Diego)
+```
+apollo_fpga.gateware: add ApolloAdvertiser
+
+When this is added as a submodule to a design, an advertisement message
+is sent periodically to Apollo. Apollo will take over the port when
+these announcements are interrupted or when the PROGRAM button is
+pressed.
+```
+
+**Code Location**: `awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py:42-48`
+```python
+# Generate clock with 20ms period
+half_period = int(self.clk_freq_hz * 10e-3)  # 10ms
+timer = Signal(range(half_period))
+clk = Signal()
+m.d.sync += timer.eq(Mux(timer == half_period-1, 0, timer+1))
+with m.If((timer == 0) & (~self.stop)):
+    m.d.sync += clk.eq(~clk)  # Toggle clock every 10ms
+```
+
+### 2. Apollo FPGA_ADV Detection Logic (awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c)
+
+**Detection Window**: 200ms (line 27)
+```c
+#define WINDOW_PERIOD_MS 200UL
+```
+
+**Detection Threshold**: >2 rising edges in 200ms window (line 125)
+```c
+bool fpga_requesting_port(void) {
+    return window_edges > 2;  // >2 edges = FPGA wants port
+}
+```
+
+**Implementation**: Uses EIC (External Interrupt Controller) to count rising edges
+- EIC configured on line 56: `gpio_set_pin_function(FPGA_ADV, MUX_PA09A_EIC_EXTINT7);`
+- Interrupt handler counts edges on every rising edge (line 141)
+- Every 200ms, window_edges = edge_counter, then counter reset (lines 87-90)
+
+**USB Port Switching Logic** (lines 93-97):
+```c
+if (fpga_requesting_port() == false) {
+    take_over_usb();      // No pulse-train = Apollo takes port
+} else if (fpga_usb_allowed) {
+    hand_off_usb();       // Pulse-train detected = hand to FPGA
+}
+```
+
+### 3. Pin Assignments (awto-apollo/firmware/src/boards/cynthion_d11/apollo_board.h)
+
+**FPGA Control Pins**:
+- FPGA_PROGRAM = PA08 (reset signal)
+- FPGA_ADV = PA09 (pulse-train for USB negotiation)
+- FPGA_INITN = PA03 (initialization status)
+- FPGA_DONE = PA04 (configuration done status)
+
+**JTAG Pins** (conflict with current UART):
+- TMS = PA11 (conflicted with UART RX)
+- TDI = PA14 (conflicted with UART TX)
+- TCK = PA15
+- TDO = PA10
+
+### 4. Current UART Configuration
+
+**Location**: `awto-apollo/firmware/src/boards/cynthion_d11/uart.c:34-43`
+
+**Current Pinmux** (CONFLICTS WITH JTAG):
+```c
+static void _uart_configure_pinmux(bool use_for_uart) {
+    if (use_for_uart) {
+        gpio_set_pin_function(PIN_PA11, MUX_PA11D_SERCOM2_PAD3);  // RX (JTAG TMS)
+        gpio_set_pin_function(PIN_PA14, MUX_PA14D_SERCOM2_PAD0);  // TX (JTAG TDI)
+    }
+}
+```
+
+**SERCOM2 Configuration** (lines 99-102):
+```c
+sercom->USART.CTRLA.reg =
+    SERCOM_USART_CTRLA_TXPO(0)    |  // TX on PAD[0] = PA14
+    SERCOM_USART_CTRLA_RXPO(3)    |  // RX on PAD[3] = PA11
+    ...
+```
+
+### 5. Unimplemented SPI_FPGA_DEBUG
+
+**Location**: `awto-apollo/firmware/src/boards/cynthion_d11/spi.c`
+
+**Status**: TODO on line 56
+```c
+case SPI_FPGA_DEBUG:
+    // TODO  <-- NEVER IMPLEMENTED
+    break;
+```
+
+**Clocking Already Set Up** (lines 92-95):
+```c
+case SPI_FPGA_DEBUG:
+    _pm_enable_bus_clock(PM_BUS_APBC, SERCOM2);
+    _gclk_enable_channel(SERCOM2_GCLK_ID_CORE, GCLK_CLKCTRL_GEN_GCLK0_Val);
+    break;
+```
+
+**Analysis**: Someone previously planned to use SERCOM2 for FPGA debug SPI, set up the clocking, but never completed the pinmux configuration. This was abandoned in favor of SERCOM0 for JTAG SPI.
+
+**Note** (line 29): `// Alternatively, SERCOM2.` - Shows SERCOM2 was considered for SPI JTAG but rejected in favor of SERCOM0.
+
+### 6. moondancer Firmware Integration
+
+**Location**: `awto-cynthion/firmware/moondancer/src/bin/moondancer.rs`
+
+**USB Port Takeover Logic**:
+```rust
+let advertiser = peripherals.ADVERTISER;
+advertiser.control().write(|w| w.enable().bit(true));  // Enable pulse-train
+```
+
+**Shutdown Handler**:
+```rust
+let advertiser = unsafe { pac::ADVERTISER::steal() };
+advertiser.control().write(|w| w.enable().bit(false));  // Disable pulse-train on exit
+```
+
+**Vulnerability**: No watchdog or failsafe mechanism if firmware panics/hangs between enable and disable.
+
+### 7. Advertiser CSR in FPGA
+
+**Location**: `awto-cynthion/cynthion/python/src/gateware/facedancer/advertiser.py`
+
+**Control Register** (line 19-25):
+```python
+class Control(csr.Register, access="w"):
+    """enable : Set this bit to '1' to start ApolloAdvertiser and disconnect
+                the Cynthion USB control port from Apollo.
+    """
+    enable : csr.Field(csr.action.W, unsigned(1))
+```
+
+**Logic** (line 57-58):
+```python
+with m.If(self._control.f.enable.w_stb):
+    m.d.sync += stop.eq(~self._control.f.enable.w_data)
+```
+
+**Note**: Inverted logic - writing 1 to enable sets stop=0 (start pulse-train)
+
+### 8. Design Questions & Missing Pieces
+
+**No Evidence Found For**:
+- Why UART wasn't used from the beginning
+- Investigation into gate count constraints
+- Prior UART-based design attempts
+- Design decision documentation or discussion
+
+**No "rover" Label In Code**:
+- Searched all .py, .rs, .c, .h files
+- "rover" appears to be an issue/organization label only, not in commit messages or code
+
+**Unimplemented Features**:
+- SPI_FPGA_DEBUG never completed
+- No bidirectional communication mechanism
+- No watchdog timeout protection
+
+## Architecture Vulnerability
+
+The current design creates a **single point of failure**:
+
+1. moondancer firmware enables advertiser pulse-train
+2. Apollo detects pulse-train and hands off USB port
+3. **If moondancer crashes**: Advertiser CSR keeps running
+4. **If moondancer firmware panics**: No handler to disable advertiser
+5. **Result**: Host loses all USB access (even CONTROL port)
+
+## Recommended Solution Path
+
+Replace pulse-train with hardware UART using:
+- **PA08** → SERCOM2 TX (currently FPGA_PROGRAM, used only post-bootup)
+- **PA09** → SERCOM2 RX (currently FPGA_ADV pulse-train, can be repurposed)
+- **PA03** ← watchdog interrupt (FPGA_INITN, status pin)
+- **PA04** ← status feedback (FPGA_DONE, status pin)
+
+**Advantages**:
+1. Bidirectional synchronous communication
+2. Moondancer can send heartbeat responses
+3. Apollo can detect moondancer timeout and force reset
+4. JTAG pins freed for actual JTAG debugging
+5. Uses native SERCOM2 hardware (no bit-banging)
+
+## References
+
+**Files Examined**:
+- awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py - Pulse-train generator
+- awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c - Edge detection logic
+- awto-apollo/firmware/src/boards/cynthion_d11/uart.c - Current UART on JTAG pins
+- awto-apollo/firmware/src/boards/cynthion_d11/spi.c - SPI configuration (unimplemented DEBUG variant)
+- awto-apollo/firmware/src/boards/cynthion_d11/apollo_board.h - Pin definitions
+- awto-cynthion/firmware/moondancer/src/bin/moondancer.rs - Advertiser control
+- awto-cynthion/cynthion/python/src/gateware/facedancer/advertiser.py - CSR wrapper
+
+**Related Commits**:
+- 0b4b855: apollo_fpga.gateware: add ApolloAdvertiser (Oct 2023)
+- 6decb7d: gateware: ApolloAdvertiser generates rising edges now
+- f68195e: apollo_fpga.gateware: convert request handler to new interface
+
+**No References To**:
+- Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15) in git history
+- Prior watchdog implementations
+- Gate count constraint discussions
+- UART design alternative evaluations
+
+### Source: docs/apollo_samd11_mcu/apollo_dfu_buffer_analysis.md
+
+# Apollo DFU Buffer Issues
+
+**Status**: Phase 2 Code Review  
+**Date**: 2026-05-23  
+**Severity**: Medium  
+
+## Problem Statement
+
+DFU (Device Firmware Update) buffer handling on SAMD11 MCU variant has potential issues:
+
+1. **Tight Memory Constraints**: ATSAMD11D14A has only 4KB SRAM
+   - 4KB allocated to DFU buffer (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
+   - USB stack requires ~2-3KB
+   - Application code + stack share remainder
+   - No explicit overflow protection
+
+2. **Detach Sequence Synchronization**: 
+   - `dfu_mount()` handler triggers immediate reboot to bootloader
+   - No guarantee detach request completes before reboot
+   - Potential for incomplete transfers leaving device in bad state
+
+3. **Missing Documentation**:
+   - Buffer size limits per MCU not documented
+   - DFU timeout behavior unspecified
+   - Recovery path for interrupted transfers unclear
+
+## Affected Files
+
+- `src/mcu/rp2040/dfu.c` — DFU implementation
+- `src/mcu/samd11/usb_descriptors.c` — Descriptor configuration
+- `src/boards/cynthion_d11/tusb_config.h` — TinyUSB config
+
+## Current Code
+
+```c
+// src/mcu/samd11/usb_descriptors.c
+TUD_DFU_RT_DESCRIPTOR(ITF_NUM_DFU_RT, 0, 0x0d, 500, 4096),
+```
+
+## Recommended Actions
+
+- [ ] Document buffer size limits (min/max) per MCU variant
+- [ ] Add compile-time assertion: buffer + USB stack + app < total_ram
+- [ ] Implement explicit buffer overflow checks in DFU handler
+- [ ] Add timeout mechanism for detach sequence
+- [ ] Define recovery procedure for interrupted transfers
+- [ ] Test firmware update on SAMD11 with <16KB free memory
+
+## Testing Matrix
+
+| Test Case | MCU | Status |
+|-----------|-----|--------|
+| Normal DFU update | SAMD11 | ? |
+| Interrupted transfer | SAMD11 | ? |
+| Low memory condition | SAMD11 | ? |
+| Timeout behavior | SAMD11 | ? |
+| Buffer exhaustion | SAMD11 | ? |
+
+## Notes
+
+- RP2040 variant has more RAM (264KB), less critical but should follow same pattern
+- TinyUSB version may have built-in protection; check version and settings
+- Actual buffer exhaustion testing needed to confirm issue severity
+
+### Source: docs/apollo_samd11_mcu/apollo_code_review.md
+
+# Apollo Firmware Code Review
+
+**Date**: 2026-05-23  
+**Scope**: Review of known/potential issues in Apollo debug controller firmware  
+**Status**: Phase 2 documentation task
+
+## Summary
+
+Apollo is the ARM-based debug controller on Cynthion. This review covers three areas flagged for Phase 2 analysis:
+1. **DFU buffer handling**
+2. **Race conditions** in USB/FPGA state management
+3. **Dual CDC** (composite USB with two serial ports)
+
+---
+
+## 1. DFU (Device Firmware Update) Buffer Issues
+
+### Current Implementation
+- **Location**: `src/mcu/rp2040/dfu.c`, `src/mcu/samd11/usb_descriptors.c`
+- **Config**: DFU Runtime interface enabled (`CFG_TUD_DFU_RUNTIME = 1`)
+- **Buffer size**: 4096 bytes (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
+
+### Known Considerations
+
+1. **Buffer allocation on SAMD11** (limited RAM)
+   - ATSAMD11D14A has 4KB SRAM and 16KB flash
+   - 4KB DFU buffer + USB stack + application stack = tight memory
+   - No explicit mention of buffer overflow checks
+
+2. **Detach/Reboot sequence**
+   - `dfu_mount()` handler triggers reboot to bootloader
+   - Timing-dependent: detach request must complete before reboot
+   - No explicit synchronization mechanism
+
+3. **Missing documentation**
+   - Buffer size limits for different MCUs not documented
+   - DFU timeout behavior not specified
+   - Recovery path if DFU transfer interrupted is unclear
+
+### Recommendations
+
+- [ ] Document buffer requirements per MCU variant
+- [ ] Add explicit buffer overflow protection
+- [ ] Review detach sequence synchronization
+- [ ] Add timeout handling for incomplete transfers
+
+---
+
+## 2. Race Conditions
+
+There are none. Checked against the firmware in [#61] (https://github.com/awtoau/cynthion-workspace/issues/61): it is bare-metal, so only an
+ISR can preempt, and the three this review reported were in code that does not
+exist. What can preempt what is in
+[`../chips/samd11-apollo.md`] (../chips/samd11-apollo.md).
+
+Still open from it: `debug_spi.c:138` releases the UART pinmux on every board
+revision, and the `r0.2+` TODO above it was never answered.
+
+---
+
+## 3. Dual CDC (Composite USB)
+
+### Current Implementation
+
+**Location**: `src/mcu/samd11/usb_descriptors.c`, `src/mcu/rp2040/usb_descriptors.c`
+
+```c
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_DFU_RT_DESC_LEN)
+```
+
+Current descriptor structure:
+- 1× CDC (UART console)
+- 1× DFU Runtime
+
+### Investigation Results
+
+**Status**: The codebase **does not currently implement dual CDC**
+
+What exists:
+- Single CDC interface for debug UART
+- DFU Runtime interface
+- Debug SPI interface
+
+What's missing:
+- Second CDC endpoint/interface
+- Dual-endpoint configuration
+- Composite descriptor for 2×CDC + DFU
+
+### Known Limitations
+
+1. **Single serial port** to MCU limits debug capability
+2. **No separate FPGA→Host debug channel** (only JTAG indirect access)
+3. **Console and vendor requests share** a single USB pipe
+
+### Recommendations for Dual CDC
+
+If implementing dual CDC:
+
+- [ ] Add second CDC interface descriptor
+- [ ] Allocate additional endpoints (IN/OUT per CDC)
+- [ ] Update `tusb_config.h` with second CDC config
+- [ ] Map second CDC to FPGA debug/UART bridge
+- [ ] Test with TinyUSB's composite example
+- [ ] Verify buffer requirements under dual-channel load
+
+---
+
+## Code Quality Issues Found
+
+| Issue | File | Line | Severity | Notes |
+|-------|------|------|----------|-------|
+| Incomplete UART config | `src/boards/cynthion_d11/uart.c` | — | Low | TODO: support parity, stop bits |
+| Incomplete board init | `src/boards/daisho/uart.c` | — | Low | FIXME: implement all of this! |
+| Platform-specific JTAG TODO | `src/boards/daisho/platform_jtag.h` | — | Low | TODO: optimize these? |
+| Uncertain r0.2 behavior | `src/debug_spi.c` | — | Medium | TODO: don't run on r0.2+? |
+| Neopixel support missing | `src/boards/qtpy/apollo_board.h` | — | Low | TODO: handle RGB neopixel |
+| SPI FIFO optimization | `src/boards/cynthion_d21/spi.c` | — | Low | TODO: use FIFO to bulk send |
+
+---
+
+## Testing Requirements
+
+### For DFU Buffer Issues
+- [ ] Test firmware update on SAMD11 with <16KB free memory
+- [ ] Test interrupted DFU transfer recovery
+- [ ] Validate timeout behavior
+
+### For Race Conditions
+- [ ] Concurrent FPGA state change requests
+- [ ] USB disconnect during FPGA reconfiguration
+- [ ] Rapid online/offline cycling
+- [ ] Multi-host access scenarios (if supported)
+
+### For Dual CDC (if implemented)
+- [ ] Simultaneous writes to both CDC ports
+- [ ] High-speed data transfer on both channels
+- [ ] USB buffer exhaustion handling
+- [ ] Device enumeration with full descriptor set
+
+---
+
+## Priority Assessment
+
+### High Priority
+- Race condition fixes (state synchronization)
+- Buffer overflow protection (DFU and USB)
+
+### Medium Priority
+- Code documentation (hardware revision behavior)
+- Timeout handling (DFU detach sequence)
+- Dual CDC implementation (if feature needed)
+
+### Low Priority
+- Minor TODOs (UART config, SPI optimization)
+- Neopixel support
+
+---
+
+## Next Actions
+
+1. **Document buffer requirements** per MCU variant
+2. **Add DFU timeout handling**
+3. **Resolve `debug_spi.c:138`** — decide whether `uart_release_pinmux()` should
+   run on r0.2+, and delete the TODO either way
+4. **If dual CDC needed**: Plan integration of second CDC interface
+
+---
+
+## Files to Review Further
+
+- `src/vendor.c` — USB request handler (potential races)
+- `src/fpga.c` — FPGA state management (critical section)
+- `src/debug_spi.c` — Hardware version detection
+- `src/mcu/rp2040/dfu.c` — DFU implementation
+
+### Source: docs/apollo_samd11_mcu/apollo_change_process.md
+
+# Apollo Change Tracking Process
+
+## Purpose
+Use this process for Apollo firmware work related to USB mode control, CDC/UART behavior, and issue verification.
+
+Primary design reference for mode arbitration and interface boundaries:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
+Goals:
+- Keep changes reproducible.
+- Keep evidence attached to each change.
+- Keep issue status aligned with runtime proof.
+
+## Scope
+- Apollo source tree: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo`
+- Workspace evidence and patch archive: this repo
+- Primary issue tracking: GitHub issue comments (for example issue 22)
+
+## Apollo Command Structure (Reference)
+
+Host-side Apollo CLI top-level commands:
+
+1. Device/introspection:
+  - `info`
+  - `jtag-scan`
+  - `flash-info`
+2. Flash programming:
+  - `flash-erase`
+  - `flash-program`
+  - `flash-fast`
+  - `flash-read`
+3. FPGA config/control:
+  - `configure`
+  - `reconfigure`
+  - `force-offline`
+4. Low-level buses:
+  - `spi`, `spi-inv`, `spi-reg`
+  - `jtag-spi`, `jtag-reg`
+  - `svf`
+5. Utility:
+  - `leds`
+
+Device-side request dispatch lives in Apollo firmware `firmware/src/vendor.c` and routes:
+
+1. JTAG requests:
+  - start/stop
+  - set/get buffers
+  - scan / run clock / goto state / get state / bulk scan
+2. Programming/control requests:
+  - trigger reconfiguration
+  - force FPGA offline
+  - allow FPGA takeover USB
+3. Debug/flash SPI requests:
+  - debug SPI send/read
+  - flash SPI send
+  - take/release flash lines
+
+## Critical Constraint: UART vs JTAG on cynthion_d11
+
+On cynthion_d11, UART and JTAG share pins (PA14/PA11 overlap), so they are operationally mutually exclusive during programming operations.
+
+Implications:
+
+1. `apollo flash-program` and `apollo configure` require JTAG ownership of those pins.
+2. Any host process opening CDC ACM ports (for example `apollod.py`) can trigger UART callbacks and interfere with JTAG transactions.
+3. During flash/program/configure operations:
+  - stop port consumers first (`apollod`, serial monitors, other `ttyACM*` readers)
+  - use Apollo hold mode (`cyn reset --mode hold-apollo`)
+  - then run `cyn riscv flash`
+
+Typical symptom of contention:
+- `usb.core.USBError: [Errno 32] Pipe error`
+- ECP5/JTAG operation timeout during `apollo flash-program`
+
+## Required Artifacts Per Change
+For each meaningful firmware change set, collect all of the following:
+
+1. Change note (what/why).
+2. Build result.
+3. Flash result.
+4. Runtime test output (USB mode, tty mapping, capture/probe output).
+5. Patch file exported to `patches/apollo/`.
+6. Issue comment linking the artifacts.
+
+## Step-by-Step Process
+
+1. Record intent before editing
+- Create a short note in the issue comment draft with:
+  - hypothesis
+  - target files
+  - verification plan
+
+2. Make firmware changes
+- Edit files under Apollo repo, typically:
+  - `firmware/src/console.c`
+  - `firmware/src/main.c`
+
+3. Build and flash
+- Build:
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"`
+  - `make APOLLO_BOARD=cynthion`
+- Flash:
+  - `make APOLLO_BOARD=cynthion dfu`
+
+4. Capture runtime evidence in this repo
+- Save logs to `tmp/` with ISO-style date stamps.
+- Minimum runtime checks:
+  - `lsusb` mode stability polling (615c vs 615b)
+  - tty discovery from sysfs
+  - serial capture/probe output
+
+5. Export patch files
+- Preferred (commit-based patch):
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"`
+  - `git add <files>`
+  - `git commit -m "apollo: <summary>"`
+  - `mkdir -p "$WORKSPACE/patches/apollo"` (`$WORKSPACE` = this repo's root)
+  - `git format-patch -1 HEAD -o "$WORKSPACE/patches/apollo"`
+- If not ready to commit (WIP snapshot):
+  - `git diff > "$WORKSPACE/patches/apollo/0000-wip-<topic>.diff"`
+
+6. Update issue with evidence
+- Post one concise comment containing:
+  - change summary
+  - build/flash outcome
+  - runtime outcome
+  - links to artifact filenames
+  - explicit pass/fail against close criteria
+
+## Close Criteria (Verification Issues)
+Do not close until all are true:
+
+1. Control-plane is stable (expected USB mode remains stable for test window).
+2. Data-plane behavior is demonstrated by runtime evidence.
+3. Reproduction steps are documented.
+4. Patch artifact is exported under `patches/apollo/`.
+5. Final issue comment references all evidence files.
+
+## Change Log Template
+Append one entry per firmware change set.
+
+```
+## YYYY-MM-DDTHH:MM:SS+10:00 - <short title>
+
+- Hypothesis:
+- Files changed:
+- Build result:
+- Flash result:
+- Runtime result:
+- Artifacts:
+  - tmp/<file1>
+  - tmp/<file2>
+  - patches/apollo/<patch-file>
+- Issue update:
+  - <issue URL>
+- Status:
+  - pass | fail | partial
+```
+
+## Current Work Notes (Issue 22)
+Latest active Apollo files changed:
+
+1. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/console.c`
+2. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/main.c`
+
+Patch export is required before final closure of issue 22.
+
+### Source: docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md
+
+# Apollo Serial Interface and Mode Exclusivity Design
+
+## Purpose
+
+This document consolidates the current Apollo serial/control interface, links the related issue set, and defines a minimal, enforceable exclusivity policy so JTAG programming cannot be interrupted by serial/debug or takeover transitions.
+
+## Linked Issue Map
+
+Primary tracker:
+- [#55] (https://github.com/awtoau/cynthion-workspace/issues/55) - Apollo serial architecture redesign tracker
+
+Reliability prerequisites:
+- [#54] (https://github.com/awtoau/cynthion-workspace/issues/54) - synchronize FPGA state transitions and USB handoff
+- [#53] (https://github.com/awtoau/cynthion-workspace/issues/53) - DFU buffer and detach robustness
+
+Second UART / dual-CDC work:
+- [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) - dual-CDC feasibility (closed, deferred)
+- [#22] (https://github.com/awtoau/cynthion-workspace/issues/22) - UART forwarding verification and runtime evidence
+
+JTAG debug architecture:
+- [#19] (https://github.com/awtoau/cynthion-workspace/issues/19) - route VexRiscv JTAG via ECP5 JTAGG
+- [#20] (https://github.com/awtoau/cynthion-workspace/issues/20) - Apollo Python GDB server over serial path
+
+Broader architecture context:
+- [#15] (https://github.com/awtoau/cynthion-workspace/issues/15) - Apollo supervisor model and multi-channel control direction
+
+## Current Apollo Interface Surface
+
+Reference source: `docs/apollo_samd11_mcu/apollo_change_process.md`.
+
+Host-side command groups:
+- Device and introspection: `info`, `jtag-scan`, `flash-info`
+- Flash/programming: `flash-erase`, `flash-program`, `flash-fast`, `flash-read`
+- FPGA control: `configure`, `reconfigure`, `force-offline`
+- Low-level buses: `spi`, `spi-inv`, `spi-reg`, `jtag-spi`, `jtag-reg`, `svf`
+- Utility: `leds`
+
+Device-side request groups (in Apollo firmware `firmware/src/vendor.c`):
+- JTAG requests: start/stop, scan, run clock, goto state, get state, bulk scan
+- Programming/control: reconfigure, force offline, allow FPGA USB takeover
+- SPI paths: debug SPI send/read, flash SPI send, flash-line arbitration
+
+## Problem Statement
+
+Observed in issues [#54] (https://github.com/awtoau/cynthion-workspace/issues/54) and [#22] (https://github.com/awtoau/cynthion-workspace/issues/22):
+- control-plane transitions (Apollo hold, FPGA takeover, offline/reset) can overlap
+- runtime serial consumers can run while JTAG/programming operations are active
+- the same physical/functional resources are being driven by competing paths
+
+Net effect:
+- JTAG programming/debug sessions are vulnerable to interruption
+- serial verification can become flaky due to mode transitions during capture windows
+
+## Design Goal
+
+Prevent interruption of JTAG programming operations by making JTAG mode sticky and exclusive until explicit exit or explicit emergency reset.
+
+## Proposed Mode Model
+
+Define a small control-plane state model:
+
+- `MODE_APOLLO_HOLD`
+  - default mode
+  - serial/debug flows may run
+  - takeover remains explicit policy
+
+- `MODE_JTAG_PROGRAM`
+  - exclusive mode for JTAG/program/configure sequences
+  - mode changes are blocked while active
+  - serial forwarding and takeover transitions are blocked
+
+- `MODE_EMERGENCY_RESET`
+  - explicit override path
+  - cancels active JTAG ownership and returns to `MODE_APOLLO_HOLD`
+
+## Hard Invariants
+
+1. Exactly one mode owner at a time.
+2. While in `MODE_JTAG_PROGRAM`, no mode change is allowed except emergency reset.
+3. All non-JTAG control operations return explicit `BUSY` or `INVALID_MODE` while JTAG mode is active.
+4. USB takeover is explicit policy, never an implicit side effect of reset helpers.
+5. Emergency reset is the only preemption path for JTAG mode.
+
+## Command Policy Matrix
+
+| Command Class | Allowed in Hold | Allowed in JTAG Program | Allowed in Emergency Reset | Notes |
+|---|---|---|---|---|
+| `flash-program` / `configure` / `svf` | No (must switch) | Yes | No | Exclusive JTAG owner required |
+| `jtag-scan` / `jtag-reg` | Optional | Yes | No | JTAG command family |
+| UART/CDC capture/probe | Yes | No | No | Block during active programming |
+| `allow_fpga_takeover_usb` | Explicit only | No | No | Block while JTAG mode is active |
+| Emergency reset command | Yes | Yes | Yes | Only legal preemption path |
+
+## Implementation Sketch
+
+In Apollo firmware control path:
+
+- add one global mode state (`HOLD`, `JTAG_PROGRAM`, `EMERGENCY_RESET`)
+- gate vendor request handlers with a simple policy check
+- return explicit error code when blocked (`BUSY`, `INVALID_MODE`)
+- ensure emergency reset clears JTAG ownership and returns to HOLD deterministically
+
+Suggested control struct:
+
+```c
+typedef enum {
+    MODE_APOLLO_HOLD,
+    MODE_JTAG_PROGRAM,
+  MODE_EMERGENCY_RESET
+} apollo_mode_t;
+
+typedef struct {
+    volatile apollo_mode_t mode;
+  volatile bool jtag_owner_active;
+} apollo_mode_ctrl_t;
+```
+
+## Transition Rules (Minimal)
+
+1. Enter `MODE_JTAG_PROGRAM`:
+- acquire ownership lock
+- reject if another owner exists
+- block serial/takeover handlers while active
+
+2. Exit `MODE_JTAG_PROGRAM`:
+- explicit stop command only
+- release ownership lock and return to `MODE_APOLLO_HOLD`
+
+3. Emergency reset:
+- can run from any mode
+- if JTAG mode active, cancel JTAG session first
+- force return to `MODE_APOLLO_HOLD`
+
+4. Takeover policy changes:
+- rejected while JTAG mode active
+- allowed again only after JTAG exit/reset
+
+## Validation Plan
+
+1. JTAG lock test:
+- enter JTAG mode and issue long program/configure sequence
+- in parallel, issue takeover/serial/reset-helper commands
+- verify blocked commands return deterministic errors
+
+2. Serial interruption test:
+- while JTAG mode active, attempt CDC/serial debug operations
+- verify they are rejected or paused
+
+3. Emergency reset override test:
+- trigger emergency reset during JTAG mode
+- verify JTAG ownership is canceled and device returns to HOLD
+
+4. Evidence requirements:
+- attach logs and pass/fail matrix to [#54] (https://github.com/awtoau/cynthion-workspace/issues/54)
+- update [#55] (https://github.com/awtoau/cynthion-workspace/issues/55) with milestone result
+
+## Execution Order
+
+1. Land minimal JTAG lock policy for [#54] (https://github.com/awtoau/cynthion-workspace/issues/54).
+2. Re-run UART forwarding validation in [#22] (https://github.com/awtoau/cynthion-workspace/issues/22).
+3. Re-open dual-CDC implementation as a new child issue under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55), using [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) as historical context.
+
+---
+
+## Decision Record: Arbitration Model (ADR)
+
+**Status:** Accepted — 2026-07-23. Resolves item 2 of
+[#65] (https://github.com/awtoau/cynthion-workspace/issues/65).
+**Scope:** Cynthion **d11** board (ATSAMD11D14A). The d21 / samd11_xplained
+boards have a different pin budget and are out of scope for the hardware
+constraint below (their arbitration can be softer).
+
+### Context — the constraint is physical, not a policy choice
+
+On d11, four SAMD11 pins are contended by three Apollo subsystems with **no
+hardware arbitration** — each path steals the pins into its own peripheral via
+`gpio_set_pin_function()` (see [[apollo-d11-pin-exclusivity]] and
+[#65] (https://github.com/awtoau/cynthion-workspace/issues/65)):
+
+| Pin  | JTAG-over-USB (bit-bang GPIO) | JTAG-over-SPI (SERCOM0)   | UART console (SERCOM2) |
+|------|-------------------------------|---------------------------|------------------------|
+| PA10 | TDO                           | TDO / MISO (PAD2)         | —                      |
+| PA11 | TMS                           | —                         | **RX** (PAD3)          |
+| PA14 | TDI                           | TDI / MOSI (PAD0)         | **TX** (PAD0)          |
+| PA15 | TCK                           | TCK / SCK (PAD1)          | —                      |
+
+PA14 is the triple-overlap (TDI *and* SPI-MOSI *and* UART-TX). The pins **cannot
+be split**: relocating UART to PA08/PA09 is not viable because on d11 those are
+`FPGA_PROGRAM` (PA08) and `PHY_RESET` + `FPGA_ADV`→`EIC_EXTINT7` (PA09) — Apollo's
+core supervisory lines. See the correction note added to
+[`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+Because the resource is physically single-owner, arbitration is not a
+convenience feature — it is the only thing standing between a JTAG programming
+sequence and silent corruption when a UART/console consumer repinmuxes PA14
+mid-flash.
+
+### Decision
+
+Adopt the **sticky mutual-exclusion state machine** already sketched in the
+"Proposed Mode Model" above, with these d11-specific bindings and one
+strengthening:
+
+1. **JTAG owns the pins exclusively while `MODE_JTAG_PROGRAM` is active.** Entry
+   into JTAG-program / configure / SVF acquires the pin-owner lock. While held,
+   any handler that would call `gpio_set_pin_function()` on PA10/PA11/PA14/PA15
+   for a non-JTAG peripheral (i.e. `uart_initialize()`, SERCOM2 console, debug
+   SPI) returns `BUSY` and does **not** touch the pinmux.
+
+2. **JTAG programming is uninterruptible.** Once a program/configure/SVF
+   sequence has begun, it runs to completion or to explicit emergency reset.
+   There is no "pause and lend the pins" path. The lock is released only by (a)
+   the JTAG command family completing and issuing explicit stop, or (b)
+   `MODE_EMERGENCY_RESET`. This is stricter than a plain mutex: even the *owner*
+   cannot voluntarily yield mid-sequence, because a half-programmed FPGA is the
+   failure we are preventing.
+
+3. **The lock guards the pinmux, not just the command dispatcher.** The check
+   lives at the point of `gpio_set_pin_function()` / `uart_initialize()`, so a
+   TinyUSB CDC callback (line-coding / DTR change — see `console.c`
+   `tud_cdc_line_coding_cb`, `tud_cdc_line_state_cb`) firing during a flash
+   cannot lazily re-init the UART and steal PA14. Today those callbacks call
+   `uart_initialize()` unconditionally; under this decision they must consult the
+   lock first.
+
+4. **Emergency reset is the sole preemption path** (unchanged from Hard
+   Invariant 5). It cancels JTAG ownership, restores pins to a safe default, and
+   returns to `MODE_APOLLO_HOLD`.
+
+5. **Default HOLD is UART/console-owner.** In `MODE_APOLLO_HOLD` the pins may be
+   held by the UART console bridge; the *first* JTAG entry request repinmuxes
+   them to JTAG and takes the lock. There is no implicit hand-back — returning to
+   HOLD re-enables lazy UART init on the next CDC event.
+
+### Enforcement points (firmware)
+
+- One global `apollo_mode_ctrl_t` (already in the Implementation Sketch).
+- Gate `uart_initialize()` and the three `console.c` CDC callbacks on
+  `mode != MODE_JTAG_PROGRAM`.
+- Gate the JTAG-SPI (`SPI_FPGA_JTAG`) and any future debug-SPI pinmux on the
+  same lock — SPI is a JTAG-family owner, so it is allowed *inside*
+  `MODE_JTAG_PROGRAM` but blocked for a console consumer while JTAG holds it.
+- Entry to programming vendor requests (`flash-program`, `configure`, `svf`,
+  `reconfigure`) acquires the lock; the matching stop releases it.
+
+### Consequences
+
+- The UART console and JTAG are strictly one-at-a-time on d11 — this is now an
+  enforced invariant instead of an undefined race.
+- A host that opens the Apollo CDC port during a flash no longer corrupts the
+  flash; it gets a UART that stays uninitialized (or a `BUSY`) until JTAG exits.
+- No behavioural change on d21 / xplained, which are not pin-starved.
+
+---
+
+## Second virtual serial port (host side): redundant on d11
+
+**Question:** does the sticky-exclusion decision make a *second* USB virtual
+serial port (the deferred dual-CDC work, [#56] (https://github.com/awtoau/cynthion-workspace/issues/56))
+redundant, or can it still be used?
+
+**Current reality.** d11 Apollo exposes a **single** CDC interface today
+(`CFG_TUD_CDC 1`; `ITF_NUM_CDC = 0` in `mcu/samd11/usb_descriptors.c`). That one
+CDC is a lazy USB↔UART bridge: `console.c` forwards host bytes to the SERCOM2
+UART on **PA11/PA14** — the JTAG pins. There is no second port; "the second
+virtual serial port" means the dual-CDC idea from [#56] (https://github.com/awtoau/cynthion-workspace/issues/56).
+
+**Decision — the second CDC is redundant *for its originally-intended purpose*
+on d11, but not useless.**
+
+- **Redundant as a second UART bridge.** The obvious use for a second CDC — a
+  separate host serial channel bridged to a *second* physical UART — has no
+  physical UART to bridge to. SAMD11 SERCOM/pin budget on d11 has exactly one
+  UART-capable pin pair, and it is the JTAG-contended one. A second CDC cannot
+  surface a second independent serial line to the FPGA. So the classic
+  "console + second forwarded UART" motivation is dead on d11 (it was only ever
+  viable on the boards with spare PA08/PA09).
+
+- **Still usable as a non-UART control/status channel.** A second CDC endpoint
+  does **not** have to be a UART bridge. Under the exclusion model it is actually
+  attractive as a **pinless side-channel** that stays up while JTAG owns the
+  pins:
+  - a **status/notification port** the host can keep open during a flash to
+    receive `BUSY` / progress / mode-transition events — precisely when the
+    primary UART bridge is (correctly) muted by the lock;
+  - a **control port** for issuing `emergency reset` / mode queries out-of-band,
+    so the operator is never locked out while JTAG is uninterruptible;
+  - a **structured GDB-server / diagnostics** transport (aligns with [#20] (https://github.com/awtoau/cynthion-workspace/issues/20)'s
+    "GDB over serial path") that carries framed messages rather than raw UART
+    bytes and therefore needs no SERCOM pins at all.
+
+  These consume USB endpoints and ~1–2 KB RAM on the 4 KB-SRAM SAMD11, so
+  feasibility is a memory-budget question (the reason [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) was deferred), **not**
+  a pin question.
+
+**Recommendation.** Keep the second CDC *deferred* as a UART bridge (it can never
+be one on d11), and if dual-CDC is re-opened under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55), re-scope it explicitly as
+a **pinless control/status side-channel** that complements the uninterruptible
+JTAG lock — the one CDC role the pin constraint does not foreclose. Record this
+so [#56] (https://github.com/awtoau/cynthion-workspace/issues/56)'s revival doesn't re-inherit the dead "second forwarded UART" framing.
+

@@ -1,166 +1,46 @@
-# Apollo Change Tracking Process
+# Apollo change tracking
 
-## Purpose
-Use this process for Apollo firmware work related to USB mode control, CDC/UART behavior, and issue verification.
+For Apollo firmware work on USB mode, CDC/UART behaviour and issue verification. Design reference: [apollo_serial_interface_and_mode_exclusivity_design.md](apollo_serial_interface_and_mode_exclusivity_design.md).
 
-Primary design reference for mode arbitration and interface boundaries:
-- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+- Apollo tree: `repos/apollo` (submodule, `awtoau/awto-apollo`). Evidence: this repo's `tmp/`. Tracking: GitHub issue comments (e.g. [#22](https://github.com/awtoau/cynthion-workspace/issues/22)).
+- Patches are commits in the submodule; no loose `patches/apollo/` copy (recover with `git log` there).
 
-Goals:
-- Keep changes reproducible.
-- Keep evidence attached to each change.
-- Keep issue status aligned with runtime proof.
+## Apollo commands
 
-## Scope
-- Apollo source tree: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo`
-- Workspace evidence and patch archive: this repo
-- Primary issue tracking: GitHub issue comments (for example issue 22)
+- Host CLI: `info`, `jtag-scan`, `flash-info`; `flash-erase`, `flash-program`, `flash-fast`, `flash-read`; `configure`, `reconfigure`, `force-offline`; `spi`, `spi-inv`, `spi-reg`, `jtag-spi`, `jtag-reg`, `svf`; `leds`.
+- Device dispatch `firmware/src/vendor.c`: JTAG (start/stop, set/get buffers, scan, run clock, goto state, get state, bulk scan); control (trigger reconfiguration, force FPGA offline, allow FPGA takeover USB); SPI (debug SPI send/read, flash SPI send, take/release flash lines).
 
-## Apollo Command Structure (Reference)
+## UART vs JTAG on cynthion_d11
 
-Host-side Apollo CLI top-level commands:
+- UART (PA11/PA14) shares pins with JTAG TMS/TDI, so they are mutually exclusive during programming (pin table: [../chips/samd11-apollo.md](../chips/samd11-apollo.md); decision: the mode design doc).
+- `apollo flash-program` and `apollo configure` need JTAG ownership of those pins. Any process opening the Apollo CDC ACM port can trigger UART callbacks mid-transaction.
+- Before flash/program/configure: stop `ttyACM*` readers and serial monitors.
+- Symptom of contention: `usb.core.USBError: [Errno 32] Pipe error`, or an ECP5/JTAG timeout in `apollo flash-program`.
 
-1. Device/introspection:
-  - `info`
-  - `jtag-scan`
-  - `flash-info`
-2. Flash programming:
-  - `flash-erase`
-  - `flash-program`
-  - `flash-fast`
-  - `flash-read`
-3. FPGA config/control:
-  - `configure`
-  - `reconfigure`
-  - `force-offline`
-4. Low-level buses:
-  - `spi`, `spi-inv`, `spi-reg`
-  - `jtag-spi`, `jtag-reg`
-  - `svf`
-5. Utility:
-  - `leds`
+## Per change set
 
-Device-side request dispatch lives in Apollo firmware `firmware/src/vendor.c` and routes:
+1. Intent note (hypothesis, target files, verification plan), usually `firmware/src/console.c`, `firmware/src/main.c`.
+2. Build: `cd repos/apollo/firmware && make APOLLO_BOARD=cynthion`. Flash: `make APOLLO_BOARD=cynthion dfu`.
+3. Runtime evidence in `tmp/` with date stamps: `lsusb` mode polling (615c vs 615b), tty discovery from sysfs, serial capture/probe output.
+4. Commit in the submodule.
+5. One issue comment: summary, build/flash/runtime outcome, artifact filenames, pass/fail against close criteria.
 
-1. JTAG requests:
-  - start/stop
-  - set/get buffers
-  - scan / run clock / goto state / get state / bulk scan
-2. Programming/control requests:
-  - trigger reconfiguration
-  - force FPGA offline
-  - allow FPGA takeover USB
-3. Debug/flash SPI requests:
-  - debug SPI send/read
-  - flash SPI send
-  - take/release flash lines
+## Close criteria (verification issues)
 
-## Critical Constraint: UART vs JTAG on cynthion_d11
+1. Expected USB mode stable over the test window.
+2. Data-plane behaviour shown by runtime evidence.
+3. Reproduction steps documented.
+4. Commit referenced.
+5. Final comment references all evidence files.
 
-On cynthion_d11, UART and JTAG share pins (PA14/PA11 overlap), so they are operationally mutually exclusive during programming operations.
-
-Implications:
-
-1. `apollo flash-program` and `apollo configure` require JTAG ownership of those pins.
-2. Any host process opening CDC ACM ports (for example `apollod.py`) can trigger UART callbacks and interfere with JTAG transactions.
-3. During flash/program/configure operations:
-  - stop port consumers first (`apollod`, serial monitors, other `ttyACM*` readers)
-  - use Apollo hold mode (`cyn reset --mode hold-apollo`)
-  - then run `cyn riscv flash`
-
-Typical symptom of contention:
-- `usb.core.USBError: [Errno 32] Pipe error`
-- ECP5/JTAG operation timeout during `apollo flash-program`
-
-## Required Artifacts Per Change
-For each meaningful firmware change set, collect all of the following:
-
-1. Change note (what/why).
-2. Build result.
-3. Flash result.
-4. Runtime test output (USB mode, tty mapping, capture/probe output).
-5. Patch file exported to `patches/apollo/`.
-6. Issue comment linking the artifacts.
-
-## Step-by-Step Process
-
-1. Record intent before editing
-- Create a short note in the issue comment draft with:
-  - hypothesis
-  - target files
-  - verification plan
-
-2. Make firmware changes
-- Edit files under Apollo repo, typically:
-  - `firmware/src/console.c`
-  - `firmware/src/main.c`
-
-3. Build and flash
-- Build:
-  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"`
-  - `make APOLLO_BOARD=cynthion`
-- Flash:
-  - `make APOLLO_BOARD=cynthion dfu`
-
-4. Capture runtime evidence in this repo
-- Save logs to `tmp/` with ISO-style date stamps.
-- Minimum runtime checks:
-  - `lsusb` mode stability polling (615c vs 615b)
-  - tty discovery from sysfs
-  - serial capture/probe output
-
-5. Export patch files
-- Preferred (commit-based patch):
-  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"`
-  - `git add <files>`
-  - `git commit -m "apollo: <summary>"`
-  - `mkdir -p "$WORKSPACE/patches/apollo"` (`$WORKSPACE` = this repo's root)
-  - `git format-patch -1 HEAD -o "$WORKSPACE/patches/apollo"`
-- If not ready to commit (WIP snapshot):
-  - `git diff > "$WORKSPACE/patches/apollo/0000-wip-<topic>.diff"`
-
-6. Update issue with evidence
-- Post one concise comment containing:
-  - change summary
-  - build/flash outcome
-  - runtime outcome
-  - links to artifact filenames
-  - explicit pass/fail against close criteria
-
-## Close Criteria (Verification Issues)
-Do not close until all are true:
-
-1. Control-plane is stable (expected USB mode remains stable for test window).
-2. Data-plane behavior is demonstrated by runtime evidence.
-3. Reproduction steps are documented.
-4. Patch artifact is exported under `patches/apollo/`.
-5. Final issue comment references all evidence files.
-
-## Change Log Template
-Append one entry per firmware change set.
+## Log entry template
 
 ```
 ## YYYY-MM-DDTHH:MM:SS+10:00 - <short title>
-
 - Hypothesis:
 - Files changed:
-- Build result:
-- Flash result:
-- Runtime result:
-- Artifacts:
-  - tmp/<file1>
-  - tmp/<file2>
-  - patches/apollo/<patch-file>
-- Issue update:
-  - <issue URL>
-- Status:
-  - pass | fail | partial
+- Build / Flash / Runtime result:
+- Artifacts: tmp/<file>, <submodule commit>
+- Issue update: <issue URL>
+- Status: pass | fail | partial
 ```
-
-## Current Work Notes (Issue 22)
-Latest active Apollo files changed:
-
-1. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/console.c`
-2. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/main.c`
-
-Patch export is required before final closure of issue 22.
