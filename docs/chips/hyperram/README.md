@@ -2,6 +2,8 @@
 
 The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 
+**DQS is parked (Dan, 2026-11-02):** the shipping path is non-DQS (`dqs0`); DQS code stays in the tree switched off, DQS board tests are paused, and the upstream-PR drafts are in [`../../deprecated/dqs/`](../../deprecated/dqs). Issues carry the label `hyperram-dqs-experiment`.
+
 | document | what it is |
 |---|---|
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
