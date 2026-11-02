@@ -136,6 +136,12 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 2,
     },
     Peripheral {
+        name: "usb_host",
+        base: 0xf0001000,
+        size: 0x00000020,
+        registers: 19,
+    },
+    Peripheral {
         name: "clint",
         base: 0xf0800000,
         size: 0x00010000,

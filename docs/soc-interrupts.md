@@ -1,6 +1,6 @@
 # SoC interrupts — the design
 
-What can interrupt this CPU and what should. Seventeen sources, ten built. The
+What can interrupt this CPU and what should. Seventeen sources, eleven built. The
 controller is `amaranth_soc.csr.event.EventMonitor` — pending bits, enables, W1C,
 a trigger fixed per source at elaboration — wrapped by
 [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) for the numbering.
@@ -48,7 +48,7 @@ exercises it.
 | 7 | **PAC1954** `U1` | `SLOW/ALERT1`, pin 1 | edge | **no** — pin hard-driven as SLOW ([make it runtime-selectable](chips/pac1954-power-monitor.md)) |
 | 8 | **DPO2036** `U13` | TARGET `FAULTB`, pin 6 | **edge**, rise ([why](chips/dpo2036-cc-sbu-protection.md)) | **yes** |
 | 9 | **DPO2036** `U14` | AUX `FAULTB`, pin 6 | **edge**, rise | **yes** |
-| 10 | **USB3343** TARGET | link event — enables in `0Dh`/`10h`, delivered as an RX CMD on `DIR` ([and a transmit swallows transients](chips/usb3343-ulpi-phy.md)) | edge | no |
+| 10 | **USB3343** TARGET | `usb_host` port ([`peripherals/usb_host.py`](../gateware/soc/peripherals/usb_host.py)): RX FIFO not empty, transfer done, line-state RXCMD, errors; each gated by `IRQ_EN`. PHY link-event enables (`0Dh`/`10h`) are not programmed by this ([and a transmit swallows transients](chips/usb3343-ulpi-phy.md)) | level | **yes** (U: never on a board) |
 | 11 | **USB3343** AUX | link event | edge | no |
 | 12 | **USB3343** CONTROL | link event | edge | no |
 | 13 | — | USER button, ball **M14** | **edge**, rise | **yes** |
@@ -57,7 +57,7 @@ exercises it.
 | 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
 | 17 | — | PLL loss of lock | **edge**, fall on `locked` | **yes** |
 
-* The seven not built need a peripheral that does not exist. Their numbers are
+* The six not built need a peripheral that does not exist. Their numbers are
   gaps, tied low in `intc.py`, so wiring one up renumbers nothing.
 * `rise`/`fall` is the trigger as the controller sees it, after the platform's
   `PinsN` has undone an active-low pin: `FAULTB` and the button are `PinsN` and

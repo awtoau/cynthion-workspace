@@ -3318,6 +3318,448 @@
       </registers>
     </peripheral>
     <peripheral>
+      <name>USB_HOST</name>
+      <description>usb_host: 19 registers at 0xf0001000</description>
+      <baseAddress>0xF0001000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x20</size>
+        <usage>registers</usage>
+      </addressBlock>
+      <interrupt>
+        <name>USB_HOST</name>
+        <value>10</value>
+      </interrupt>
+      <registers>
+        <register>
+          <name>ROLE</name>
+          <description>USB_HOST.ROLE, 2 bits at +0x00</description>
+          <addressOffset>0x0</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>USB_HOST.CTRL, 4 bits at +0x01</description>
+          <addressOffset>0x1</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BUS_RESET</name>
+              <description>bus_reset [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>START</name>
+              <description>start [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>CLR_TX</name>
+              <description>clr_tx [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+            <field>
+              <name>CLR_RX</name>
+              <description>clr_rx [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IRQ_EN</name>
+          <description>USB_HOST.IRQ_EN, 4 bits at +0x02</description>
+          <addressOffset>0x2</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [3:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ROLE_STATUS</name>
+          <description>USB_HOST.ROLE_STATUS, 4 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ROLE</name>
+              <description>role [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>SWITCHING</name>
+              <description>switching [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>TIMEOUT</name>
+              <description>timeout [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LINK</name>
+          <description>USB_HOST.LINK, 8 bits at +0x05</description>
+          <addressOffset>0x5</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>LINE_STATE</name>
+              <description>line_state [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>SPEED</name>
+              <description>speed [3:2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CONNECTED</name>
+              <description>connected [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>RESET_ACTIVE</name>
+              <description>reset_active [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>IDLE</name>
+              <description>idle [6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>RESET_DONE</name>
+              <description>reset_done [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EVENTS</name>
+          <description>USB_HOST.EVENTS, 8 bits at +0x06</description>
+          <addressOffset>0x6</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>EV</name>
+              <description>ev [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RXPID</name>
+          <description>USB_HOST.RXPID, 8 bits at +0x07</description>
+          <addressOffset>0x7</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>PID</name>
+              <description>pid [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ADDR</name>
+          <description>USB_HOST.ADDR, 7 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [6:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>7</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EP</name>
+          <description>USB_HOST.EP, 7 bits at +0x09</description>
+          <addressOffset>0x9</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [6:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>7</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RESP</name>
+          <description>USB_HOST.RESP, 4 bits at +0x0a</description>
+          <addressOffset>0xA</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>RESPONSE</name>
+              <description>response [2:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>NYET</name>
+              <description>nyet [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RXLEN_LO</name>
+          <description>USB_HOST.RXLEN_LO, 8 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RXLEN_HI</name>
+          <description>USB_HOST.RXLEN_HI, 8 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RX_DATA</name>
+          <description>USB_HOST.RX_DATA, 8 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RX_TAG</name>
+          <description>USB_HOST.RX_TAG, 2 bits at +0x11</description>
+          <addressOffset>0x11</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>TAG</name>
+              <description>tag [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>VALID</name>
+              <description>valid [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RX_LEVEL</name>
+          <description>USB_HOST.RX_LEVEL, 8 bits at +0x12</description>
+          <addressOffset>0x12</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX_DATA</name>
+          <description>USB_HOST.TX_DATA, 8 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX_LAST</name>
+          <description>USB_HOST.TX_LAST, 8 bits at +0x15</description>
+          <addressOffset>0x15</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX_CMD</name>
+          <description>USB_HOST.TX_CMD, 8 bits at +0x16</description>
+          <addressOffset>0x16</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>TX_LEVEL</name>
+          <description>USB_HOST.TX_LEVEL, 8 bits at +0x17</description>
+          <addressOffset>0x17</addressOffset>
+          <size>8</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
       <name>CLINT</name>
       <description>clint: 5 registers at 0xf0800000</description>
       <baseAddress>0xF0800000</baseAddress>

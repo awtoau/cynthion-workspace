@@ -127,7 +127,7 @@ def _peripherals():
 
     return [
         ("uart16550",          uart16550,          "x2 in the SoC"),
-        ("intc",               intc,               "17 numbered, 10 built"),
+        ("intc",               intc,               "17 numbered, 11 built"),
         ("clint",              clint,              ""),
         ("i2c_master",         i2c_master,         ""),
         ("i2c_mux",            i2c_mux,            ""),

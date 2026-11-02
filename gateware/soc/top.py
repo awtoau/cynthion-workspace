@@ -118,6 +118,7 @@ from peripherals.sideband_csr import SidebandControl
 from peripherals.vbus_csr import VbusControl
 from peripherals.fabric_status import FabricStatus
 from peripherals.ulpi_window import UlpiRegisters
+from peripherals.usb_host import UsbPort
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
@@ -441,6 +442,11 @@ BOOTRAM_BASE = 0xf0000400
 # 0xc00: the board block ends at 0x680 and the HyperRAM CK window at 0xa10.
 INTC_BASE = 0xf0000c00
 
+# The role mux and byte stream for target_phy (`peripherals/usb_host.py`):
+# 32 bytes of CSR. 0xf0001000 is free (INTC 0xc00, HyperRAM BIST 0x800..0x9ff) and
+# inside the uncached CSR region; the FIFO pop registers need that.
+USB_HOST_BASE = 0xf0001000
+
 # The machine timer and software interrupts: a standard RISC-V CLINT, in its own
 # 64 KiB window. The offsets inside are not negotiable (mtime is at 0xbff8), the
 # window must be aligned to its size, and it must be inside the `main=0` CSR
@@ -489,6 +495,12 @@ IRQ_I2C = 3
 # foreground also uses, so `src/irq.rs` masks and hands off to a task.
 IRQ_TYPE_C_TARGET = 4
 IRQ_TYPE_C_AUX = 5
+
+# target_phy's USB host/raw port (`peripherals/usb_host.py`): RX FIFO not empty, or
+# a transfer finished, or a line-state/error event, each gated by IRQ_EN.
+# LEVEL: it holds until the FIFO is drained or EVENTS is cleared.
+# Number 10 is `docs/soc-interrupts.md`'s "USB3343 TARGET link event".
+IRQ_TARGET_USB = 10
 
 # The PAC1954's ALERT, on GPIO/ALERT2 -- ECP5 ball D6, U1 pin 15, pulled up by
 # R86 (10k). #270.
@@ -547,6 +559,7 @@ IRQ_TRIGGERS = {
     IRQ_POWER_ALERT:   "fall",
     IRQ_TARGET_FAULT:  "rise",
     IRQ_AUX_FAULT:     "rise",
+    IRQ_TARGET_USB:    "level",
     IRQ_BUTTON:        "rise",
     IRQ_PLL_LOSS:      "fall",
 }
@@ -828,7 +841,7 @@ CACHE_WAYS = 2
 class AwtoSoc(Elaboratable):
     """This project's SoC. VexiiRiscv RV32IMAC, with:
 
-    - an interrupt controller (17 numbered sources, 10 built) and a CLINT
+    - an interrupt controller (17 numbered sources, 11 built) and a CLINT
     - 64 KiB of block RAM, HyperRAM, and memory-mapped SPI flash
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
@@ -1002,6 +1015,13 @@ class AwtoSoc(Elaboratable):
         # that evicted the SoC to make room.
         m.submodules.target_ulpi = target_ulpi = UlpiRegisters()
 
+        # The role mux between UlpiRegisters and the host SIE / raw byte stream,
+        # on the same pins. Reset role is `off`, which routes UlpiRegisters.
+        m.submodules.target_usb = target_usb = UsbPort(name="target")
+        usb_host_bridge = WishboneCSRBridge(target_usb.bus, data_width=32)
+        m.submodules.usb_host_bridge = usb_host_bridge
+        decoder.add(usb_host_bridge.wb_bus, addr=USB_HOST_BASE, name="usb_host")
+
         # The bus select for the one I2C controller, and the four Type-C signals
         # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
         # they are on separate pin-sets and a mux is forced rather than chosen.
@@ -1049,6 +1069,7 @@ class AwtoSoc(Elaboratable):
             intc.lines[IRQ_TYPE_C_AUX].eq(i2c_mux.aux_irq),
             intc.lines[IRQ_TARGET_FAULT].eq(i2c_mux.target_fault_irq),
             intc.lines[IRQ_AUX_FAULT].eq(i2c_mux.aux_fault_irq),
+            intc.lines[IRQ_TARGET_USB].eq(target_usb.irq),
             # IRQ_POWER_ALERT and IRQ_BUTTON are wired where their resources are
             # requested, some way below: a resource may be requested once, and
             # this block runs first. IRQ_PLL_LOSS is wired below too, beside the
@@ -1082,6 +1103,7 @@ class AwtoSoc(Elaboratable):
                               "POWER_ALERT":  IRQ_POWER_ALERT,
                               "TARGET_FAULT": IRQ_TARGET_FAULT,
                               "AUX_FAULT":    IRQ_AUX_FAULT},
+            "usb_host":      IRQ_TARGET_USB,
             "board_gpio":    {"BUTTON":       IRQ_BUTTON},
             "board_clocks":  {"PLL_LOSS":     IRQ_PLL_LOSS},
         }
@@ -2021,18 +2043,28 @@ class AwtoSoc(Elaboratable):
         # `soc-clocks` and #241 -- leaves a glitched PHY with no way back, since
         # firmware cannot reconfigure the FPGA it is running on.
         #
-        # This is a register path only. There is no UTMI translator, no packet
-        # handling and no device stack on this port -- see `peripherals/ulpi_window.py`.
+        # Pins go through `target_usb` (`peripherals/usb_host.py`), whose reset role
+        # routes `target_ulpi` exactly as before; `host`/`raw` take the pins over.
+        # No device stack on this port.
         target_phy = platform.request("target_phy", 0)
         m.d.comb += [
             target_phy.clk.o.eq(ClockSignal("usb")),
             target_phy.rst.o.eq(car.phy_reset | target_ulpi.phy_rst),
-            target_phy.stp.o.eq(target_ulpi.stp_o),
-            target_phy.data.o.eq(target_ulpi.data_o),
-            target_phy.data.oe.eq(target_ulpi.data_oe),
+            # Pins <-> role mux <-> UlpiRegisters. In role off/regs this is the
+            # old direct connection through one mux level.
+            target_phy.stp.o.eq(target_usb.stp_o),
+            target_phy.data.o.eq(target_usb.data_o),
+            target_phy.data.oe.eq(target_usb.data_oe),
+            target_usb.data_i.eq(target_phy.data.i),
+            target_usb.dir_i.eq(target_phy.dir.i),
+            target_usb.nxt_i.eq(target_phy.nxt.i),
             target_ulpi.data_i.eq(target_phy.data.i),
-            target_ulpi.dir_i.eq(target_phy.dir.i),
-            target_ulpi.nxt_i.eq(target_phy.nxt.i),
+            target_ulpi.dir_i.eq(target_usb.regs_dir),
+            target_ulpi.nxt_i.eq(target_usb.regs_nxt),
+            target_usb.regs_data_o.eq(target_ulpi.data_o),
+            target_usb.regs_data_oe.eq(target_ulpi.data_oe),
+            target_usb.regs_stp_o.eq(target_ulpi.stp_o),
+            target_usb.regs_idle.eq(target_ulpi.usb_idle),
         ]
 
         # ---- the three I2C buses, from one controller -----------------------

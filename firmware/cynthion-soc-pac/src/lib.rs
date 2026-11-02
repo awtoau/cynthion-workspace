@@ -163,6 +163,15 @@ impl core::fmt::Debug for Intc {
 }
 #[doc = "intc: 2 registers at 0xf0000c00"]
 pub mod intc;
+#[doc = "usb_host: 19 registers at 0xf0001000"]
+pub type UsbHost = crate::Periph<usb_host::RegisterBlock, 0xf000_1000>;
+impl core::fmt::Debug for UsbHost {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("UsbHost").finish()
+    }
+}
+#[doc = "usb_host: 19 registers at 0xf0001000"]
+pub mod usb_host;
 #[doc = "clint: 5 registers at 0xf0800000"]
 pub type Clint = crate::Periph<clint::RegisterBlock, 0xf080_0000>;
 impl core::fmt::Debug for Clint {
@@ -211,6 +220,8 @@ pub struct Peripherals {
     pub hyperram_ck: HyperramCk,
     #[doc = "INTC"]
     pub intc: Intc,
+    #[doc = "USB_HOST"]
+    pub usb_host: UsbHost,
     #[doc = "CLINT"]
     pub clint: Clint,
 }
@@ -252,6 +263,7 @@ impl Peripherals {
             hyperram_bist: HyperramBist::steal(),
             hyperram_ck: HyperramCk::steal(),
             intc: Intc::steal(),
+            usb_host: UsbHost::steal(),
             clint: Clint::steal(),
         }
     }
