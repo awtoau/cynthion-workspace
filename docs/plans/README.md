@@ -1,16 +1,10 @@
 # Plans
 
-Working documents: audits, sequencing, and things being decided.
+Working documents. The rest of `docs/` records what is true; a plan records what is intended and is acted on or deleted.
 
-Distinct from the rest of `docs/`, which records what **is** true. A plan records
-what is **intended**, and is expected to be annotated, argued with and eventually
-either acted on or deleted.
-
-| document | what it is |
+| document | what |
 |---|---|
-| [issue-and-doc-audit.md](issue-and-doc-audit.md) | tracker and documentation audit, 2026-08-07 — what to close, what is stale, what nobody is tracking |
-| [performance-sections.md](performance-sections.md) | the `## Performance` section every chip doc gets: theoretical, board max, measured, and what closes the gap |
+| [performance-sections.md](performance-sections.md) | the `## Performance` section every chip doc gets: theoretical, board max, measured, what closes the gap |
 
-Not a home for findings. A finding that survives its plan belongs in the
-document it is about — `docs/chips/<part>/` for hardware, the canonical doc
-otherwise.
+- Not a home for findings: a finding that outlives its plan goes in the doc it is about (`docs/chips/<part>/` for hardware).
+- The 2026-08-07 tracker/doc audit is archived at [../../debris/docs/issue-and-doc-audit.md](../../debris/docs/issue-and-doc-audit.md).

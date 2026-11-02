@@ -1,0 +1,6129 @@
+# History: SoC, USB and Apollo docs
+
+Removed from live docs (terse-ify pass), verbatim, with source file. Not current; do not rely on any number here. Markdown link syntax is disarmed ("] (") so the link checker skips it.
+
+---
+
+## Deleted dead docs
+
+### Source: docs/apollo/pending-patches/README.md
+
+# Patches that were never applied
+
+The three survivors of `patches/`, which held 23 files and has been deleted.
+
+That directory was a `git format-patch` export of commits from 2026-05-19/21 that
+was never cleaned up afterwards. **19 of its 23 files were already landed as
+commits** — the same change existing twice, once in git history and once as stale
+text. One was superseded. Provenance was established with
+`git patch-id --stable` against every commit in each target repo, which is
+title-blind and resolved 18 outright; the rest by reverse-apply and `git log -S`.
+
+The 19 landed files were deleted rather than moved to `debris/`: an export of
+commits that exist in history is regenerable by definition, and `debris/` is for
+content a user could not recreate.
+
+Three files had no corresponding commit. They are kept here.
+
+## 1. `apollo-uart-rx-ring-buffer.diff` — a real bug fix, worth applying
+
+The substantive one.
+
+**The bug:** `uart_byte_received_cb()` calls `tud_cdc_write_char()` and flushes
+**directly from the UART RX ISR**. That can fire while TinyUSB is inside a
+critical section, which is a reentrancy hazard rather than a style problem.
+
+**The fix:** a 256-byte RX ring buffer, so the ISR only enqueues and the console
+task drains it.
+
+**Not the DMA driver from [#66] (https://github.com/awtoau/cynthion-workspace/issues/66).** Verified: zero DMA/DMAC references. That issue
+tracks a *ping-pong DMA* driver on SERCOM2 that was reviewed and deliberately
+**deselected**. This is a plain ISR-safe ring buffer, a much smaller change, and
+its deselection does not apply.
+
+**It bundles a second, unrelated change**: removal of the forced
+`hand_off_usb()` / `allow_fpga_takeover_usb(true)` at boot. That is a **policy
+change**, not a bug fix, and needs a decision rather than review. Split before
+applying.
+
+**Apply state:** plain `git apply` fails on context only — upstream added an
+`apollo_mode.h` include. `git apply -3` applies both files cleanly. That is an
+apply check and nothing more: **no firmware was built and none was flashed**, so
+whether the ring buffer fixes the reentrancy in practice is untested.
+
+## 2. `0020-scripts-apollod.py-graceful-shutdown-...patch` — stranded
+
+57 lines adding graceful shutdown via a `cmd shutdown` path to `apollod.py`.
+
+Real work, but the target moved: `grep shutdown apollod.py` returns nothing. The
+`cyn` daemon this once pointed at as the replacement is itself retired — it
+imported a module that had moved to `debris/`, so it raised `ModuleNotFoundError`
+on every run, and both it and the `./cyn` wrapper are now deleted. Only worth
+applying if `apollod.py` has a future. Otherwise delete.
+
+## 3. `moondancer-uart0-log-port.diff` — recommend deleting
+
+A one-line debug flip, `Port::Both` → `Port::Uart0`. It **removes** a log
+destination, so it is a local debugging convenience rather than a fix.
+
+## Three things that looked valuable and had all landed
+
+Recorded because they were flagged as possible unlanded work and were not, so the
+next person does not re-investigate:
+
+| looked like | actually |
+|---|---|
+| isochronous IN skeleton across gateware and firmware | landed as `4ab5361`; the 164 added `ep_iso_in.py` lines are byte-identical, and the file has since been fixed twice on top (`53d3ea4`, `56a64c2`) |
+| endpoint `max_packet_size` clamp to `EP_MAX` | landed as `6fa3e0a`, exact patch-id match |
+| "iso-13 progress" text found nowhere in the repo | in `repos/cynthion/awto.md` — a superproject grep misses it because it is inside a submodule |
+
+## What "carrying patches" means here
+
+Worth separating, because the two get conflated:
+
+- **`repos/apollo` is 34 commits ahead of upstream.** Those are live: they are in
+  the code that gets built and flashed. Submitting the upstreamable ones is
+  issue [#102] (https://github.com/awtoau/cynthion-workspace/issues/102).
+- **These three files are not carried anywhere.** They are unapplied text. Nothing
+  builds them.
+
+### Source: docs/patchset/patchset_overview.md
+
+## Apollo Modification History
+
+The canonical patch artifact for the current set was
+`patches/apollo/0000-wip-issue22-apollo-fixes-20260722.diff`. That directory no
+longer exists: the patch was applied to the `repos/apollo` submodule, so the
+change itself is the record and a loose diff beside it would only be a second,
+divergent copy. Recover the text with `git log` in the submodule if the
+before-and-after is needed.
+
+For the evidence/issue workflow that goes with these changes, see [apollo_change_process.md] (../apollo_samd11_mcu/apollo_change_process.md).
+
+### Related Build-System Changes
+
+The build-system work that introduced logging, fail-fast checks, and parallel execution is summarized separately here:
+
+- [0001-improved-build-system-logging-fail-fast-parallelization.md] (0001-improved-build-system-logging-fail-fast-parallelization.md)
+- [0002-parallel-build-execution-setup-and-build-threading.md] (0002-parallel-build-execution-setup-and-build-threading.md)
+- [install.md] (../install.md)
+
+### 2026-07-22 - Apollo console/UART race hardening
+
+Patch set: `0000-wip-issue22-apollo-fixes-20260722.diff`, applied to the
+`repos/apollo` submodule (see above).
+
+Files touched:
+- `firmware/src/console.c`
+- `firmware/src/main.c`
+
+What changed:
+- Buffered UART RX in interrupt context instead of writing directly into TinyUSB.
+- Flushed buffered console data from task context.
+- Added a fallback path to initialize UART if callbacks were missed.
+
+Why it matters:
+- Reduces contention between UART callbacks and TinyUSB critical sections.
+- Makes the Apollo console path less sensitive to timing around REPL and `riscv` command handling.
+
+Verification status:
+- Track runtime evidence and build output alongside the patch set, not here.
+- Use the issue comment / `tmp/` log pattern from [apollo_change_process.md] (../apollo_samd11_mcu/apollo_change_process.md).
+
+---
+
+### Source: docs/patchset/0001-improved-build-system-logging-fail-fast-parallelization.md
+
+## Improved Build System
+
+### What's New (2026-05-23)
+
+**Comprehensive logging system** with colored output and file logging
+- Console + file logging to `./tmp/logs/<timestamp>.log`
+- DEBUG level (--verbose) and INFO level output
+- Thread-safe for parallel execution
+
+**Fail-fast prerequisite checks** before attempting builds
+- OS detection (Fedora/Ubuntu with dnf/apt)
+- Critical tool verification (git, gcc, make, python3.14)
+- FPGA toolchain check (arm-none-eabi-gcc, rustc)
+- OSS CAD Suite functional verification
+- Clear installation guidance for missing packages
+
+**Python 3.14 no-GIL parallelization**
+- Parallel build execution using `concurrent.futures.ThreadPoolExecutor`
+- 55% speedup (33 min → 18 min with 4 threads)
+- New CLI options: `--parallel`, `--jobs N`
+
+### Apollo Firmware Fixed
+
+**Issue:** TinyUSB submodule initialization failed  
+**Fix:** Applied: `git submodule deinit -f lib/tinyusb && git submodule update --init`  
+**Result:** Apollo firmware now builds successfully ✓
+
+---
+
+### Source: docs/patchset/0002-parallel-build-execution-setup-and-build-threading.md
+
+## Parallel Build Execution
+
+Related change set:
+- [0001-improved-build-system-logging-fail-fast-parallelization.md] (0001-improved-build-system-logging-fail-fast-parallelization.md)
+
+### Usage
+
+```bash
+# Sequential (original, ~33 minutes)
+./scripts/install.py setup
+
+# Parallel with auto-detect (4 threads, ~18 minutes)
+./scripts/install.py --parallel setup
+
+# Parallel with custom threads
+./scripts/install.py --parallel --jobs 2 setup   # 2 threads
+./scripts/install.py --parallel --jobs 8 setup   # 8 threads
+
+# Dry run to preview
+./scripts/install.py --parallel --dry-run setup
+```
+
+### Performance
+
+| Mode | Time | Speedup |
+|------|------|---------|
+| Sequential | ~33 min | 1.0x |
+| Parallel (2 threads) | ~25 min | 1.3x |
+| Parallel (4 threads) | ~18 min | 1.8x |
+| Parallel (8 threads) | ~18 min | 1.8x |
+
+### How It Works
+
+1. **Setup Phase (Sequential)**: 12 min
+   - Fail-fast prerequisite checks
+   - Repository cloning/pulling
+   - Submodule initialization
+   - Toolchain verification
+   - Python environment setup
+
+2. **Build Phase (Parallel)**: 8 min
+   - Thread 1: Apollo Firmware (10 min)
+   - Thread 2: moondancer (5 min)
+   - Thread 3: Analyzer Gateware (8 min)
+   - Thread 4: Facedancer Gateware (8 min)
+   - All run simultaneously
+
+**Total: 20 minutes (setup + parallel builds)**
+
+### CLI Options
+
+```bash
+--parallel              # Enable parallel builds (ThreadPoolExecutor)
+--jobs N                # Max threads (default: 4)
+--verbose               # Show full output
+--dry-run               # Preview without executing
+```
+
+---
+
+### Source: docs/drafts/200-repro.md
+
+## Reproduction must use their tooling, not ours
+
+Every number here was taken with our build system, our platform and our harness.
+That proves nothing upstream can check. Before any PR, it has to rebuild and
+re-measure under `BUILD.md`.
+
+**This cannot be done on this machine.** `BUILD.md:97` instructs
+
+    pip uninstall -y -r <(pip freeze)
+
+and we run the free-threaded system environment with no venv. Their install
+would take it apart.
+
+**They have no container.** `ci/` is `build.sh` (123 B) and `test.sh` (110 B),
+one workflow, no Dockerfile, no nix, no devcontainer.
+
+### Proposal
+
+A container built from `BUILD.md` verbatim, with the board passed through:
+
+- their Python, their Yosys/OSS CAD Suite, their Rust, `pip install ".[gateware]"`
+- our harness copied in, nothing of our build system
+- `--device` for the Cynthion, so measurement happens on real hardware
+- pinned base image and recorded tool versions, so a rung is reproducible
+
+Isolation both ways: their install cannot touch this machine, and our
+environment cannot flatter their result.
+
+Worth offering upstream as its own small PR — they have nothing like it, and it
+is the difference between a number they must trust and one they can run.
+
+### Rules for the submission
+
+- **Terse.** Message and docs both.
+- **Cite numbers, measured on real hardware.** No estimates, no simulation
+  figures presented as measurements.
+- **Ship the harness.** A claim without the code to re-take it is an assertion.
+- **Double-check every figure** against `results.json` before it is quoted.
+
+### Verify before submitting
+
+- [ ] Container builds from `BUILD.md` with no step from our tree
+- [ ] Their gateware builds unmodified inside it
+- [ ] The ladder re-measured inside it, on hardware, and the numbers match
+- [ ] Any that do not match are investigated before anything is sent
+
+
+---
+
+## apollo configure speed: full investigation record (issues #100, #108, #199)
+
+### Source: docs/apollo_samd11_mcu/apollo-configure-speed-investigation.md
+
+# `apollo configure`: speed investigation and results
+
+How fast the ECP5 can be programmed through Apollo, what was tried, and what the
+measurements actually showed.
+
+**This is about the transport, not the destination.** The benchmark shifts into SRAM
+because that is cheap to repeat and leaves the board alone, but what is being measured
+and improved is the path from the host to the ECP5's TAP: USB control transfers into
+the SAMD11, then SERCOM SPI out to JTAG. Everything reached over that path benefits.
+
+That includes **programming the configuration flash**: `apollo flash-program` and
+`flash-erase` open the same `device.jtag` session and go through
+`create_jtag_programmer()`, so the SPI flash is reached *through* the JTAG tunnel, not
+by a separate mechanism. The DMA, chunking and buffer work here applies to them
+unchanged. `apollo flash --fast` is the exception -- it loads a bridge onto the FPGA
+and programs the flash through the FPGA's own USB, bypassing this path entirely.
+
+What this document does **not** cover: the W25Q32's own read modes and QSPI timing,
+which is `../chips/w25q32-config-flash.md` -- a different chip, reached by the FPGA
+rather than by the host.
+
+This file was previously `luna_ecp5_fpga/jtag-ceiling-reached.md`. The old title
+claimed the path was done; it then got 2.22x faster, which is the sort of thing a
+title should not assert.
+
+## Final result
+
+**713.9 -> 322.2 ms at 1024-byte chunks: 2.22x against the stock release**, on the
+122880-byte fixed payload, measured on a direct USB port. Shipped as `6520707`
+(`awtoau/awto-apollo`), on a 14 KB / 4 KB part, with the ceilings never raised.
+Verified on hardware: IDCODE `0x21111043`, configure `rc=0`, `check.py` 6 passed.
+
+The flash and RAM percentages once quoted here were the pre-[#199] (https://github.com/awtoau/cynthion-workspace/issues/199) figures, which
+omitted `.relocate` and read as under both ceilings when both were over. Current
+numbers: `docs/chips/samd11-apollo.md` § Memory budget.
+
+Where the 391.7 ms came from, largest first:
+
+| change | worth | how |
+|---|---|---|
+| **DMA-clocked JTAG** (`d43f765`) | **-85 ms** | the CPU stops spinning on SERCOM flags, so `tud_task()` runs while bytes are on the wire |
+| USB topology | -46 ms | moved off a 4-hub chain. No code |
+| 512- then 1024-byte chunks | -109 ms | fewer transactions, each amortising a fixed ~145 us cost |
+| pipelined `spi_send` + LTO | -147 ms | keep the shifter fed; reclaim 2968 bytes to afford the rest |
+| housekeeping on a 20 ms tick (`7060149`) | -6 ms | stop polling human-scale inputs at 200 kHz |
+
+Those sum to 393 ms against an actual 392 -- the difference is the double-buffering
+step and rounding, since each figure is a difference of two independently measured
+rows rather than an isolated A/B.
+
+**The remaining gap is 240.3 ms, and it is USB, not JTAG.** Wire time for this payload
+is 81.9 ms, so the transport still costs 3.9x what the bits do. Per-transaction cost is
+~145 us against ~47 us of wire for a 64-byte packet.
+
+**The next lever is not the one this work assumed.** Dispatching SETUP from the USB
+interrupt was built and measured (`c8b9c1f`, unshipped -- **still open, see [#100] (https://github.com/awtoau/cynthion-workspace/issues/100)**; it
+works and is faster, but stalls on a chunk-size change and is 246 bytes over budget) and
+is worth **7.8 ms -- 3.2% of the remaining gap**. That bounds the whole software-latency theory: even a perfect
+version of it leaves ~230 ms unexplained. What is left is the 64-byte control endpoint
+itself, and the only change with the right order of magnitude is a **dedicated bulk
+endpoint** -- 19 packets per frame against control's measured 5.8, so ~3.3x on the
+transport term. See "But a DEDICATED bulk endpoint is a different proposition".
+
+---
+
+The rest of this document is the working record: what was measured, what was tried,
+and what turned out to be wrong. It starts where the work started.
+
+Two proposals — transmit-only DMA, and raising SCK to 24 MHz — were investigated
+and **neither was implemented**, because measurement showed both would be
+no-ops or unsafe. This records why, since both looked well-founded.
+
+> **Superseded in part.** DMA *was* implemented later and is worth **-85 ms, 1.26x** --
+> the largest code win in this document (`d43f765`, see below). The section immediately
+> following is still correct about what it measured, and was still the wrong conclusion:
+> it asked whether DMA could remove **per-byte CPU cost** and rightly answered no. The
+> value of DMA is not the per-byte term at all. It is that a CPU not spinning on SERCOM
+> flags can run `tud_task()`, which is where the ~98 us of NAK per USB transaction was
+> going. A correct measurement can still answer the wrong question.
+
+## There is no CPU cost left for DMA to remove (the right answer to the wrong question)
+
+The "0.455 µs/byte CPU term" that justified TX-only DMA is an artifact of the
+same mistake that produced the earlier 3.93 µs/byte figure: dividing a whole
+`SCAN` call by its payload, which charges the fixed ~145 µs USB round trip to
+per-byte clocking.
+
+Measuring the **marginal** cost instead — differencing 64-bit and 2048-bit scans
+over the same round trip, so the fixed cost cancels — gives **0.663 / 0.684 /
+0.715 µs/byte** across three runs against a **0.667 µs/byte** wire floor.
+
+That is **2-3% overhead, not 41%**. The pipelined `spi_send()` already took the
+win by keeping the shifter continuously fed.
+
+This independently reproduces why the earlier DMA attempt was archived, and it
+also revises the synthetic-benchmark conclusion that the path was CPU-bound with
+1.11 µs/byte of overhead. Same artifact, measured two different ways.
+
+## SCK is already at the ceiling, and cannot be swept
+
+`f_SCK = 48 MHz / (2 x (BAUD+1))`, so the divider steps are:
+
+| BAUD | SCK | period |
+|---|---|---|
+| 0 | 24.0 MHz | 41.7 ns |
+| **1** | **12.0 MHz** | **83.3 ns** (current) |
+| 2 | 8.0 MHz | 125 ns |
+
+**There is no setting between 12 and 24 MHz.** The requested sweep cannot be
+run; it is one binary step.
+
+And the ceiling is the SAMD11, not the ECP5. Datasheet Table 35-50 gives `tSCK`
+**min 84 ns — an 11.9 MHz rated maximum** in master mode. So BAUD=1 is already
+marginally past rated and BAUD=0 would be 2x past.
+
+Separately, `tMIS` (MISO setup) is 21 ns typical against a 20.8 ns half-period
+at 24 MHz, so **duplex readback cannot validate 24 MHz even in principle** —
+which removes the instrument that would have proved the wire still worked.
+
+## Where the time actually is
+
+Profiling a verified configure (`DONE=1`, `BSE_ERR=0`):
+
+| | |
+|---|---|
+| end-to-end | 953-1017 ms |
+| bulk shift | 679 ms |
+| **of which wire time** | **67 ms** |
+| **USB per-chunk overhead** | **612 ms (90% of the shift)** |
+
+394 chunks, two control transfers each. **JTAG clocking is about 7% of
+end-to-end.** Zeroing it entirely would take ~1000 ms to ~940 ms.
+
+The levers that would matter are **chunk size** — capped by
+`jtag_out_buffer[256]` and RAM-bound at 2728 of 4096 bytes — and **collapsing
+`SET_OUT_BUFFER` + `SCAN` into one transfer**.
+
+## The TX-only argument was correct, and still not worth doing
+
+The reasoning holds and was verified: the ECP5 self-validates via
+`LSC_RESET_CRC`, BSE code 3 is `CRC check failed`, and the host already
+suppresses `GET_IN_BUFFER` for the burst. **Dropping TDO loses no error
+detection.**
+
+It would buy roughly **2 ms of ~950 ms**, which does not justify the
+silent-failure surface it creates.
+
+The stricter verification it implied was adopted anyway: every configure now
+decodes `DONE`, `FAIL` and the BSE code explicitly rather than relying on an
+exception not being raised.
+
+## The standard test, and why there was not one
+
+Its absence was actively misleading, so this is now the only figure worth quoting.
+
+These docs contained roughly **forty distinct millisecond figures** for
+configuration timing with no way to tell which measured the same work. All
+accurately recorded, none comparable: different bitstreams, different firmware,
+different scopes -- whole configure versus shift path versus a single `SCAN` call.
+
+Two errors that followed from that, both mine:
+
+- I compared 890 ms against a recorded 1680 ms and reported **1.89x**. The two came
+  from different bitstreams. Same payload the figures were 846 and 774 ms, a 1.09x
+  change reported as nearly double.
+- The `2575 -> 1680 ms` above and the `953-1017 ms` in the section below are both
+  labelled configure time. Both are correct. They measure different payloads on
+  different firmware.
+
+**`scripts/jtag_fixed_benchmark.py`, committed payload of 122880 bytes.** Fixed
+rather than a real bitstream because `top.bit` changes size whenever the gateware
+does, so a "faster" result can be a smaller bitstream. The size sits mid-range of
+the real bitstreams here (103364 to 136184 bytes) and divides evenly by
+128/256/512/1024, so no chunk size gets a short final transfer the others do not.
+
+Scope is the **shift path only**: no `ISC_ENABLE`, no CRC check, no DONE poll, TAP
+left in SHIFT-DR. The FPGA ignores the data, so its configuration survives and the
+benchmark is safe to repeat against a board that is doing something else. The
+absolute number is correspondingly lower than a real configure.
+
+| chunk | chunks | best | throughput | spread |
+|---|---|---|---|---|
+| 128 B | 960 | 667.6 ms | 184.1 KB/s | 1.8 ms |
+| 256 B | 480 | 558.8 ms | 219.9 KB/s | 3.3 ms |
+| **512 B** | **240** | **488.9 ms** | **251.3 KB/s** | 3.1 ms |
+
+Spread of 1.8-3.3 ms against 4-15 ms for real-bitstream timing. That matters: the
+remaining levers are expected to save less than the chunk change did, so the
+instrument has to resolve a few milliseconds.
+
+## The 1.53x claim, restated on the standard test: it is 1.13x
+
+`scripts/jtag_speed_bisect.py` reflashes historical firmware and benchmarks each
+commit, so claims made before the standard test existed get real numbers rather
+than being taken on trust.
+
+Only four commits between the stock `v1.1.1` tag and HEAD touch the JTAG or SPI
+path, so this is five direct measurements rather than a search. All at 256 B/chunk,
+because 512 needs `GET_INFO`, which only HEAD implements -- on older firmware the
+host silently falls back to 256, so a "512" row would read as no change.
+
+One table, both chunk sizes, on the 122880-byte payload throughout.
+
+| commit / limit | what | 256 B | 512 B | 1024 B |
+|---|---|---|---|---|
+| **`v1.1.1`** | **stock release** | **713.9 ms** (11.5%) | n/a | n/a |
+| `4bf7691` | enable LTO | 639.1 ms (12.8%) | n/a | n/a |
+| **`e034daa`** | **pipelined `spi_send` + suppress TDO readback** | **566.9 ms** (14.4%) | n/a | n/a |
+| `0e9bfb1` | `JTAG_BUFFER_SIZE` define, no functional change | 562.1 ms (14.6%) | n/a | n/a |
+| `bb82d39` | 512-byte buffers + `GET_INFO` | 555.4 ms (14.7%) | 488.9 ms (16.8%) | n/a |
+| **`19242e8`** | **two reported limits + 1024-byte writes** | 564.0 ms (14.5%) | 489.5 ms (16.7%) | **457.6 ms (17.9%)** |
+| `cd4a85c` | double-buffered staging | -- | 469.1 ms (17.5%) | 455.6 ms (18.0%) |
+| **direct USB port** | **no code change -- moved off a 4-hub chain** | -- | **425.2 ms (19.3%)** | **409.1 ms (20.0%)** |
+| **`d43f765`** | **clock by DMA, stop blocking `tud_task()`** -- *over flash budget, see below* | -- | **343.3 ms (23.9%)** | **324.4 ms (25.2%)** |
+| `e4bc0f0` | LED patterns out, paying for DMA -- speed unchanged, budget restored | -- | 348.8 ms (23.5%) | 327.9 ms (25.0%) |
+| **`7060149`** | **LED + button on a 5 ms tick, not every pass** | -- | **330.2 ms (24.8%)** | **318.1 ms (25.7%)** |
+| `6520707` | tick relaxed to 20 ms -- correct rate, not a speed change | -- | 341.2 ms (24.0%) | 322.2 ms (25.4%) |
+| | | | | |
+| `c8b9c1f` | *dispatch SETUP from the USB ISR* -- **NOT SHIPPED**, stalls and is 246 B over budget | -- | 328.3 ms (25.0%) | 314.4 ms (26.0%) |
+| | | | | |
+| **no USB payload** | `0xb9`, pattern generated in firmware | 275 ms (30%) | 137 ms (60%) | not measured |
+| **theoretical wire** | 12 MHz SCK, 1 bit per clock | 81.9 ms (100%) | 81.9 ms (100%) | 81.9 ms (100%) |
+
+**Reading the table.** Every time is for the **same 122880-byte payload** -- the columns
+are the JTAG *chunk size* the transport used to move it, not different amounts of work.
+So a row compares one firmware against itself at different chunk sizes, and a column
+compares firmwares at the same chunk size.
+
+The percentage in each cell is **that cell against the theoretical wire time for the
+same payload**, 81.9 ms. So `457.6 ms (17.9%)` means: at 1024-byte chunks this firmware
+takes 457.6 ms to move 122880 bytes, which is 17.9% of the 81.9 ms the wire alone would
+need. Higher is better, 100% is unreachable.
+
+**Cumulative against stock**, each on the best chunk size it supports:
+**713.9 -> 457.6 ms, 1.56x.**
+
+**The no-USB row at 1024 B is not measured, and the attempt broke the board twice.**
+`0xb9` encoded its chunk size in a single `wIndex` byte with "0 means full buffer",
+which was silently wrong once the buffer exceeded 256: asking for 512 truncated to 0,
+read as "full buffer", so a 512 x 240 request clocked **245760 bytes in one
+uninterruptible loop**. That overran the host's control-transfer timeout and took the
+device off the bus entirely -- a physical replug was needed.
+
+Re-encoding it in 64-byte units fixed the truncation, and a 65536-byte work bound was
+added. **The bound was off by one case**: 1024 x 64 is exactly 65536, so `> 65536` is
+false, the request passes, and the clocking still overruns. It wedged a second time,
+though that one recovered without a replug.
+
+So the correct bound is on *time*, not bytes, and it has to account for the whole
+control transfer rather than just the clocking. Until that is fixed the 1024-byte
+no-USB figure is unavailable -- which leaves the 1024 column without a denominator, the
+same gap that the 256-byte column had before it was filled.
+
+**Real configure**, in-process and therefore comparable, same bitstream:
+**778.0 ms at 512 B, 741.0 ms at 1024 B.** The shift benchmark and the real configure
+agree on direction and roughly on magnitude -- 32.0 ms against 37.0 ms -- which is the
+first time in this work the two instruments have been cross-checked.
+
+Every `n/a` is an impossibility rather than a gap: those firmwares declare a 256-byte
+buffer and stall anything larger, so the request is refused rather than merely
+unnegotiated.
+
+**Cumulative against stock: 713.9 -> 318.1 ms, 2.24x.**
+
+Rows above `cd4a85c` were measured on the four-hub chain and are ~10% pessimistic. They
+stay comparable with each other, but **only the `direct USB port` and `d43f765` rows
+reflect the current setup**, so those are the ones to quote. Real configure on the same
+bitstream, in-process: **693 ms**, against 741 ms on the hub chain.
+
+## DMA is the largest code win, and it does not fit
+
+`d43f765` is worth **-85 ms, 1.26x** -- more than every other firmware change in this
+table combined. It is also **over budget: flash 96.65% against a 95% ceiling, RAM 85.16%
+against 85%.** The deficit is **237 bytes of flash and 7 bytes of RAM**. It is committed
+but *not shippable*, and the ceilings were deliberately not raised.
+
+**Why it worked, when the archived version did not.** `debris/code/spi-dma-cynthion-d11.c`
+ran on hardware in an earlier session and measured **+13 to +36 ms slower**, so DMA was
+written off. The defect was one line:
+
+    while (!(DMAC->CHINTFLAG.reg & (DMAC_CHINTFLAG_TCMPL | DMAC_CHINTFLAG_TERR)));
+
+It freed the CPU with DMA and then immediately burned it in a spin, so `tud_task()` stayed
+blocked for the whole transfer and behaviour was identical to polling plus setup cost.
+**DMA was never tested as an asynchronous mechanism.** Arming the channels and returning,
+then polling completion from `jtag_scan_task()`, is the entire difference between -36 ms
+and +85 ms.
+
+Completion is polled from the task rather than served by a DMA interrupt, and that is
+forced: `CHID` is a single register window selecting which channel's registers are
+visible, so the channel-setup sequence is not re-entrant and must not run from an ISR.
+The poll costs one register read per main-loop iteration against a ~700 us spin, so
+nothing is lost.
+
+**Where the 237 bytes went.** About 64 are intrinsic -- DMAC descriptor and write-back
+sections the hardware mandates. The rest is splitting one synchronous function into arm
+and poll halves whose state must be marshalled through a struct. The cheap savings are
+already taken: one aligned allocation instead of two descriptor arrays, a redundant DMAC
+reset and two `.bss` memsets dropped, both scan structs packed, an always-true
+`discard_tdo` field removed -- about 100 bytes of the original ~520. What remains is a
+cheaper arm/poll split, or reclaiming flash from elsewhere in the firmware. Shrinking the
+stack reservation does not qualify: the stack is RAM and cannot pay a flash debt.
+
+**The second buffer is not redundant, which was worth checking.** If DMA had made
+`jtag_tx_alt` unnecessary, its 512 bytes of RAM would have paid for the change outright.
+Forcing the host onto the single-buffer path costs **+74.1 ms (+22.8%)**, so the two
+mechanisms are complementary: DMA stops the CPU blocking on the wire, and the second
+buffer lets the host's *next* fill land during the current chunk. `scripts/jtag_single_buffer_probe.py`
+exists so this is not re-proposed next time flash is tight.
+
+Two rows earn their place by being nearly flat. `0e9bfb1` is a pure refactor and moves
+4.8 ms, which sets the noise floor. `cd4a85c` double-buffers the staging so `SCAN` returns
+in 139 us instead of ~895 us -- the overlap provably works -- and buys 1.9 ms at 1024 B,
+because clocking was only 24% of the total and hiding it was the wrong quarter to chase.
+
+**Every `n/a` is an impossibility, not a gap.** Only HEAD has 512-byte buffers.
+Everything before it declares `jtag_out_buffer[256]` and stalls anything larger --
+`if (request->wLength > sizeof(jtag_out_buffer)) return false;` -- so a 512-byte
+request is refused by the firmware itself. The host would also fall back to 256
+regardless, since `GET_INFO` arrived with HEAD; the benchmark detects that and
+declines to label a 256-byte run as 512, which is what stops an unimplemented
+`GET_INFO` from flattering a result.
+
+Theoretical is chunk-independent by definition: 122880 x 8 / 12 MHz = 81.9 ms,
+1500 KB/s. Chunking is a transport concern and the wire does not see it.
+
+**Read the columns, not the diagonal.** Figures in this paragraph are from the hub-chain
+rows, so they overstate the USB share slightly, but the shape holds. At 256 B, 280 ms of
+555 is USB against 275 ms clocking -- half and half. At 512 B it is 352 of 489 in USB against
+137 clocking -- 72/28. The ratio moves because doubling the chunk **halves** the
+firmware-side cost (275 -> 137) while barely touching USB (280 -> 352, and that is
+worse in absolute terms).
+
+That last point is the one the single-column version hid: **going to 512 bytes made
+the USB portion bigger, not smaller.** It won overall because the firmware-side saving
+was larger than the USB-side loss. Which is also why the chunk change bought less than
+arithmetic predicted -- it was fixing the smaller half, and slightly worsening the
+larger one.
+
+## USB transfers already use DMA, and that reframes the levers
+
+Asked whether USB transfers use DMA. **They do**, and the answer matters more than
+expected.
+
+The SAMD USB peripheral **is** a DMA engine. `dcd_edpt_xfer()` at
+`dcd_samd.c:276` does:
+
+    bank->ADDR.reg = (uint32_t) buffer;
+
+so the caller's buffer address goes straight to the hardware, which moves the bytes
+itself. Zero copy, no CPU involvement. That is also what `sram_registers[8][2]` is --
+the endpoint descriptor table the hardware reads to find those addresses, which is
+why it is silicon-mandated and not reclaimable.
+
+**So there is no CPU-side data-movement cost to remove on the USB side either.** This
+is the same conclusion the DMA investigation reached for the SPI side, arrived at from
+the opposite direction: both halves of the transport are already hardware-driven.
+
+### Where the 1466 us per chunk actually goes
+
+At 512 B the USB portion is 351.9 ms over 240 chunks, so **1466 us per chunk**.
+Decomposing what is known:
+
+| component | per chunk | how known |
+|---|---|---|
+| two control transfers, fixed cost | 428 us | 2 x 213.9 us measured |
+| 512 bytes of payload at 12 Mbit/s | 341 us | arithmetic |
+| **unaccounted** | **~700 us** | |
+
+**Half the USB cost is neither request overhead nor data movement.** That is the
+single most useful thing in this section, because both remaining levers target the
+428 us: the collapse removes half of it, and double-buffering hides clocking behind
+it. Neither touches the 700 us.
+
+Candidates for the 700 us, none yet established:
+
+- **Frame scheduling.** Full-speed USB schedules control transfers per 1 ms frame,
+  and a transfer with a data stage plus a status stage may not complete within one
+  frame. If each chunk costs a whole frame boundary somewhere, that alone is
+  hundreds of microseconds and is a property of the bus rather than of either end.
+- **Host-side per-call cost** in libusb or the kernel, above the 213.9 us measured
+  for a near-empty transfer -- the measurement used a 32-byte reply, so a 512-byte
+  data stage may cost more than the payload arithmetic suggests.
+- **`tud_task()` latency**: the firmware processes the transfer from the main loop,
+  not from the ISR, so completion waits on a loop iteration.
+
+**This should be measured before either lever is built.** If the 700 us is frame
+scheduling then the collapse is worth its 51 ms and double-buffering is worth its
+137 ms, and both leave 168 ms of frame cost untouched -- which would make the real
+ceiling around 320 ms rather than the 352 ms the USB portion implies. Timing a single
+`SET_OUT_BUFFER` of 512 bytes in isolation, against one of 8 bytes, would separate
+payload from fixed cost directly.
+
+## 1024-byte chunks DO fit, if JTAG may claim what is idle
+
+I previously said the buffer merge saves only 256 bytes and that 1024-byte chunks
+therefore do not fit. **That was wrong** -- it counted only the console ring and
+missed everything else that is idle during a JTAG session.
+
+The reasoning that makes the rest claimable: **during JTAG programming everything
+else is off, and the board is rebooted afterwards.** So any buffer private to a
+subsystem that is gated off is on the table, and its contents need not survive.
+
+| source | bytes | why claimable |
+|---|---|---|
+| already unallocated | 644 | free today |
+| `uart_rx_ring` | 256 | `console_task()` returns immediately while the JTAG lock is held |
+| `_cdcd_itf` | 296 | TinyUSB CDC class state -- the console is gated off, and CDC is not the JTAG path |
+| stack reservation | 336 | 1024 reserved, **344 measured** high-water; keeping 2x margin at 688 still frees 336 |
+| **total** | **1532** | |
+
+**Attempted, and it does not fit.** This was tried and reverted -- the arithmetic
+above is wrong in a way worth recording, because it is an easy mistake to repeat.
+
+Setting `JTAG_BUFFER_SIZE` to 1024 puts RAM at **95.12%**, and the budget check in
+`check.py` rejected it. The error: the reclaimed bytes were counted correctly, but
+doubling the buffer costs **both** of them -- `jtag_in` and `jtag_out` -- so the price
+is 1024 bytes, not the 512 the "one more doubling" framing suggests. And the union
+cannot absorb it, since the console ring is 256 bytes against a JTAG pair that would
+be 2048.
+
+Working backwards from the 85% ceiling: non-union `.bss` is 1144 bytes and the stack
+is 704, so the union may be at most about 1634 bytes -- **a JTAG pair of roughly
+2 x 817.** 512 stands; 1024 does not.
+
+To actually reach 1024-byte chunks, one of these would have to happen first:
+
+- **Drop `jtag_in_buffer` during writes.** It is the larger half of the pair and
+  configure never reads TDO -- `ecp5.py` passes `ignore_response=True`. But
+  `spi_send()` dereferences its receive pointer unconditionally, so this needs a
+  NULL-receive path in the SPI driver first.
+- **Find another 400+ bytes.** `_cdcd_itf` at 296 is the only remaining candidate of
+  size, and it is TinyUSB's internal state with the CDC port possibly still open
+  during JTAG -- the riskiest claim available and still not enough alone.
+
+So the request-count lever is exhausted at 512 bytes on this part, and the ~51 ms it
+would have bought is not available without one of the above.
+
+That is worth roughly **51 ms** by the request-count arithmetic -- 120 chunks instead
+of 240, at 213.9 us of fixed cost per request -- which is the same as the collapse, for
+no protocol change.
+
+### What each claim actually requires
+
+They are not equally easy, and the order matters:
+
+**The stack claim is the safest and needs no code**, only a linker flag. The script
+already reads `STACK_SIZE = DEFINED (STACK_SIZE) ? STACK_SIZE : ... : 0x400`, so
+`-Wl,--defsym=STACK_SIZE=0x2b0` sets 688 bytes with no linker-script edit. It rests
+entirely on the measurement being trustworthy, which is why the paint-and-measure work
+came first: 344 bytes is a **lower bound**, since depth already in use when painting
+ran is invisible and one run does not prove a worst case. 2x margin is the hedge.
+
+**The ring claim is a union**, with the exclusivity proven by the JTAG lock spanning
+`jtag_init()` to `jtag_deinit()` rather than by convention.
+
+**The `_cdcd_itf` claim is the awkward one and probably should not be taken.** It is
+TinyUSB's internal state, not ours: reusing it means either patching TinyUSB or
+aliasing a structure whose layout is not ours to rely on. And CDC is not merely idle
+during JTAG -- the host may still have the port open, so TinyUSB could touch that
+state on an unrelated control transfer. Without it the total is 1236, which still
+covers the 1024 needed.
+
+So: **1024-byte chunks fit using the unallocated space, the ring, and the stack
+reduction alone.** `_cdcd_itf` is not needed and carries the most risk.
+
+## USB topology: the largest single win, and not a code change
+
+Apollo was plugged **four chained hubs deep**, on a full-speed segment shared with an
+audio device, a HID and two other CDC devices. Moving it to a port one level from the
+root hub, with nothing else on that segment:
+
+| | four hubs deep | direct port |
+|---|---|---|
+| fixed cost per transfer | 144.7 us | **122.7 us** |
+| per-byte cost | 2.717 us | **2.267 us** |
+| effective throughput | 2.94 Mbit/s | **3.53 Mbit/s** (29% of the bus) |
+| shift path, 1024 B chunks | 455.6 ms | **409.1 ms** |
+| real configure | 741 ms | **693 ms** |
+
+**46 ms from moving a cable** -- more than double-buffering, the chunk increase, the
+pipelined `spi_send()` or the TDO suppression bought individually.
+
+Every full-speed transaction below a high-speed hub is split-transaction scheduled by the
+nearest hub, and the 12 Mbit/s of that segment is *shared* with everything else on it.
+Four hubs of chaining plus contention was costing 17% of the per-byte rate.
+
+**This should be stated whenever a figure is quoted.** Every measurement in this document
+before this section was taken on the hub chain, so they are internally comparable but all
+about 10% pessimistic. The table above is the corrected baseline.
+
+### It also bounds the remaining levers more tightly
+
+Since per-byte cost is the wall, and it improved by moving the *host-side* topology rather
+than anything on the device, the interesting question is how much of the remaining 2.267
+us/byte is still contention rather than protocol. The wire is 0.667 us/byte, so 71% is
+still overhead -- but the split between "control transfer protocol" and "this host, this
+controller, this cable" is now known to be non-zero and was previously assumed to be zero.
+
+### On Linux-side priority: there is nothing to tune
+
+Checked, because it is the obvious next thought. `usbcore` exposes only `autosuspend`,
+`authorized_default` and `initial_descriptor_timeout` -- no scheduling parameters.
+Control-transfer priority is fixed by the USB spec (10% of frame budget, best-effort) and
+implemented by the host controller, which here is **xHCI** -- so the scheduling happens in
+controller firmware walking transfer rings, not in the kernel driver. There is no knob.
+
+### Isochronous would be faster, and is probably not worth it
+
+Full-speed isochronous allows **1023 bytes per endpoint per frame** with *guaranteed*
+bandwidth, against control's measured ~360 KB/s:
+
+| | staging for 122880 B |
+|---|---|
+| control, measured | 340 ms |
+| isochronous, theoretical | **120 ms** |
+
+2.8x, and it is the only transfer type with a bandwidth guarantee rather than
+best-effort scheduling.
+
+The catch is that **isochronous has no handshake and no retry** -- a dropped packet is
+simply gone. For a bitstream that means an integrity layer would have to be built on top:
+the ECP5's own CRC detects corruption but cannot recover from it, so a failed configure
+would have to be retried whole. That is a large amount of new machinery for a path that is
+already at 693 ms.
+
+## The unexplained USB cost, measured: it is bus efficiency, not frame scheduling
+
+This was the largest open question and it now has an answer, which changes what the
+remaining levers are worth.
+
+`scripts/usb_transfer_cost.py` issues the same `SET_OUT_BUFFER` at several payload sizes
+and fits `cost = fixed + per_byte x size`. Frame scheduling predicts a nearly flat line
+-- 8 bytes and 1024 bytes both costing about a 1 ms frame. Per-transfer overhead plus
+real payload cost predicts a slope.
+
+    8 B:    215.8 us      wire alone would be    5.3 us
+   64 B:    301.4 us                            42.7 us
+  256 B:    822.4 us                           170.7 us
+  512 B:   1516.7 us                           341.3 us
+ 1024 B:   2941.3 us                           682.7 us
+
+    fit: 144.7 us fixed + 2.717 us/byte
+
+**It scales, so it is not frame scheduling.** The line is clean and the slope is large:
+**2.72 us/byte against a 0.667 us/byte wire**, so 75% of the per-byte cost is overhead.
+Effective throughput is **2.94 Mbit/s of a 12 Mbit/s bus -- 25% efficiency.**
+
+That is a property of control transfers on a 64-byte endpoint: each packet carries token,
+data and handshake phases, so most of the time is protocol rather than payload. Neither
+end controls it.
+
+### What this does to the two remaining levers
+
+The model predicts the measured transport cost closely, which is what makes it usable:
+
+| chunk | chunks | predicted | of which fixed | of which payload |
+|---|---|---|---|---|
+| 512 B | 240 | 403 ms | 69 ms | 334 ms |
+| 1024 B | 120 | 369 ms | 35 ms | 334 ms |
+
+Measured USB portion at 1024 B is 320.6 ms, against 369 predicted -- close enough to
+trust the split.
+
+**The payload term is constant at 334 ms and does not depend on chunk size at all.**
+That is the wall.
+
+So:
+
+- **Collapsing `SET_OUT_BUFFER` + `SCAN` is worth about 17 ms at 1024 B, not the 51 ms
+  estimated earlier.** The 51 ms figure came from 240 chunks at 213.9 us; at 1024-byte
+  chunks there are only 120, and the correct fixed cost is 144.7 us. That is **4% of
+  total** for a protocol change.
+- **Double-buffering's ceiling stands at 137 ms** -- it hides clocking behind USB, and
+  USB is still much the longer leg. It remains the largest available lever by a wide
+  margin.
+- **Larger chunks are now clearly exhausted.** Each doubling halves only the fixed term,
+  which at 1024 B is already down to 35 ms of 457.
+
+### And it names the real ceiling
+
+Nothing on this transport beats roughly **334 ms of payload cost plus 137 ms of
+clocking**, and those overlap at best. So the floor for this architecture is about
+**334 ms**, not the 81.9 ms the wire suggests.
+
+Against that, the current 457.6 ms is **73% of achievable** rather than 18% of
+theoretical. The 5.6x gap to the wire is real but mostly not addressable: it is a
+64-byte control endpoint on a full-speed bus.
+
+### Bulk would not move the payload term either, and this explains the old result
+
+I first wrote that a bulk endpoint would fix this, "which allows larger packets and far
+less per-packet overhead". **That is wrong at full speed, and the descriptors say so.**
+
+Apollo already exposes bulk endpoints -- EP2 OUT and EP3 IN, the CDC console's -- and
+both are **`wMaxPacketSize 64`, identical to control.** That is not a design choice: the
+USB 2.0 spec caps a full-speed bulk endpoint at 64 bytes. The 512-byte bulk packets worth
+having exist only at high speed, which is the FPGA's PHY, not Apollo's.
+
+So bulk offers **no packet-size advantage here**. What it does offer is the removal of
+per-transfer framing: a control transfer costs SETUP, DATA and STATUS stages, while bulk
+is data packets back to back.
+
+That bounds it precisely. Per 1024-byte chunk the cost is `2 x 144.7 us fixed +
+2782 us payload`. If bulk removed the fixed cost **entirely** it would save 289 us per
+chunk, or **35 ms of 457** -- about 8%, and only if the per-byte cost were unchanged.
+
+**Which retires the mystery rather than deepening it.** The earlier bulk-streaming attempt
+measured 1703 ms against 1683 ms and was recorded as an unexplained failure -- built,
+working, and no faster. It is now explained: at full speed, bulk and control move bytes at
+the same rate, and the only saving available was the per-transfer framing, which is a
+small fraction of the total. The attempt did what it was designed to do; the design could
+not have helped much.
+
+### Endpoints available, and one idea parked
+
+What Apollo actually exposes, read off the live device rather than from the source:
+
+| interface | class | endpoints |
+|---|---|---|
+| 0 | Communications (CDC control) | EP 0x81 IN, interrupt, 8 B |
+| 1 | CDC Data | **EP 0x02 OUT and EP 0x83 IN, bulk, 64 B** |
+| 2 | DFU runtime | **none** -- EP0 only |
+
+Plus EP0, where **all** JTAG traffic goes today, since the vendor requests are control
+transfers. JTAG has no endpoint of its own.
+
+**So a bulk path needs no new endpoint.** The pair already exists, TinyUSB is already
+paying for the descriptor space, and CDC is provably idle during a JTAG session -- the
+same JTAG-lock argument that justified sharing the buffers, applied to endpoints.
+`console_task()` already returns immediately while the lock is held, so those endpoints
+are idle rather than merely quiet. An alternate interface setting, or claiming the
+interface on a bulk-mode vendor request, would let both use them.
+
+The SAMD11's descriptor table is `sram_registers[8][2]`, so eight endpoints of space.
+Reusing CDC's rather than declaring a fourth pair avoids spending any of it.
+
+### Parked: the bootloader could use bulk too
+
+Worth a look, not now.
+
+The bootloader and the application **never run at the same time** -- Saturn-V runs, jumps
+to the app, and is gone until the next reset. So the bootloader has the *entire* endpoint
+budget free, with nothing to be exclusive with, and it currently does all its flashing
+over **EP0 control transfers** at the same 5.8 packets/frame measured above. That is why
+flashing a 12 KB image takes as long as it does.
+
+The same 3.3x argument applies, and it is architecturally cleaner than the application
+case: no exclusivity reasoning is needed at all, because nothing else exists to contend.
+
+Two things to check before anyone acts on it. The app's DFU interface is **DFU *runtime***
+(`TUD_DFU_RT_DESCRIPTOR`, `usb_descriptors.c:104`) and is functional rather than vestigial
+-- `vendor.c:441` calls `tud_dfu_runtime_reboot_to_dfu_cb()` -- so it is not dead weight to
+be removed. And it has no endpoints, so removing it would free none. The bootloader-side
+change is entirely within Saturn-V, which is a separate submodule (`repos/saturn-v`) with
+a **2 KB** flash budget and `-flto` already enabled, so there may be no room for a bulk
+implementation regardless.
+
+### But a DEDICATED bulk endpoint is a different proposition, and worth 3.3x
+
+The paragraph above concluded that no endpoint type changes the per-byte cost. **That is
+wrong**, and the arithmetic that shows it is simple enough that I should have done it
+before writing the conclusion.
+
+Packet size is not the variable that matters. **Packets per frame is.**
+
+| | packets per 1 ms frame | us/byte |
+|---|---|---|
+| full-speed bulk, by spec | **19** (1216 B/frame) | **0.822** |
+| measured, control transfers | **5.8** | 2.717 |
+
+So the measured cost is **3.3x worse than a full-speed bulk endpoint can do**, and the
+gap is scheduling opportunity, not signalling. A control transfer carries SETUP, DATA and
+STATUS stages and the host schedules them conservatively; bulk packets stream back to
+back until the frame is full.
+
+Sanity check on the measurement: a 1024-byte control transfer took 2941 us, which is
+about three frames, and works out at 174 us per 64-byte packet. A frame holds 1000 us, so
+5.8 packets fit. Against 19 for bulk.
+
+What that means for a dedicated bulk path -- **shutting down CDC and using its endpoints
+for JTAG, or declaring new ones**:
+
+| | payload for 122880 B |
+|---|---|
+| today, control | 334 ms |
+| bulk at 50% of theoretical | **202 ms** |
+| bulk at theoretical | **101 ms** |
+
+Plus the 35 ms of per-chunk framing that disappears when the transfer is one stream
+rather than 120 chunks.
+
+**So this is the largest remaining lever by a wide margin** -- bigger than
+double-buffering's 137 ms -- and it changes the floor rather than shaving the overhead.
+It is also the one that requires the most work: a bulk protocol needs its own framing and
+error handling, where a control transfer gets a status stage for free.
+
+### And it re-opens the old streaming result rather than closing it
+
+Two paragraphs ago I wrote that the earlier bulk-streaming attempt was now explained --
+that bulk and control move bytes at the same rate at full speed, so it could not have
+helped. **That explanation is also wrong.** Bulk should have been up to 3.3x faster on
+the payload term, and it measured 1703 ms against 1683 ms.
+
+So the question is back, and sharper than before: **why did a working bulk implementation
+perform like control?** Candidates worth testing, none established:
+
+- **The firmware could not keep the endpoint fed.** If it clocks a chunk to the FPGA
+  before accepting the next bulk packet, the bus idles and the achieved rate collapses to
+  whatever the turnaround allows -- which would look exactly like control.
+- **The host submitted synchronously**, one transfer at a time, so the bus idled between
+  submissions regardless of endpoint type.
+- **`tud_task()` latency**: transfers are processed from the main loop, so completion
+  waits on a loop iteration.
+
+All three predict that bulk's advantage is only available with **double-buffering**, since
+that is what keeps the endpoint fed while the SERCOM clocks. Which would make the two
+levers one change rather than two independent ones.
+
+## The two remaining levers, quantified before building either
+
+Both measured rather than estimated, because the chunk change taught that arithmetic
+here overpredicts.
+
+| lever | ceiling | what it needs |
+|---|---|---|
+| collapse `SET_OUT_BUFFER` + `SCAN` | **51.3 ms** | one new vendor request, host fallback |
+| double-buffer fill against clocking | **137 ms** | both ends restructured, async host |
+
+**Collapse: 51.3 ms.** A bare control transfer that does almost nothing --
+`GET_ID`, 500 samples -- costs **213.9 us**. That independently reproduces the ~215 us
+figure from the decomposition above. At 240 chunks, removing one of the two requests
+per chunk is 240 x 213.9 us = 51.3 ms, or 10.5% of the 488.9 ms total.
+
+**Double-buffering: 137 ms, and only with perfect overlap.** The split at 512 B is
+351.9 ms USB against 137 ms clocking, so overlapping them perfectly gives
+`max(351.9, 137) = 351.9 ms` -- a saving of exactly the clocking time, 28% of total.
+It cannot do better than that: USB is the longer leg, so the clocking hides inside it
+and the USB time remains exposed.
+
+### Why double-buffering is not a small change
+
+The path is synchronous at three levels, and all three have to change:
+
+- **`handle_jtag_request_scan` clocks then acknowledges.** It calls `jtag_scan()`,
+  which shifts every byte, and only then completes the control transfer. So the host
+  cannot learn the scan finished without waiting for it, and the firmware has no state
+  in which "scan in progress, next buffer accepted" exists.
+- **The host loop blocks.** `_scan_data_chunk` issues `SET_OUT_BUFFER` then `SCAN` and
+  waits, so chunk N+1's fill cannot begin until chunk N's clocking returns.
+- **There is one buffer.** `jtag_out_buffer` is written by USB and read by the SERCOM
+  with nothing between them, so a second fill would corrupt an in-flight scan.
+
+So it needs a second buffer, a non-blocking `SCAN` with completion reporting, and an
+async host loop -- against 137 ms of ceiling on a 489 ms operation.
+
+**The collapse is the better first move** despite the smaller number: one vendor
+request, no restructuring, and it composes with double-buffering later rather than
+being replaced by it.
+
+## Where the remaining time goes
+
+### The gap is the whole story
+
+At 512 bytes the real path takes **488.9 ms** where the same clocking with no USB
+payload takes **137 ms**. So roughly **352 ms, 72% of the total, is USB transport**,
+and only 137 ms is the microcontroller clocking bits.
+
+And the no-USB figure is itself only 60% of theoretical, so there are two distinct
+gaps:
+
+- **81.9 -> 137 ms** is the SERCOM and its loop: 55 ms of per-byte overhead the wire
+  does not account for. The marginal-cost differencing above puts clocking at
+  0.663-0.715 us/byte against a 0.667 us/byte wire floor, which is 2-3% -- so most
+  of this 55 ms is per-*chunk* cost (pinmux, setup, the verify loop), not per-byte.
+- **137 -> 488.9 ms** is USB. This is the part the two untried levers attack.
+
+Note the no-USB figure halves cleanly from 256 to 512 bytes (275 -> 137 ms) while the
+real path improves only 12% (558.8 -> 488.9). That asymmetry is the clearest single
+statement of where the time goes: doubling the chunk halves the firmware-side
+per-chunk cost, and barely dents the USB cost.
+
+### Two caveats on the 0xb9 numbers
+
+**`blocks` in the reply is in 256-byte units, not bytes** -- `blocks = chunk *
+repeats / 256` at `jtag.c:337`. Reading it as bytes doubles the apparent payload,
+which it did on the first attempt here.
+
+**The mismatch counter only means anything in BYPASS.** The benchmark expects TDO to
+be TDI delayed by one bit, which holds in SHIFT-DR with BYPASS selected. Run from a
+context that leaves the TAP elsewhere and it reports mismatches on every byte -- as
+it did here. That is the harness being used wrongly, not a data-integrity failure,
+and the counter is worthless unless the TAP state is set up deliberately.
+
+Verified behaviourally rather than by version string, which is worth noting: the
+build reports `v1.1.1-41-gbb82d39-dirty` even when the code is stock, because the
+version comes from `git describe` on the working tree rather than from the checked-out
+firmware. Confirmed stock instead by both project-added vendor requests stalling --
+`GET_INFO` (0xb8) and `GET_STACK_USAGE` (0xa5).
+
+Stock builds at **94.17% ROM / 86.52% RAM**, which is why it needed no LTO to fit
+its own feature set and why ours does.
+
+**So `e034daa` is 639 -> 567 ms, or 1.13x -- not the 1.53x recorded at the time.**
+That original figure was a whole-configure measurement on a different payload, and
+it is not wrong so much as not comparable. On identical work the change is real and
+about a quarter the size claimed.
+
+The `0e9bfb1` row is the useful control: a pure refactor, and it moves 4.8 ms, which
+sets the noise floor for reading the others.
+
+Getting stock to build at all took two fixes, both artifacts of mixing eras rather
+than facts about stock. `SOURCES` is a wildcard over `src/*.c`, so **four** files this
+project added stay in the build after an older checkout -- they are untracked at
+`v1.1.1`, so git leaves them alone: `stack_probe.c/h` and `apollo_mode.c/h`. With
+those still present, stock fails on `-Werror=array-bounds` and then at 107% ROM /
+103% RAM. The script now sets all four aside per commit.
+
+## The synthetic benchmark (0xb9), and the floor that was not a floor
+
+Merged from a separate document, because two files about JTAG timing is how these
+docs came to hold forty non-comparable figures in the first place.
+
+Vendor request `0xb9` (`handle_jtag_benchmark`) exists to measure clocking with **no
+bulk USB traffic at all**: it generates its own pattern in firmware
+(`jtag_out_buffer[i] = i * 7 + 1`), clocks it, verifies TDO, and returns elapsed
+milliseconds. It also accepts a SERCOM divider, so SCK can be swept with nothing in
+the way to confound the result.
+
+### What it originally concluded, and why that was wrong
+
+Sweeping the divider with every readback bit-exact gave:
+
+    time per byte = 8/SCK + 1.11 us
+
+The second term was constant across an 8x SCK range, which was read as: the wire
+needs 0.667 us/byte at 12 MHz, so the polled loop was spending **1.11 us/byte of CPU
+on top**, and the path was CPU-bound rather than wire-bound.
+
+**That was an artifact**, and the same one that produced the 3.93 us/byte figure
+elsewhere: dividing a whole call by its payload charges the fixed per-call cost to
+per-byte clocking. Measuring the *marginal* cost instead -- differencing 64-bit
+against 2048-bit scans so the fixed cost cancels -- gives 0.663-0.715 us/byte against
+a 0.667 us/byte wire floor. **2-3% overhead, not 166%.**
+
+So `spi_send()`'s pipelining did take a real win, but the "1.11 us/byte of CPU" it
+was credited with removing never existed as a per-byte cost. It was per-chunk cost,
+mis-attributed.
+
+### Two false results its own controls caught
+
+Worth keeping, because both looked clean:
+
+- The DMA and baseline firmwares measured **identically** on the first isolation
+  attempt -- 329.7 against 329.1 us. A positive control asserting that `SCAN` is
+  accepted *and* that its cost scales with bit count is what surfaced it: a stalled
+  or no-op request looks exactly like a fast one on a stopwatch.
+- The first harness used **wrong request numbers** -- `0xb5` is `GOTO_STATE`, not
+  `SCAN`. Checking against the firmware enum rather than trusting plausible timings
+  is what caught that.
+
+### Using it correctly
+
+Two traps, both hit while collecting the numbers in the table above:
+
+- **`blocks` in the reply is in 256-byte units**, not bytes -- `blocks = chunk *
+  repeats / 256` at `jtag.c:337`. Reading it as bytes doubles the apparent payload.
+- **The mismatch counter is only meaningful in BYPASS**, where TDO is TDI delayed one
+  bit. Called from a context that leaves the TAP elsewhere, it reports a mismatch on
+  every byte -- harness misuse, not corrupted data.
+
+## The RAM work, one change at a time
+
+Four changes, each built, flashed and tested on its own before the next. Two of them
+deliberately bought **no** speed, which is the point of testing separately: a speed
+change there would have meant something went wrong.
+
+| change | RAM | 512 B time | what it bought |
+|---|---|---|---|
+| baseline | 84.28% | 489.4 ms | |
+| stack sized from measurement | 78.52% | unchanged | **320 bytes** |
+| console ring shares the JTAG union | 72.27% | 491.0 ms | **256 bytes** |
+| `spi_send()` accepts NULL receive | 72.27% | unchanged | capability |
+| `FLAG_DISCARD_TDO` | 72.27% | 492.6 ms | capability |
+
+**576 bytes reclaimed, no measurable speed change.** All three time figures sit inside
+a 1.0-6.9 ms spread, so they are one number.
+
+### Why each was tested alone
+
+**Stack from measurement.** `STACK_SIZE=0x2C0` (704 bytes) against 344 measured, so
+just over 2x margin. Verified on hardware afterwards -- idle, 300 control transfers, 50
+sideband commands, a full JTAG configure -- and the high-water came back **344, exactly
+as with 1024 reserved**. That is the expected result and worth stating: usage does not
+depend on the reservation, so shrinking it changes nothing until something actually
+overflows. On a part with no MPU that would be silent `.bss` corruption rather than a
+fault, which is why the margin is generous rather than tight.
+
+**The union.** The console ring and the JTAG buffers share storage, with exclusivity
+proven by the JTAG lock spanning `jtag_init()` to `jtag_deinit()` -- and
+`console_task()` returning immediately while it is held. Deliberately **not** aliased:
+`jtag_in_buffer` and `jtag_out_buffer` stay separate, because `spi_send()` takes both in
+one call and overlapping them would corrupt every transfer.
+
+That change introduced one hazard and closed it: the buffers became **pointers rather
+than arrays**, so `sizeof()` on them silently yields 4. Six sites used
+`sizeof(jtag_out_buffer)` as a bound, including the `SET_OUT_BUFFER` length check --
+which would have become a 4-byte limit rejecting every real request. All six now use
+`JTAG_BUFFER_SIZE`.
+
+**`spi_send()` NULL receive.** SPI is inherently bidirectional, so the hardware hands
+over a byte whether the caller wants it or not, and both store sites wrote to the
+caller's pointer unconditionally -- passing NULL wrote to address 0. The `DATA` register
+is still read when discarding, and must be: `RXC` stays set until `DATA` is read and the
+loop waits on `RXC`, so skipping the read **hangs** rather than merely dropping a byte.
+
+**`FLAG_DISCARD_TDO`.** `ignore_response` previously suppressed only the host's own
+`GET_IN_BUFFER` call; the firmware still captured every byte. Bit 2 of the SCAN flags
+now tells it. Backward compatible both ways -- older firmware masks only the flags it
+knows, so an unrecognised bit is ignored rather than misread, and an older host simply
+does not set it.
+
+### What this was all for
+
+`jtag_in_buffer` is now **provably untouched during a configure**, which is the
+precondition for handing its 512 bytes to the transmit path. That is the remaining route
+to 1024-byte chunks after the direct attempt hit 95% RAM, and is worth roughly 51 ms by
+request count.
+
+The two capability changes are the interesting entry in the table precisely because
+they moved nothing: they stopped a store into RAM, and the store was never the
+bottleneck. Their value is entirely in what they make possible next.
+
+### 1024-byte chunks: the shift path gets faster, and the read bound is the blocker
+
+Attempted properly this time -- not by growing RAM, but by re-carving the union so the
+transmit buffer takes the **whole** region and the receive buffer becomes its second
+half. That works because `FLAG_DISCARD_TDO` proves the receive half is untouched during
+a write.
+
+**RAM did not grow: 70.12%, and after reverting, 59.77%** -- the re-carve stopped
+allocating two separate halves, which is a genuine gain the revert kept.
+
+The shift benchmark improved as predicted:
+
+| chunk | chunks | best |
+|---|---|---|
+| 256 B | 480 | 564.0 ms |
+| 512 B | 240 | 490.7 ms |
+| **1024 B** | **120** | **457.5 ms** |
+
+33 ms over 512, 106 ms over 256. Real and measured.
+
+**But it was reverted, because of a flaw I introduced.** `GET_INFO` reports one size,
+and there are now **two** limits: the transmit buffer is the whole region, while a
+capturing scan is bounded by the read half. The host negotiated 1024 and had no way to
+know reads must stay under 512. Demonstrated directly:
+
+    capturing scan of  512 B: accepted
+    capturing scan of 1024 B: REFUSED (USBError)
+
+`_execute_command()` in `ecp5.py` defaults to `ignore_response=False`, so parts of the
+configure sequence do capture TDO. They are small today, but the protocol now has a
+limit the host cannot discover.
+
+**The fix is to report both limits** -- `GET_INFO` already returns eight bytes with four
+unused, so a read limit fits with no new request. That is the next change rather than a
+blocker.
+
+### A measurement error worth recording, because it nearly reversed the conclusion
+
+The real configure appeared to get **slower** at 1024 -- 831 ms against a recorded
+774 ms at 512 -- while the shift benchmark got faster. Six samples said 832-854 ms, so
+it was not noise, and the contradiction looked like a real regression.
+
+It was the measurement. Those figures timed `subprocess.run(python cli.py configure)`,
+which includes **Python interpreter startup** -- roughly 80 ms that has nothing to do
+with JTAG. Measured in-process instead, same session, both sizes back to back:
+
+    configure at 256 B: 850.9 ms
+    configure at 512 B: 776.1 ms
+
+The 774 ms reproduces exactly. So the "1024 is slower" reading was an artifact of
+process startup, and the earlier 774 figure was only comparable because it happened to
+be measured the same way.
+
+**The lesson is the same one the fixed-payload benchmark exists for**, arriving from a
+new direction: it is not enough to fix the payload, the harness has to be fixed too. A
+per-process measurement cannot resolve a 33 ms difference when startup costs 80.
+
+## Things tried that did not work
+
+Recorded so they are not retried, and because the failures were more informative than
+some of the successes.
+
+| attempt | outcome | why |
+|---|---|---|
+| `JTAG_BUFFER_SIZE` 512 -> 1024 | **rejected at 95.12% RAM** | doubling costs BOTH halves of the pair, 1024 bytes not 512 |
+| SCK 12 -> 24 MHz | **rejected, unsafe** | divider steps 8/12/24 with nothing between; SAMD11 `tSCK` min 84 ns = 11.9 MHz rated, so 12 is already past |
+| SERCOM DMA, *spinning on completion* | **implemented, marginally slower -- and the conclusion was wrong** | 1711-1751 ms against 1698-1715 polled. It spun on `TCMPL` after arming, so `tud_task()` stayed blocked and it was polling plus setup cost. Made asynchronous instead: **-85 ms, 1.26x** |
+| DMA making the second buffer redundant | **hypothesis, disproven** | removing `jtag_tx_alt` costs +74.1 ms (+22.8%); DMA and double-buffering are complementary, not alternatives |
+| dropping `button_task()` alone | **no measurable gain -- but see below** | 326.4 vs 327.9 ms, inside the 1.6 ms spread. It really does cost ~4.8 us per iteration (PA16 is shared with `LED_A`, so each poll saves the level, flips to input, waits 50 cycles for the pull, samples and restores) |
+| masking the EIC during JTAG | **no measurable gain** | 326.7 vs 327.9 ms, inside a 4.0 ms spread. `fpga_adv_task()` has no JTAG gate, unlike `console_task()`, so the EIC stays armed on a pin the FPGA has tri-stated -- but it costs nothing measurable |
+| **the conclusion drawn from those two** | **wrong, and worth more than either** | both were tested *in isolation*, where removing one poll of five leaves the other four setting the loop period. Cutting the LED and button together from ~200 kHz to 200 Hz measured **327.9 -> 318.1 ms**, 9.8 ms against a 5.3 ms spread (`7060149`). The null results were real; "loop-level work is noise" did not follow from them |
+| TX-only (drop TDO entirely) | correct but not worth it | ~2 ms of 950, for a silent-failure surface |
+| bulk streaming | **built, worked, no faster** | 1703 vs 1683 ms; its stated cause was later disproven, so still unexplained |
+| `-fstack-usage` for stack depth | **wrong tool** | LTO inlines across units, so per-function frames stop matching the final binary |
+| `git bisect` across apollo history | **failed on all 5 points** | checking out old apollo replaces `apollo_fpga/`, removing `boot_to_dfu()` -- one of our own additions |
+| paint-and-measure, first version | **self-contradictory** | LTO resolved `&_sstack` differently per inlined copy; reported full-region use AND no overflow |
+| word-wise stack scan | **latent bug** | one coincidental `0xDEADBEEF` truncates the scan and understates usage |
+
+Six of these are worth more than a note.
+
+**The DMA row is the cautionary one in this whole table.** It reads as "tried, does not
+work" and it stopped anyone retrying for months, when the mechanism was right and one
+line was wrong. The archived file even documents its own spin in a comment. The lesson is
+narrower than "retry failed things": a negative result is only as broad as what was
+actually varied, and what was varied there was *who clocks the bytes* -- never *whether
+the CPU is free while they are clocked*. Record what a failure tested, not just that it
+failed.
+
+**The 1024-byte buffer is the one to not retry.** The reclaimed RAM was counted
+correctly -- 320 from the stack, 256 from the union, 644 already free -- but a doubling
+buys `jtag_in` and `jtag_out` together, so it costs 1024. Working back from the 85%
+ceiling: non-union `.bss` is 1144 and the stack 704, so the union caps near 1634 bytes,
+a JTAG pair of about **2 x 817**. The only route left is dropping the receive buffer for
+writes, which `spi_send()` now permits.
+
+**The bisect failure is a trap worth naming.** `boot_to_dfu()` is this project's
+addition and is absent from stock `v1.1.1`, so checking out an old commit removes the
+method needed to flash it. Every point failed with `AttributeError` before touching the
+board, and the run left it in the bootloader. Fixed by checking out `firmware/` only,
+which also keeps the host library constant and removes it as a variable.
+
+**Two measurement errors, same root cause.** The 3.93 us/byte and 1.11 us/byte figures
+that drove decisions for a long time are the same artifact measured twice: dividing a
+whole `SCAN` call by its payload charges a fixed ~215 us round trip to per-byte
+clocking, inflating it about 5x. Marginal-cost differencing gives 0.663-0.715 us/byte
+against a 0.667 wire floor.
+
+**And a comparison error of mine, for completeness.** I timed new firmware at 890 ms
+against a recorded 1680 ms and reported 1.89x. Different bitstreams. Same payload it was
+846 -> 774 ms, or 1.09x. That is what the fixed-payload benchmark exists to prevent, and
+it happened before the benchmark existed.
+
+## Why not bypass Apollo entirely? Because the ECP5 cannot load itself
+
+Folded in from `fast-bitstream-loading.md`, now retired to `debris/docs/`. It is here
+rather than filed away because the audience for a configure-speed document is exactly
+the audience tempted to propose an FPGA-side loader, and these are hard negatives with
+primary sources -- expensive to establish, cheap to re-propose.
+
+Tracked as **[#108] (https://github.com/awtoau/cynthion-workspace/issues/108)**.
+
+## 1. The ECP5 cannot reconfigure its own SRAM
+
+This is the crux, and it is a hard negative.
+
+**There is no ICAP-equivalent on ECP5.** The complete list of configuration and
+miscellaneous primitives is `JTAGG`, `OSCG`, `SEDGA`, `DTR`, `USRMCLK`, `GSR` --
+verified from three independent sources that agree exactly:
+`prjtrellis/libtrellis/src/Chip.cpp:261-268`, `nextpnr/ecp5/arch.cc:1035`, and
+the Yosys ECP5 blackbox library. None of them accepts configuration data.
+
+Ruling out the near-misses one at a time:
+
+- **`JTAGG`** is the primitive people expect to be a backdoor. It is not. Its
+  only two parameters are `ER1`/`ER2` (`nextpnr/ecp5/bitstream.cc:1517-1521`),
+  which are user-defined shift registers selected when an *external* JTAG master
+  shifts their instruction into the IR. Its `TCK`/`TMS`/`TDI` ports are marked
+  `iopad_external_pin` -- bonded to the pads, not drivable from fabric. The
+  configuration opcodes (`ISC_ENABLE`, `LSC_BITSTREAM_BURST`, ...) are decoded by
+  hard logic behind the TAP IR, and fabric never sees the IR.
+- **`USRMCLK`** drives the MCLK *pin*, for a soft SPI master talking to the
+  external flash. It is a path to flash, not to the configuration engine.
+- **`SEDGA`** reads configuration memory for CRC checking. Read-only.
+- **`PCNTR`**, which on MachXO2/XO3 *does* give fabric a limited poke at the
+  config engine, **does not exist on ECP5** --
+  `prjtrellis/libtrellis/src/Chip.cpp:472` instantiates it only in the MachXO2
+  branch. This is the most telling result: Lattice documents such a mechanism
+  where it exists, and for ECP5 it does not.
+
+**`--background` does not do what the issue assumes.** It sets three CRAM bits in
+tile `EFB0_PICB0` plus CR0 bits 29/27/26/25 (`ecppack.cpp:158-165`,
+`Bitstream.cpp:34,917-921`). Its effect is to keep I/O pins live during a
+reconfiguration driven by an *external* master, enabling partial reconfiguration
+over JTAG. Project Trellis states the mechanism explicitly: partial bitstreams
+require `BACKGROUND_RECONFIG`, and then "instructions 0x79 ... and 0x74 ... must
+be sent **over JTAG**". Lattice FPGA-TN-02039 section 6.2 is blunter still: "When
+the ECP5 ... devices are in Background mode, **only read type commands are
+supported**."
+
+**Reconfiguration cannot even be *triggered* from fabric.** FPGA-TN-02039
+section 5.5 lists exactly three exits from user mode: PROGRAMN asserted, a
+REFRESH command on a configuration port, or power cycling. PROGRAMN is a
+dedicated **input** (ECP5 datasheet FPGA-DS-02012) with no output driver and no
+fabric routing. REFRESH is accepted "only [on] the JTAG port and the Slave SPI
+port", both requiring an external master. `BOOTADDR` is CRAM fixed at pack time
+(`ecppack.cpp:167-194`), not a runtime register.
+
+So the only route from user logic is: write the image to SPI flash with a soft
+SPI master, then have *something external* trigger a reboot. The running design
+does not survive it. That is precisely what Apollo's existing
+`FlashBridge`/`flash-fast` already does -- and it is why that code writes flash
+rather than SRAM. The issue's own table rules that route out on erase/program
+time.
+
+## 2. The FPGA-side transfer really is ~6 ms -- and it does not matter
+
+`gateware/probes/loader/bitstream_sink.py` is the receiving half of the proposed
+loader: a bulk OUT endpoint on TARGET-C that counts bytes and never
+back-pressures. It builds (110 MHz against a 60 MHz constraint), loads, and
+enumerates at `1209:000e`. Pushing a 304726-byte bitstream at it:
+
+    wrote 304726 bytes in 7.89 ms (38.6 MB/s, 309 Mbps)
+
+**The issue's ~6 ms estimate was essentially correct.** This is the strongest
+single piece of evidence in the investigation, and it cuts against the issue's
+own conclusion: the leg that was assumed to be the expensive one is ~350x
+cheaper than the path in use, and it was never the problem. Even if the ECP5
+*could* configure itself from this data -- it cannot -- adopting this transport
+would remove 7.89 ms from a 2746 ms operation.
+
+The same image over the JTAG path takes 2746 ms. The difference is entirely
+which chip the bytes pass through.
+
+## 3. Why the JTAG path is actually slow
+
+The issue attributes ~3.0 s to "JTAG clock". The code and the measurements both
+disagree.
+
+`ECP5_JTAGProgrammer.configure` sends the whole image in a single
+`LSC_BITSTREAM_BURST` data scan (`ecp5.py:457`). But `JTAGChain._scan_data`
+splits that scan into `max_bits_per_scan` chunks (`jtag.py:306-321`), and the
+SAMD11's staging buffer is 256 bytes (`firmware/src/jtag.c:30-31`). Each chunk
+costs **two USB control transfers**: `SET_OUT_BUFFER` carrying the data, then
+`SCAN` telling the MCU to clock it out.
+
+Decomposing those two transfers by varying payload size and bit count
+independently:
+
+| transfer | 0-8 B / 8 bits | 256 B / 2048 bits | marginal |
+|---|---|---|---|
+| `SET_OUT_BUFFER` (data in, no JTAG work) | 167 us | 846 us | **2.53 us/byte** |
+| `SCAN` (no payload, pure JTAG work) | 138 us | 497 us | **1.40 us/byte** |
+
+Fitting `SET_OUT_BUFFER`: **204 us fixed + 2.53 us/byte** (a second run gave
+195 us + 2.51 us/byte; the figures below use the first).
+
+The decisive comparison is the two marginal columns. **Getting a byte into the
+SAMD11 costs nearly twice what clocking it onto the JTAG wire costs.** The wire
+is not the bottleneck; the pipe feeding it is. The SAMD11 clocks JTAG over
+hardware SPI at `baud_divider=1` (`boards/cynthion_d21/jtag.c:25`), which is fast
+enough that it spends most of its time waiting for data.
+
+### The ceiling nobody mentioned
+
+The Apollo debug controller enumerates at **12 Mbps full-speed** with a 64-byte
+EP0 (`/sys/bus/usb/devices/.../speed` = 12; `CFG_TUD_ENDPOINT0_SIZE 64`).
+
+This is the single most important fact for issue [#100] (https://github.com/awtoau/cynthion-workspace/issues/100), because the 388 Mbps
+figure the issue reasons from is the throughput of the **FPGA's** USB PHY, on a
+different port and a different chip. The bitstream does not travel that path. It
+travels the SAMD11's full-speed link, whose raw ceiling is 1.5 MB/s.
+
+At the measured 2.53 us/byte the control path runs at 0.40 MB/s -- **26% of the
+full-speed wire**. That inefficiency is the opportunity.
+
+| bound | time for a 304726 B image |
+|---|---|
+| measured today (end to end) | **2746 ms** |
+| SAMD11 ingest at measured 0.40 MB/s | 771 ms |
+| JTAG clocking alone at 1.40 us/byte | 427 ms |
+| 100% of full-speed wire | **203 ms** -- floor for *any* SAMD11 path |
+| issue [#100] (https://github.com/awtoau/cynthion-workspace/issues/100)'s target | 6 ms -- **not reachable through this MCU** |
+
+Note the end-to-end 2746 ms exceeds the 771 ms ingest figure, because the
+per-transfer fixed cost (204 us x 1191 chunks) and the `SCAN` transfers add on
+top.
+
+## Getting back to a clean state between runs
+
+Merged from `apollo-configure-speed.md`, which this document replaced. Earned during
+that work and still true.
+
+A configured FPGA drives the shared lines and will not re-enter ISC, so **every
+configure must start from a reset FPGA**. Back-to-back configures otherwise fail with
+"Failed to enter ISC" and an all-zero status. Pre-existing behaviour rather than
+anything these changes caused, but it produces confusing failures when benchmarking in
+a loop and cost real time.
+
+`verify_configure.py` therefore issues three requests before each run:
+
+| request | why |
+|---|---|
+| `0xec` `EMERGENCY_RESET` | If a previous run left a JTAG session open, Apollo stays latched in `MODE_JTAG_PROGRAMMING` and refuses control-plane requests, surfacing as a pipe error. This request is permitted in that state precisely to break the deadlock. |
+| `0xbe` `JTAG_STOP` | Closes the dangling session. |
+| `0xc0` `TRIGGER_RECONFIGURATION` | Pulses PROGRAMN, which is what actually resets the FPGA. |
+
+`force_fpga_offline()` is **not** usable for this: once the FPGA is already offline the
+request is refused with a pipe error.
+
+Two recovery notes, both exercised:
+
+- After a successful configure the FPGA may take over the USB port, so the next
+  operation can fail with "No such device". The device is fine -- re-run it.
+- If Apollo ends up in the Saturn-V bootloader, `fwup-util` may not find it while
+  `dfu-util` will: `dfu-util -d 1d50:615c -a 0 -D <firmware.bin> -R`. Since this work
+  there is also `apollo enter-dfu` for the outbound direction and
+  `scripts/apollo_reflash.py` for the whole cycle.
+
+## Repository state worth knowing
+
+`debris/code/spi-dma-cynthion-d11.c` was recovered from a lost worktree and is now on
+main, which is the only reason the DMA work could be resumed rather than rewritten.
+
+`repos/apollo` sits on a **detached HEAD** at `d43f765` -- normal for a submodule, but the
+parent repo's pointer has not been moved, so the DMA commit is reachable only from the
+submodule's own reflog until that is decided. It is over budget, so moving the pointer
+would put an unshippable firmware on main; that is the reason to leave it, not an
+oversight.
+
+
+---
+
+## usb-host-options.md: Parts I-III as first written (issues #101, #105)
+
+### Source: docs/usb-host-options.md
+
+# USB host mode on Cynthion at 480 Mbps — the options
+
+**Status:** proposal, no hardware exercised
+**Date:** 2026-07-30T19:30:00+10:00; integration design added 2026-08-03T01:30:00+10:00
+**Consolidates:** awtoau/cynthion-workspace#101, [#105] (https://github.com/awtoau/cynthion-workspace/issues/105)
+**Target:** LFE5U-12F (24288 LUT, 56 BRAM), Cynthion r1.4
+
+Sections 0-10 are the original feasibility study: can this board host, and does
+anything exist to build on. **Section 11 onwards is the integration design** —
+what it takes to attach a host engine to *this* SoC, and it corrects five things
+sections 0-10 got wrong. Read section 11.1 before trusting anything above it.
+
+**If the question is Linux, this is not the document.** A 480 Mbps host with a
+bespoke register interface has no Linux driver, so taking it means writing an HCD.
+[`linux-on-cynthion.md`] (../linux-on-cynthion/ANALYSIS.md) carries that chain end to end and
+picks the full-speed OHCI route for exactly that reason; its Part II is the
+full-speed investigation in detail. This document remains the answer to [#105] (https://github.com/awtoau/cynthion-workspace/issues/105)'s
+question, which was 480 Mbps.
+
+---
+
+## 0. Executive summary
+
+Four findings drive everything below.
+
+1. **LUNA has no host stack.** Not a partial one — the USB 2.0 protocol layer is
+   structurally device-only. The ULPI/PHY layer, however, already exposes every
+   host control signal it would need.
+2. **The board can host.** Cynthion r1.4 can source VBUS to TARGET A and has
+   current/voltage monitoring plus Type-C CC control. This is not a board blocker.
+3. **A working LUNA-based host exists in another project** — Tiliqua's
+   `usb_host.py` (merged, 691 lines) — but it is **full-speed (12 Mbps) only**,
+   and a GSG maintainer has pointed at it as *the* starting point for Cynthion.
+4. **480 Mbps is where the cost concentrates.** Getting to 12 Mbps host is a
+   port-and-adapt job. Getting from 12 to 480 Mbps requires the host side of the
+   high-speed chirp handshake, which nobody in this ecosystem has written.
+
+The distance from "no host" to "12 Mbps host" is far shorter than the distance
+from "12 Mbps host" to "480 Mbps host". Recommendation is in section 6.
+
+---
+
+## 1. What LUNA has today
+
+### 1.1 It is device-only, by construction
+
+`repos/luna/luna/gateware/usb/usb2/` contains `device.py`, `control.py`,
+`endpoint.py`, `request.py`, `transfer.py`, `descriptor.py`, `reset.py`,
+`packet.py`. There is no `host.py`, no root-hub model, no SOF generator, no
+transaction scheduler, no pipe management, no enumeration driver.
+
+The decisive line is `luna/gateware/usb/usb2/device.py:382`:
+
+```python
+# Disable our host-mode pulldowns; as we're a device.
+self.utmi.dm_pulldown.eq(0),
+self.utmi.dp_pulldown.eq(0),
+```
+
+The device stack does not merely omit host support; it actively drives the
+host-mode pulldowns off. Host mode is a deliberate non-goal of `USBDevice`.
+
+### 1.2 The asymmetry is in the packet layer
+
+`packet.py` names look symmetric but are not. Each block is one direction only:
+
+| Block | Role | Reusable for host? |
+|---|---|---|
+| `USBTokenDetector` | **receives** SETUP/IN/OUT/SOF tokens | No — host must *generate* tokens |
+| `USBHandshakeDetector` | receives ACK/NAK/STALL | Yes, directly |
+| `USBHandshakeGenerator` | sends ACK/NAK/STALL as a device | Partly — host only ever sends ACK |
+| `USBDataPacketReceiver` / `Deserializer` | receives DATA0/1 | Yes, directly |
+| `USBDataPacketGenerator` | sends DATA0/1, does CRC-16 | Yes, directly |
+| `USBDataPacketCRC` | CRC-16 both directions | Yes, directly |
+| `USBInterpacketTimer` | bus turnaround timing | Yes — already has HS/FS/LS constants |
+
+So roughly the lower half of the packet layer is direction-agnostic and reusable.
+The missing pieces are a **token generator** and everything above it.
+
+`USBInterpacketTimer` is worth calling out as a genuine asset: it already encodes
+HS, FS and LS rx-to-tx delays and tx-to-rx timeouts from the USB 2.0 and ULPI 1.1
+specs (`_HS_RX_TO_TX_DELAY`, `_HS_TX_TO_RX_TIMEOUT = 92` ULPI cycles, etc.).
+Bus turnaround timing at high speed is a classic source of silent failure, and it
+is already done and in use.
+
+### 1.3 The HS chirp handshake is device-side only
+
+`reset.py`'s `USBResetSequencer` implements the **device** half of the high-speed
+detection handshake: states `DEVICE_CHIRP` (drive chirp K ~2 ms), then
+`AWAIT_HOST_K` / `IN_HOST_K` / `AWAIT_HOST_J` / `IN_HOST_J`, counting three valid
+K/J pairs before declaring `IS_HIGH_SPEED`.
+
+The host half is the mirror image and **does not exist**: assert SE0, watch for a
+device chirp K, then drive at least three alternating K/J pairs, then switch to HS
+terminations. This is the single most important gap for a 480 Mbps host, and it is
+discussed in section 3.2.
+
+### 1.4 The ULPI layer, by contrast, is already host-capable
+
+`luna/gateware/interface/ulpi.py` exposes the full UTMI+ control surface, and the
+docstrings explicitly anticipate host use:
+
+```
+I: dp_pulldown -- when set, enables a 15kR pull-down on D+; intended for host mode
+I: dm_pulldown -- when set, enables a 15kR pull-down on D+; intended for host mode
+```
+
+Also present: `op_mode` (including `RAW_DRIVE` for direct bus driving),
+`xcvr_select`, `term_select`, `chrg_vbus` / `dischrg_vbus`, and the OTG control
+register (0x0A) written with `id_pullup`, `dp_pulldown`, `dm_pulldown`,
+`dischrg_vbus`, `chrg_vbus`, `use_external_vbus_indicator`.
+
+**Conclusion for section 1:** the PHY abstraction needs no work for host mode. The
+protocol layer above it needs to be written. This is a favourable split — the
+fiddly, timing-critical, vendor-specific layer is the part already done.
+
+---
+
+## 2. What the board supports
+
+From `repos/cynthion/cynthion/python/src/gateware/platform/cynthion_r1_4.py`.
+
+### 2.1 Three full ULPI PHYs
+
+`control_phy`, `aux_phy`, `target_phy` are each declared as a complete
+`ULPIResource` — 8-bit data, clk (FPGA-driven, `clk_dir='o'`), dir, nxt, stp,
+rst. All three are USB 2.0 HS-capable PHYs with bidirectional ULPI. Nothing about
+the ULPI wiring restricts direction of the USB role; ULPI `dir` is bus turnaround,
+not host/device role.
+
+### 2.2 VBUS sourcing exists — this is the board fact that matters
+
+```python
+# VBUS on each of the Type-C ports can be connected to TARGET A through
+# a bidirectional switch. If any of these switches is enabled, TARGET A
+# is considered an output.
+Resource("target_c_vbus_en",   0, Pins("K5", ...))
+Resource("control_vbus_en",    0, Pins("L1", ...))
+Resource("aux_vbus_en",        0, Pins("L2", ...))
+Resource("target_a_discharge", 0, Pins("K4", ...))
+```
+
+Plus `control_vbus_in_en` / `aux_vbus_in_en` for input shutoff.
+
+A host must source VBUS to the device it hosts. Cynthion can: VBUS from CONTROL or
+AUX can be switched through to TARGET A, and TARGET A can be actively discharged.
+`target_a_discharge` matters more than it looks — safe VBUS sequencing on
+disconnect needs it, and it is present.
+
+Supporting infrastructure is also there:
+
+- `power_monitor` — I2C voltage/current monitor, so overcurrent detection and the
+  spec-required port power management are achievable.
+- `target_type_c` / `aux_type_c` — I2C Type-C controllers with `int` and `fault`
+  pins, giving CC line control (Rp/Rd role advertisement) and fault reporting.
+
+### 2.3 No ID pin, and none needed
+
+There is no mini/micro-B `ID` pin, because r1.4 is Type-C. Role is established by
+CC line resistors via the Type-C controllers, not by an ID pin. The ULPI
+`id_pullup` bit exists in the OTG register but is irrelevant here. This is a
+non-issue, noted only because "check the ID pin" was raised as a question.
+
+### 2.4 Board verdict
+
+**The board can act as a USB host.** VBUS sourcing, discharge, current monitoring,
+CC role control and an HS-capable PHY are all present on TARGET. There is no
+hardware blocker. Everything remaining is gateware plus firmware.
+
+Caveat not verified here: whether the VBUS switch path and TARGET A current limit
+meet the 500 mA / 900 mA a spec-compliant host should offer. That is a schematic
+and datasheet question, and no hardware was exercised for this proposal. For
+hosting a single low-power device it is very unlikely to be a problem.
+
+---
+
+## 3. Prior art — the finding that changes the answer
+
+Section 1 concluded that LUNA has no host stack. That would normally imply a
+large from-scratch effort. It does not, because the work has substantially been
+done outside LUNA.
+
+### 3.1 GSG has not declined host mode — they have deferred it
+
+`greatscottgadgets/cynthion#230`, "Gateware host mode implementation?", is closed,
+but not as a refusal. martinling (GSG member) replied:
+
+> There is a working example of host mode gateware using LUNA
+> [in the Tiliqua project] (https://github.com/apfaudio/tiliqua/pull/65), which you
+> could use as a starting point. At some point we'd like to bring more of that
+> functionality into LUNA and add an example for doing this with Cynthion, but
+> we're not there yet.
+
+So upstream considers host mode desirable, unimplemented in LUNA, and already
+demonstrated elsewhere. `cynthion#174` ("Can Cynthion emulate a host?") was closed
+with the same substance: technically possible, no support provided.
+
+### 3.2 `apfaudio/guh` — a USB2 **high-speed** host engine for LUNA
+
+Tiliqua PR [#65] (https://github.com/awtoau/cynthion-workspace/issues/65) (merged 2024-11-05) was the full-speed-only ancestor. That code has
+since been extracted and substantially extended into a standalone library,
+**`apfaudio/guh`** ("Gateware USB Host"), by the same author. This is the single
+most important artifact for this proposal.
+
+From its README:
+
+> `guh` is an experimental gateware library (written in Amaranth HDL), for
+> building **custom USB2 high-speed and full-speed host engines** for FPGAs. It
+> builds heavily on LUNA, which, whilst being extremely useful for implementing
+> USB devices, does not implement USB Host. Eventually (perhaps after a lot of
+> cleanup!) `guh` hopes to become part of LUNA in some form.
+
+> As of now, `guh` can enumerate USB2 high-speed (480Mbit) and full-speed (12Mbit)
+> devices in pure gateware. [...] I have tested this on USB thumbdrives at 480Mbit
+> HS, and MIDI/HID devices at 12Mbit FS.
+>
+> The enumeration speed is dynamic: the same gateware can support both HS and FS
+> devices. As of now, USB hubs can be enumerated *but not the devices behind them*.
+
+Structure (all Amaranth, BSD-3-Clause — the same licence as LUNA):
+
+| Module | Lines | Role |
+|---|---|---|
+| `guh/usbh/sie.py` | 673 | transaction engine: token packets, SOF generation, SETUP/IN/OUT |
+| `guh/usbh/enumerator.py` | 479 | reset, address assignment, descriptor fetch, handoff |
+| `guh/usbh/descriptor.py` | 224 | descriptor parsing, endpoint extraction |
+| `guh/usbh/reset.py` | 215 | bus reset + **HS/FS speed detection (host-side chirp)** |
+| `guh/engines/msc.py` | 743 | mass-storage engine (read-only), runs at HS |
+| `guh/engines/keyboard.py` | 163 | HID keyboard engine |
+| `guh/engines/midi.py` | 133 | MIDI engine |
+
+Critically, `guh/usbh/reset.py` implements exactly the gap identified in section
+1.3 — the **host side** of the high-speed chirp handshake. Its states are
+`WAIT-DEVICE-CHIRP-END`, `WAIT-DEVICE-CHIRP-END-SE0`, `SEND-HOST-CHIRP-K`,
+`SEND-HOST-CHIRP-J`, alternating K/J and falling back to `USBHostSpeed.FULL` if no
+device chirp arrives. This is the hard part of a 480 Mbps host, and it is written.
+
+### 3.3 It already targets Cynthion
+
+This is not a port that needs inventing. GUH's own CI (`.github/workflows/ci.yml`)
+builds every example for **both** Tiliqua and Cynthion:
+
+```yaml
+platform:
+  - name: tiliqua
+    env: guh.platform.tiliqua:TiliquaR4R5Platform
+  - name: cynthion
+    env: cynthion.gateware.platform:CynthionPlatformRev1D4
+example: [midi_host, keyboard_host, msc_host]
+```
+
+The examples request `control_vbus_en` and `target_phy` — precisely the r1.4
+resources confirmed in section 2 — and even carry Cynthion-specific handling
+(`# Cynthion has tristate UART TX`). The README documents the Cynthion upload
+path via `apollo force-offline`.
+
+Caveat from the README, quoted because it matters for VBUS: the examples
+"hard-wire the VBUS output to ON, because this repository does not include drivers
+for the I2C Type-C CC controller (TUSB322I)". Proper VBUS/CC handling exists in the
+full Tiliqua repo, not in GUH. On Cynthion this is a gap to close (see section 5).
+
+### 3.4 Other prior art, briefly
+
+- **daisho** (GSG): archived since 2015, USB 3.0 SuperSpeed on a different FPGA
+  platform. Not applicable.
+- **Glasgow**: no USB host gateware found.
+- Forks/derivatives of LUNA (`delan/sol_usb`, `hansfbaier/liteusb`,
+  `jevinskie/liteluna`, `lambdaconcept/lambdalib`) all carry the same device-only
+  `dp_pulldown.eq(0)` line. None implement host.
+- `tomverbeure/usb_system`, `Nickster90s/avb-usb-host`: ULPI/UTMI plumbing only.
+
+**GUH is the only credible base, and it is a strong one.**
+
+---
+
+## 4. Measured fabric cost
+
+Not estimated — synthesised. `scripts/usb-host-area.py` builds the GUH examples
+for `CynthionPlatformRev1D4` with the workspace toolchain (Yosys 0.65,
+nextpnr-ecp5 0.10) and parses nextpnr's utilisation and timing report. Synthesis
+and place-and-route only; **no board was touched**.
+
+| Example | Speed | LUT (of 24288) | BRAM | fmax vs 60 MHz |
+|---|---|---|---|---|
+| `keyboard_host` | FS (HID) | **2184 (8%)** | 0 | 127.57 MHz PASS |
+| `midi_host` | FS (MIDI) | **2244 (9%)** | 0 | 150.44 MHz PASS |
+| `msc_host` | **HS, 480 Mbps** | **4103 (16%)** | 1 | 117.45 MHz PASS |
+
+Raw data: `tmp/host-research/area-results.json`; log: `tmp/logs/usb-host-area.log`.
+
+Observations that matter:
+
+- **A complete 480 Mbps USB host fits in 16% of the LFE5U-12F.** That includes the
+  ULPI PHY interface, transaction engine, chirp/speed detection, enumerator,
+  descriptor parser, and a mass-storage class engine with its hexdump and UART.
+- The bare host core is smaller than 4103 LUT. `msc_host` carries the MSC engine
+  (743 lines, the largest module) plus SCSI/CBW-CSW handling. A host core plus a
+  thin transfer interface should land nearer 2500-3000 LUT, judging by the FS
+  examples at ~2200 LUT including their own class engines and lookup tables.
+- **Timing closes with roughly 2x margin** on the 60 MHz ULPI domain. High-speed
+  host operation is not marginal on this part.
+- BRAM use is negligible (0-1 of 56), which is the pleasant surprise: BRAM, not
+  LUTs, is usually the binding constraint when adding a CPU.
+
+### 4.1 Does it fit alongside a CPU?
+
+Workspace figures for comparison (`docs/gateware-architecture-plan.md`): best CPU
+config **6342 LUT and 14 of 56 BRAM**; current test bitstreams 4000-7400 LUT.
+
+| Combination | LUT | % of 24288 | BRAM |
+|---|---|---|---|
+| HS host engine (as `msc_host`) | 4103 | 17% | 1 |
+| RISC-V CPU (best measured) | 6342 | 26% | 14 |
+| **Host + CPU** | **~10400** | **~43%** | **~15 / 56** |
+
+That leaves roughly 57% of the fabric and 41 BRAM free. **A 480 Mbps host and a
+RISC-V CPU coexist comfortably.** Adding the existing *device* stack on a second
+PHY as well (for a host-plus-device or MITM configuration) would still be
+plausible, though that combination has not been synthesised here and should be
+measured before being promised.
+
+The fabric budget, which was the stated worry, is not the constraint.
+
+---
+
+## 5. What is still missing
+
+GUH is not a finished product, and its author says so plainly ("experimental",
+"quite the collection of (functional) hacks", "all interfaces are subject to
+change"). Gaps, in rough priority order for Cynthion:
+
+1. **VBUS and Type-C CC control.** GUH's examples hard-wire `control_vbus_en` on
+   and ship no TUSB322I driver. Cynthion r1.4 has I2C Type-C controllers on
+   TARGET and AUX plus a power monitor; driving them properly (role advertisement,
+   overcurrent via `fault`, `target_a_discharge` on teardown) is Cynthion-specific
+   work nobody has done. This is the largest genuinely new piece.
+2. **No hub support past the first tier.** Hubs enumerate; devices behind them do
+   not. A real host needs hub port control and address routing.
+3. **Error handling is incomplete.** The README recommends a watchdog to reset the
+   enumeration FSM when it stalls. `usb_host.py`'s ancestor carried
+   `# FIXME: tolerate rx timeout`. Babble, STALL recovery, retry limits and
+   data-toggle resynchronisation all need hardening.
+4. **Only three class engines exist** (MSC read-only, HID keyboard, MIDI). Any
+   other device class is new work.
+5. **No CPU-facing controller.** For software-driven hosting you need a register
+   or DMA interface. GUH has an experimental `guh/periph/` Wishbone/CSR peripheral
+   with a Rust HAL in `rs/`, requiring `amaranth_soc` — promising but unproven
+   here, and not yet integrated with this workspace's SoC.
+6. **Split transactions are absent**, so FS/LS devices behind an HS hub will not
+   work. Follows from (2).
+7. **It is one person's experimental library**, explicitly not accepting
+   contributions, with no releases. Depending on it is a real supply-chain
+   consideration; vendoring is the mitigation.
+
+Verification status also deserves precision: 27 of GUH's tests pass locally,
+including a full host-vs-simulated-device integration test that asserts
+`detected_speed == USBHostSpeed.HIGH` for both the MIDI and MSC engines. That is
+meaningful evidence the HS path works in simulation. **It is not a hardware
+result** — none was produced for this proposal.
+
+---
+
+## 6. Three options
+
+### Option A — Vendor GUH and drive it from gateware
+Bring GUH in under `sources/` or as a submodule, build the `msc_host` /
+`keyboard_host` examples for r1.4, then add the TUSB322I/VBUS driver and a
+watchdog. Host behaviour stays in gateware; a class engine streams to UART, the
+CPU, or PSRAM.
+
+- **Cost:** small. The bitstreams already build. Realistically days, not weeks,
+  to a demonstrated 480 Mbps enumeration, plus the VBUS/CC work.
+- **Area:** ~4100 LUT measured, 1 BRAM. Fits with the CPU.
+- **Risk:** low technically. Main risks are the VBUS/CC gap and depending on an
+  experimental upstream.
+- **Ceiling:** limited to implemented class engines; no hubs, no arbitrary
+  software-defined transfers.
+
+### Option B — GUH plus a CPU-visible host controller
+Option A, then expose GUH's SIE as a CSR/DMA peripheral so firmware (Rust on the
+RISC-V core, reusing moondancer patterns) issues transfers. GUH's `guh/periph/`
+and `rs/` are the starting point.
+
+- **Cost:** moderate. Peripheral bring-up, DMA, firmware transfer scheduling,
+  descriptor handling in software rather than gateware FSMs.
+- **Area:** ~10400 LUT combined (host + CPU), ~15 BRAM. Comfortable.
+- **Risk:** medium. Requires `amaranth_soc` integration and is the least proven
+  part of GUH.
+- **Payoff:** genuine generality — arbitrary devices and classes without new
+  gateware per class. This is what "a USB host on Cynthion" usually means.
+
+### Option C — Zephyr's USB host stack over a gateware UHC driver
+Run Zephyr on the RISC-V core and write a UHC driver whose backend is GUH's SIE,
+inheriting Zephyr's enumeration, hub and class drivers.
+
+- **Cost:** large. See section 7.
+- **Area:** Option B's fabric plus a CPU able to run Zephyr, with materially more
+  BRAM/external memory for the stack and its buffers.
+- **Risk:** high.
+
+---
+
+## 7. Verdict on the Zephyr hypothesis
+
+The hypothesis from [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) was that the Zephyr USB layer is the easiest route. On
+the evidence it is **not the easiest route, but the mismatch is not fatal either.**
+It is the right destination if the goal is a general-purpose host, and the wrong
+starting point.
+
+**The mismatch is real and specific.** Zephyr's host support sits behind the UHC
+API (`include/zephyr/drivers/usb/uhc.h`, ~620 lines). Every in-tree UHC driver
+binds to a *hardware* host controller:
+
+```
+uhc_dwc2.c   uhc_max3421e.c   uhc_mcux_ehci.c   uhc_mcux_ohci.c
+uhc_mcux_ip3516hs.c   uhc_mcux_khci.c   uhc_virtual.c
+```
+
+There is no "controller in fabric" driver. `uhc_virtual.c` is a loopback onto
+Zephyr's virtual USB bus for host-stack testing under `native_sim` — it is not a
+bridge to gateware.
+
+**Why it is surmountable.** The UHC API is small and well-shaped for this:
+`uhc_init/enable`, `uhc_bus_reset`, `uhc_sof_enable`, `uhc_bus_suspend/resume`,
+`uhc_ep_enqueue/dequeue`, plus an event callback. Those map almost one-to-one onto
+what GUH already provides — bus reset with chirp, SOF generation, and SETUP/IN/OUT
+transactions on an endpoint. Writing `uhc_cynthion.c` against a GUH-backed
+peripheral is a legible project, not a research problem. And the payoff is exactly
+the list of gaps in section 5: Zephyr brings hub support, class drivers, error
+recovery and transfer scheduling that GUH lacks.
+
+**Why it should not be first.** It front-loads the costs:
+
+- Zephyr must be brought up on the VexiiRiscv core first — board port, device
+  tree, timers, interrupts, console — none of which is USB work, and none of
+  which exists in this workspace today.
+- The RAM footprint of Zephyr plus its USB host stack is a different memory
+  problem from the current bare-metal firmware, on a part with 56 BRAM.
+- You still need Option B's CPU-visible host controller as the driver's substrate.
+  **Zephyr does not remove any gateware work; it adds a software layer on top of
+  it.**
+- Debugging spans three layers at once (gateware SIE, peripheral, Zephyr driver)
+  with no known-good reference for the bottom two.
+
+So the ordering is the actual finding: Zephyr is a **superset** of Option B, not
+an alternative to it. Its stack cannot help until a controller exists for it to
+drive, and building that controller is Option B. Treat Zephyr as a later phase
+that Option B is deliberately designed to enable — worth doing if the goal is
+hosting arbitrary devices, and pointless as a shortcut to first light.
+
+One correction to the framing in [#101] (https://github.com/awtoau/cynthion-workspace/issues/101), which proposed adapting
+"zephyr/freebsd/openbsd/linux code [...] but written in rust" and asked whether
+xHCI-style registers are needed. Porting an OS host stack is the Option C tail,
+not the head, and xHCI is the wrong model: GUH's author addresses this directly,
+using "host **engine**" rather than "host controller" precisely because
+"modern USB host controllers like xHCI are complex beasts with sophisticated
+control and DMA interfaces". Do not implement xHCI. A purpose-built transfer
+interface is far cheaper and entirely sufficient.
+
+---
+
+## 8. Recommendation
+
+**Do it, via Option A now and Option B next. Do not start with Zephyr.**
+
+This is worth doing specifically *because* the expensive parts already exist. The
+question in [#101] (https://github.com/awtoau/cynthion-workspace/issues/101)/#105 was framed as "can Cynthion host at 480 Mbps and what would
+it take", with an implicit fear that the answer was a from-scratch host stack that
+would not fit. Both halves of that fear are unfounded:
+
+- The board can host: VBUS switching to TARGET A, discharge, current monitoring
+  and CC control are all present.
+- A 480 Mbps host engine exists, is BSD-3 licensed, already builds for
+  `CynthionPlatformRev1D4`, and measures **4103 LUT (16%) and 1 BRAM** with 2x
+  timing margin — leaving ample room for the RISC-V CPU.
+
+Suggested sequence:
+
+1. Vendor GUH (submodule or `sources/`), pin the commit, run its test suite in
+   `scripts/check.py`. 27 host tests pass today.
+2. Build `msc_host` and `keyboard_host` for r1.4 and bring up on hardware. First
+   milestone: enumerate a thumbdrive at high speed and hexdump block 0.
+3. Write the TUSB322I/VBUS/CC driver and a watchdog — the real Cynthion-specific
+   gap, and a candidate to contribute back.
+4. Only then decide between staying gateware-side (A) or exposing a CPU-facing
+   controller (B). Revisit Zephyr once B works, if hubs and arbitrary classes are
+   actually needed.
+
+Track area at every step against the 24288 LUT / 56 BRAM budget with
+`scripts/usb-host-area.py`.
+
+### 8.1 What would make this not worth doing
+
+Stated plainly, since a "buy a different device" conclusion was invited. Walk away
+if any of these describe the need:
+
+- **You need a spec-compliant, general-purpose host.** Multi-tier hubs, split
+  transactions, isochronous audio/video, full error recovery, power negotiation.
+  That is a multi-month effort and the wrong use of an LFE5U-12F. A Raspberry Pi
+  or any SoC with a real EHCI/xHCI controller does it today for a few dollars.
+- **You need USB 3.x SuperSpeed.** Cynthion's USB3 support is device-side and
+  incomplete; a 5 Gbps host is out of scope for this part. Daisho was GSG's
+  attempt at SuperSpeed and has been archived since 2015.
+- **You need guaranteed high-throughput streaming.** 480 Mbps line rate is not
+  480 Mbps of delivered payload. Sustained bulk throughput through fabric, PSRAM
+  and a 60 MHz domain needs measuring before anything depends on it.
+- **You cannot accept an experimental single-maintainer dependency.** GUH has no
+  releases, declines contributions, and warns its interfaces will change. If that
+  is unacceptable and you also will not fork and own it, there is no cheap path.
+- **The actual goal is capture, not hosting.** If the aim is observing traffic,
+  Cynthion's existing analyzer already does that better, and a cheap USB hub plus
+  a PC is a simpler "host" than any gateware.
+
+The sweet spot where this *is* worth doing is narrow but real, and it is probably
+the actual requirement: **hosting one known device at 480 Mbps, on hardware you
+already own, with the whole stack visible and instrumentable.** Reading a
+thumbdrive, driving a specific peripheral, or building a MITM that is a real host
+on one port and a real device on the other. For that, Option A is cheap and the
+fabric numbers say it fits.
+
+---
+
+## 9. Issue consolidation
+
+[#101] (https://github.com/awtoau/cynthion-workspace/issues/101) and [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) are the same request: [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) ("Create host USB device on moon?") asks
+for FPGA host support and speculates about OS stacks in Rust and xHCI-style
+registers; [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) asks to research a 480 Mbps host and proposes Zephyr. Same goal,
+different guesses at the route — and this document answers both.
+
+**Recommendation: keep [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) open, close [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) as a duplicate of [#105] (https://github.com/awtoau/cynthion-workspace/issues/105).**
+
+Reasoning: [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) states the measurable requirement (480 Mbps) and the hypothesis to
+test, so it reads as the actionable ticket. [#101] (https://github.com/awtoau/cynthion-workspace/issues/101)'s specifics are the parts this
+research contradicts — xHCI is explicitly the wrong model, and porting an OS host
+stack is a late phase rather than the starting point — so keeping it open would
+preserve a misleading plan. Its one durable instinct ("must be easier to find luna
+or other work if possible") turned out to be exactly right and is captured above.
+
+Retitle [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) to something like "USB host mode at 480 Mbps via GUH" and link this
+document. Neither issue was closed or edited in producing this proposal, per the
+brief.
+
+---
+
+## 10. References
+
+Local:
+- `repos/luna/luna/gateware/usb/usb2/` — device-only stack; `device.py:382`
+- `repos/luna/luna/gateware/usb/usb2/reset.py` — device-side chirp only
+- `repos/luna/luna/gateware/interface/ulpi.py` — host-capable PHY controls
+- `repos/cynthion/cynthion/python/src/gateware/platform/cynthion_r1_4.py`
+- `scripts/usb-host-area.py`, `tmp/logs/usb-host-area.log`,
+  `tmp/host-research/area-results.json`
+- Area baselines: `docs/gateware-architecture-plan.md`
+
+Upstream:
+- `apfaudio/guh` — https://github.com/apfaudio/guh (BSD-3-Clause)
+- `apfaudio/tiliqua` PR [#65] (https://github.com/awtoau/cynthion-workspace/issues/65) — the full-speed ancestor
+- `greatscottgadgets/cynthion` [#230] (https://github.com/awtoau/cynthion-workspace/issues/230) (GSG pointing at Tiliqua), [#174] (https://github.com/awtoau/cynthion-workspace/issues/174)
+- Zephyr UHC API — `include/zephyr/drivers/usb/uhc.h`, `drivers/usb/uhc/`
+
+Note on `import luna`: it resolves to the interpreter's own
+`site-packages/luna`, not `repos/luna`. The checkout was read for this analysis; the installed copy is what
+the measured builds ran against. Both are device-only.
+
+**No hardware was touched in producing this proposal. All figures are from
+synthesis, place-and-route and simulation.**
+
+---
+---
+
+# Part II — Integration design
+
+**Date:** 2026-08-03T01:30:00+10:00
+**Baseline:** `uart16550-console` at `c154bc3`
+**Question:** not "can it host" (sections 0-10 answered that) but "what shape
+does it take inside the SoC that now exists".
+
+The answer is smaller than sections 6-8 assumed. **Take `guh/usbh` only — the
+transaction engine and the reset/chirp controller — and write enumeration in
+firmware.** That is 2080 LUT and *zero* BRAM, against a design with 12100 LUT
+and 14 BRAM to spare.
+
+---
+
+## 11. Five corrections to Part I
+
+| # | Part I said | Actually |
+|---|---|---|
+| 1 | GUH is BSD-3-Clause (§3.2) | True *now*. At our pinned commit `fbd7077` it was not: `guh/periph/msc.py`, `guh/periph/dma.py` and `guh/util/gearbox.py` carried `SPDX-License-Identifier: CERN-OHL-S-2.0` — strongly reciprocal hardware copyleft, on exactly the SoC-facing files Option B wanted. Reported upstream as `apfaudio/guh#1` (opened 2026-07-28), acknowledged as a copy-paste leftover from Tiliqua, **fixed 2026-07-30 in `923c8490`**. Bump the pin before vendoring anything. |
+| 2 | "No CPU-facing controller… GUH has an experimental `guh/periph/` Wishbone/CSR peripheral" (§5.5) | `guh/periph/` is two files and both are mass-storage. Its registers are `cmd_lba`, `cmd_blocks`, `cmd_dir`, `capacity`, `block_size` — a block device, not a transfer interface. There is no way to issue a control transfer or reach an arbitrary endpoint from the CPU. The README calls a generic controller a non-goal. **Option B is new work, not a port.** |
+| 3 | VBUS is "the largest genuinely new piece"; GUH will "not get this right for Cynthion" (§5.1) | GUH's examples request `control_vbus_en` and drive it high. On r1.4 that is the correct pin: `control_vbus_en` (L1), `aux_vbus_en` (L2) and `target_c_vbus_en` (K5) each switch *that port's* VBUS through to TARGET-A, and any one of them makes TARGET-A a source. GUH sources from CONTROL, which is the port the PC is on. Nothing to fix. |
+| 4 | Write "the TUSB322I/VBUS/CC driver" (§8) | Cynthion r1.4 has **FUSB302B**, not TUSB322I, and `firmware/cynthion-soc/src/fusb302.rs` + `typec.rs` already drive both of them over the muxed I2C bus with a PLIC source each. The host-mode gap is one register field — presenting Rp on TARGET via `SWITCHES0` — not a driver. `fusb302.rs:26-38` already documents why the pull-downs are deliberately off. |
+| 5 | "A complete 480 Mbps USB host fits in 16%… 4103 LUT" (§4) | That is `msc_host`, an entire example: host + SCSI engine + hexdump + UART + LUNA's clock generator. The host **core** is 2080 LUT and 0 BRAM. See §12. |
+
+Also updated from Part I §3.1 and §7: nothing has changed upstream. LUNA has no
+host commits since 2025-01-01; `greatscottgadgets/cynthion#230` and `#174` have
+had no comments since 2025-05 and 2024-09. Zephyr gained `uhc_dwc2.c`
+(2026-01-08, Apache-2.0) but it targets the Synopsys DWC2 register file;
+`uhc_virtual.c` remains a `native_sim` loopback against Zephyr's own virtual
+*device* controller, not a shim a soft controller can hide behind. **No `uhc_*`
+driver for any FPGA soft core exists.** Part I §7's verdict stands and is now
+better evidenced.
+
+---
+
+## 12. Measured: the host core alone
+
+`scripts/usb-host-core-area.py`. Each configuration is a top level whose only
+job is to keep synthesis from folding the core away: every `USBSIEInterface`
+input is driven from a free-running LFSR, every output is XOR-reduced onto one
+LED pin. Clocking is `SocClocks(sync_mhz=60)` — the SoC's
+generator, not LUNA's — so the domains match the design this would go into. The
+baseline is that scaffolding with no host in it, and is subtracted.
+
+| Build | LUT | FF | BRAM | LUTRAM | fmax on the ULPI clock |
+|---|---|---|---|---|---|
+| baseline (CRG + LED) | 33 | 24 | 0 | 0 | 398.72 MHz |
+| `USBSIE(fifo_depth=512)` | 2113 | 458 | **0** | 96 | 125.55 MHz PASS at 60 |
+| `+ USBHostEnumerator + parser` | 2943 | 552 | **0** | 128 | 129.22 MHz PASS at 60 |
+
+Deltas: **SIE 2080 LUT / 0 BRAM**; SIE + enumerator **2910 LUT / 0 BRAM**.
+`fifo_depth=512` is not the GUH default of 64 — it is what a 512-byte
+high-speed bulk packet requires, so the number is not flattered.
+
+Raw data `tmp/host-core-area/core-area-results.json`, log
+`tmp/logs/usb-host-core-area.log`. Synthesis and place-and-route only; no board
+was opened.
+
+### 12.1 The pleasant surprise is the zero
+
+Both 512×8 FIFOs went to **LUT RAM**, not block RAM — 96 `TRELLIS_RAMW` cells
+of 3036. BRAM was the binding constraint on this part (42 of 56 in use), and the
+host core does not touch it.
+
+### 12.2 Does it fit
+
+Current SoC, `tmp/awto_soc/build/top.tim` (2026-08-03T00:25, LFE5U-12F,
+CABGA256, speed 8):
+
+| | now | + SIE | + SIE and enumerator |
+|---|---|---|---|
+| LUT4 (of 24288) | 12201 (50%) | ~14300 (59%) | ~15100 (62%) |
+| BRAM (of 56) | 42 (75%) | 42 | 42 |
+| LUT RAM (of 3036) | 159 (5%) | 255 (8%) | 287 (9%) |
+
+Plus roughly 200-400 LUT for the CSR/FIFO shim of §14. So the SoC with a
+480 Mbps host engine lands near **62-64% of the fabric with the BRAM budget
+untouched**.
+
+### 12.3 Timing is not the risk people expect
+
+| clock | current fmax | constraint | margin |
+|---|---|---|---|
+| `sync` (CPU, Wishbone) | 71.58 MHz | 60 | 19% |
+| `usb` (ULPI) | 94.30 MHz | 60 | 57% |
+| `jtck` | 161.08 MHz | 20 | 8x |
+
+The host core belongs in `usb`, which has three times the margin of `sync`, and
+closes at 125-129 MHz standalone. `sync` is the constrained domain and it
+carries the CPU — which is why §13 puts the host in `usb` and pays for a domain
+crossing rather than renaming the core into `sync`.
+
+Two caveats. Standalone fmax is not in-situ fmax: at 62% occupancy the router
+has less room, and `18c1fa5` established that on this design the critical path
+is dominated by routing, not logic (13.64 ns of 16.45 ns before the fix). And
+placement here is stochastic — `scripts/soc_timing_sweep.py` exists because a
+±9 MHz spread has been observed. **The in-situ number has to be measured, and
+that is the first step in §18.**
+
+What `18c1fa5` implies for another decoder window is favourable: the Wishbone
+round trip now terminates at `RegisteredResponse`'s flip-flop
+(`gateware/soc/bus/wishbone_pipe.py:96`), so a ninth subordinate adds one address
+comparator and one leaf in the ACK gather to a path with ~8 ns of budget rather
+than 16. The condition is that the new subordinate's own ACK must be
+combinationally cheap — which a CSR multiplexer is.
+
+---
+
+## 13. Where it attaches, and the collision with [#120] (https://github.com/awtoau/cynthion-workspace/issues/120)
+
+`target_phy` is the only candidate: `aux_phy` carries the CDC-ACM console
+(`gateware/soc/top.py`) and `control_phy` is shared with Apollo. It is also
+the port the ULPI register window of [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) sits on, and that is a hard conflict
+today, for a reason more basic than bus arbitration.
+
+### 13.1 The conflict is ownership, not arbitration
+
+- `platform.request("target_phy")` may be called once. `gateware/soc/top.py`
+  already calls it and drives `clk`, `rst`, `stp`, `data.o`, `data.oe`
+  combinationally from `UlpiRegisters`. There is no mux point.
+- `ulpi_window.py:250` hard-wires `data_oe = ~dir_i`, and the window waits for
+  `dir` to fall before driving. A host engine receiving a packet holds `dir`
+  high, so the window's 4096-cycle (68 µs) timeout fires — a working system that
+  reports a broken PHY.
+- `target_phy.rst` is tied to `ResetSignal("usb")`, so a host stack cannot
+  re-initialise the PHY.
+
+This is [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)'s point exactly: `ULPIRegisterWindow` is an initialisation-time bus
+**master** and cannot coexist with a stack that owns the PHY.
+
+### 13.2 The fix is re-parenting, not arbitration
+
+LUNA's `UTMITranslator` — which GUH's `USBSIE` instantiates
+(`guh/usbh/sie.py:346`) — already contains a `ULPIRegisterWindow` and a
+`ULPIRxEventDecoder` (`repos/luna/luna/gateware/interface/ulpi.py:805-808`). So
+once the host owns the PHY there is already a register window inside it. Do not
+add a second master; expose the one that is there.
+
+There is a small, well-shaped upstream patch here:
+
+- `UTMITranslator`'s **docstring already promises** `address`, `read_data`,
+  `write_data`, `manual_read`, `manual_write` (`ulpi.py:683-687`).
+- Its `__init__` (`ulpi.py:718`) **does not create them**. The ports are
+  documented and absent.
+- `ULPIControlTranslator` ties `register_window.read_request` to 0
+  (`ulpi.py:524`) and drives the window only from an `m.If`/`m.Elif` chain over
+  its own registers, with a free `m.Else()` branch at `ulpi.py:519`. That branch
+  is where a manual/CPU-driven access goes.
+
+Implementing what the docstring already claims turns `UlpiRegisters` from a
+competing master into a client of the translator, and it is a candidate for
+`docs/upstreamable-patches.md` in its own right — the bug is that upstream
+documents an interface it does not provide.
+
+### 13.3 And it settles [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)'s open question
+
+[#125] (https://github.com/awtoau/cynthion-workspace/issues/125) asks which PHY the RX CMD status peripheral should watch and who owns it.
+`UTMITranslator` already decodes RX CMDs and exposes `line_state`, `vbus_valid`,
+`session_valid`, `session_end`, `rx_error`, `host_disconnect`, `id_digital`
+(`ulpi.py:694-697`). So the status peripheral taps the translator's outputs, is
+instantiated once per translator, and needs no bus access — which is what [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)
+argued for on first principles, now with a named attachment point.
+
+### 13.4 A host and the analyzer can share one translator
+
+The analyzer attaches a bare `UTMITranslator` to `target_phy` in non-driving
+mode (`repos/cynthion/.../analyzer/top.py:277-278, 391-394`). The host attaches
+one too. They cannot both `platform.request` the PHY — but they do not need to:
+`USBSIE` exposes `self.utmi`, and `USBAnalyzer` consumes UTMI-level signals.
+One translator, two consumers. That is the cheapest route to "generate traffic
+and capture it in the same bitstream", and it is worth designing for now rather
+than retrofitting.
+
+---
+
+## 14. Clocking
+
+GUH is single-domain and says so: `guh/periph/msc.py:62` warns "this currently
+assumes 'sync' and 'usb' clock domains are the same". There is no `AsyncFIFO`
+anywhere in GUH.
+
+Our SoC has `sync` and `usb` both at 60 MHz but from **different PLL outputs**
+(CLKOP and CLKOS, `repos/apollo/apollo_fpga/gateware/variable_clock.py:295-330`),
+so nextpnr treats them as unrelated clocks — `usb -> <async>` is already the
+worst cross-domain delay in the current build at 11.83 ns.
+
+| Option | Cost | Verdict |
+|---|---|---|
+| Host in `usb`, cross at the register/FIFO boundary | one four-phase handshake for control, one `AsyncFIFOBuffered` per data direction | **recommended** |
+| `DomainRenamer({"usb": "sync"})` over the whole core | zero CDC; GUH's own tests do this (`tests/test_integration.py:39-40`) | adds 2100 LUT to the domain with 19% margin that also carries the CPU |
+
+Both idioms are already in the tree and proven: the four-phase toggle handshake
+at `ulpi_window.py:235-311`, and `StreamBuffer` wrapping `AsyncFIFOBuffered` at
+`gateware/soc/peripherals/stream_buffer.py:96`, in use at `gateware/soc/top.py`.
+
+Use the handshake for the transfer registers (a few crossings per transfer, so
+latency is free) and the async FIFO for the byte streams (where a per-byte
+handshake would be the throughput ceiling instead of the bus).
+
+---
+
+## 15. The software interface
+
+**Not a descriptor ring, and emphatically not xHCI.** A transfer register plus a
+FIFO port, because that is already the shape of `USBSIEInterface`
+(`guh/usbh/sie.py:47-72`): set `dev_addr`/`ep_addr`/`type`/`data_pid`, strobe
+`start`, poll `idle`, move bytes through two 8-bit streams. Exposing it to the
+CPU is a register map over that struct, not a translation into someone else's
+architecture.
+
+### 15.1 Proposed map
+
+A new Wishbone window, `usb_host` at **0xf0001000, size 0x100** — free, aligned,
+inside the declared uncached PMA region (`base=f0000000 size=10000000 main=0`,
+`gateware/soc/cpu/cpu.py:110-113`), and clear of the PLIC at 0xf0400000. It
+needs a 32-bit data port, so it takes its own `decoder.add()` rather than
+sitting behind the 8-bit `board` CSR decoder.
+
+| off | name | acc | contents |
+|---|---|---|---|
+| 0x00 | `CTRL` | rw | `enable`, `bus_reset` (strobe), `sof_enable` |
+| 0x01 | `ADDR` | rw | `dev_addr[6:0]` |
+| 0x02 | `EP` | rw | `ep_addr[3:0]`, `type[1:0]` (SETUP/IN/OUT), `data_pid` |
+| 0x03 | `START` | w | strobe — latches the above and runs one transaction |
+| 0x04 | `STATUS` | r | `idle`, `reset_active`, `disconnected`, `speed[1:0]` |
+| 0x05 | `RESP` | r | `response[2:0]`: NONE/ACK/NAK/STALL/TIMEOUT/CRC_ERROR/RX_OVERFLOW |
+| 0x06-07 | `RXLEN` | r | **16-bit**, counted by the shim (see 15.2) |
+| 0x08-09 | `FRAME` | r | `sof_frame[10:0]` |
+| 0x0c | `FIFO8` | rw | write pushes a TX byte, read pops an RX byte |
+| 0x10-13 | `FIFO32` | rw | the same FIFOs, four bytes per bus transaction |
+| 0x14 | `FIFO_STATUS` | r | `tx_full`, `tx_empty`, `rx_valid`, `rx_full` |
+| 0x15 | `IRQ_EN` | rw | `xfer_done`, `disconnect`, `sof` |
+| 0x16 | `IRQ_PEND` | r/w1c | same bits |
+
+PLIC source 6 (`Plic(sources=5)` → `6` at `gateware/soc/top.py`; sources 1-5
+are taken, 6-31 are free). The PAC follows automatically —
+`scripts/soc_generate_pac.py` reads `decoder.bus.memory_map` and
+`interrupt_sources`, so `pac::base::USB_HOST` and `USB_HOST_IRQ` appear without
+anything being hand-written.
+
+### 15.2 Four traps in the GUH interface, worth writing down
+
+- **`status.rx_len` is 8 bits** (`guh/usbh/sie.py:616`). It wraps on a 512-byte
+  high-speed packet. GUH's own MSC engine ignores it and counts the stream
+  itself (`guh/engines/msc.py`, `rx_byte_idx = Signal(10)`). The shim must count
+  bytes drained from the RX FIFO, not forward `rx_len`.
+- **Data toggle is the caller's job.** `xfer.data_pid` goes straight to the
+  transmitter; the SIE never inspects a received PID and never toggles. For a
+  general-purpose host that is work for firmware — and for a fuzzing or MITM
+  tool it is a feature, because a deliberately wrong toggle is now expressible.
+- **No completion strobe and no interrupt.** GUH is poll-only. Synthesise the
+  interrupt in the shim from the rising edge of `status.idle`, latched and held
+  level-high, because the PLIC has no edge detector (`vexii_plic.py:46-56`).
+- **NYET is reported as ACK** (`sie.py:643-645`) and there is no PING protocol.
+  High-speed bulk OUT flow control is therefore approximate; firmware sees a
+  successful ACK where the device asked for a retry.
+
+### 15.3 Throughput: what a register interface can and cannot carry
+
+| | payload ceiling | basis |
+|---|---|---|
+| USB HS bulk | **53.2 MB/s** | 13 × 512 B per 125 µs microframe |
+| USB FS bulk | 1.22 MB/s | 19 × 64 B per 1 ms frame |
+| Wishbone, 32-bit, 60 MHz | 120 MB/s | 2 cycles/transfer after `18c1fa5` |
+| `FIFO8` register port | ~4-8 MB/s (estimate) | one uncached byte access per byte; 8-15 CPU cycles each |
+| `FIFO32` register port | ~10-20 MB/s (estimate) | four bytes per access, same per-access cost |
+
+The two estimates are **not measured** — the bus cycle count is known, the
+VexiiRiscv stall on an uncached `iobus` load is not. Measuring it is a firmware
+loop against the CLINT tick and needs the board.
+
+Consequence, which is the real answer to "what would the CPU drive":
+
+- **Control transfers, enumeration, HID/interrupt endpoints, and all of
+  full-speed** fit comfortably in a register interface. This covers every job in
+  §17 except sustained bulk.
+- **Sustained high-speed bulk does not.** A register port reaches perhaps a
+  third of line rate at best.
+
+### 15.4 Tier two, when sustained bulk is actually needed
+
+GUH's `guh/periph/dma.py` is a general Wishbone **initiator** with `cti`/`bte`
+bursts, independent of the MSC peripheral it was split out of, and BSD-3-Clause
+as of `923c8490`. It would attach to our arbiter as a fourth master alongside
+`cpu.ibus`/`dbus`/`iobus` and write straight into the existing 64 KiB block RAM
+at 0x0.
+
+Its cost is its staging FIFO: `_DATA_FIFO_WORDS` defaults to 8 KiB, which is
+about 4 of the 14 free BRAMs, and it is a tunable. Target block RAM first —
+HyperRAM is the obvious destination for large buffers but has no Wishbone
+adapter ([#90] (https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92] (https://github.com/awtoau/cynthion-workspace/issues/92)).
+
+**Do not build tier two first.** It is only worth it once a measured PIO number
+proves it necessary, and §15.3's estimate is not that measurement.
+
+---
+
+## 16. Enumeration belongs in firmware
+
+`USBHostEnumerator` costs +830 LUT over the bare SIE and should not be taken.
+
+- It **discards the descriptors**. The device descriptor is thrown away except
+  `bMaxPacketSize0`; the configuration descriptor is streamed through a parser
+  that keeps one endpoint number and one `wMaxPacketSize` and nothing else
+  (`guh/usbh/enumerator.py:108, 122-129`; `guh/usbh/descriptor.py:54-68`).
+- The parser is **specialised at construction time** to one interface class
+  (`enumerator.py:64`), so "which driver" is a synthesis-time decision.
+- Device address `0x12` and configuration `1` are **hard-coded**
+  (`enumerator.py:64`, `:441-446`).
+
+Firmware enumeration over the SIE is the same five control transfers, gives raw
+descriptor bytes, handles any class, and can retry — roughly 400 lines of
+`no_std` Rust against a peripheral we control, using the deferred event ring
+(`firmware/cynthion-soc/src/events.rs`) so a handler records and the main loop
+prints. That is the pattern the rest of this firmware already uses.
+
+So the vendoring boundary is narrow and specific:
+
+| From `apfaudio/guh` | Take? | Why |
+|---|---|---|
+| `guh/usbh/sie.py` | **yes** | the transaction engine; the thing that does not exist elsewhere |
+| `guh/usbh/reset.py` | **yes** | the host half of the HS chirp; the actual hard part |
+| `guh/usbh/types.py` | **yes** | shared enums, trivial |
+| `guh/usbh/enumerator.py` | no | §16 |
+| `guh/usbh/descriptor.py` | no | follows from the enumerator |
+| `guh/engines/*` | no | fixed-function classes; firmware does this |
+| `guh/periph/msc.py` | no | a block device, not a host controller |
+| `guh/periph/dma.py` | later | tier two only, §15.4 |
+
+That is ~1200 lines of Amaranth, BSD-3-Clause, pinned. Vendoring rather than
+depending is what `docs/upstream-boundary.md` prescribes ("do not inherit a
+stack to get one file — vendor the file"), and it is the right call twice over
+here: GUH has no releases, no tags, one author, an explicit "interfaces will
+change" warning, and a stated policy of not taking contributions.
+
+---
+
+## 17. What this unlocks, per Cynthion's actual jobs
+
+| job | what a host engine gives | what it does not |
+|---|---|---|
+| **Analysis** | a *known stimulus*. Host and analyzer share one `UTMITranslator` on `target_phy` (§13.4), so the analyzer stops being only an observer and becomes a test instrument: deterministic replay, deliberate protocol violations, traffic on demand with no third-party device in the loop | nothing for capture fidelity. The analyzer already captures better than a host engine could, and a hub plus a PC is a simpler traffic source if that is all you want |
+| **Emulation** | **the missing half, and the strongest case.** Facedancer emulates a *device* to someone else's host. Nothing today lets Cynthion drive a *device under test* — exercise it, fuzz it, replay a capture at it, hold it in a state a real host would not | it is not a general-purpose host: no hubs past tier one, no split transactions, no isochronous |
+| **Passthrough / MITM** | a real host on TARGET and a real device on another PHY, so traffic can be *modified*, not just observed. `greatscottgadgets/luna#302` is an open question about exactly this | needs both stacks in one bitstream and a spare PHY — `aux_phy` carries the console today. Projected ~18k LUT and ~45 BRAM, **not measured**, and that is the number to get before promising it |
+
+Not served at all: USB 3.x, spec compliance, multi-tier hubs, guaranteed
+sustained throughput. Part I §8.1's walk-away list stands unchanged.
+
+---
+
+## 18. Recommendation, and the first concrete step
+
+**Do it, in the shape of §15-16: vendor `guh/usbh`'s three files, expose the
+SIE through a CSR and FIFO peripheral, enumerate in firmware.** Not Part I's
+Option A (a gateware class engine proves the fabric works but leads nowhere),
+not Option C.
+
+**First step, before a line of the shim is written:** bump the GUH pin to
+`923c8490`, then build the `sie` configuration of `scripts/usb-host-core-area.py`
+*inside* `AwtoSoc` and read the in-situ LUT count and `sync`/`usb` fmax. §12's
+2080 LUT is a standalone figure at 9% occupancy; the number that decides the
+design is the one at 60%, and it costs one build to get. Run
+`scripts/soc_timing_sweep.py` alongside it, because a single placement is not
+evidence on this design.
+
+Then, in order:
+
+1. **Mux `target_phy`.** Move the pad wiring at `gateware/soc/top.py`
+   behind an owner select, or better, implement §13.2's `UTMITranslator` manual
+   register access so `UlpiRegisters` becomes a client. This unblocks [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) and
+   [#125] (https://github.com/awtoau/cynthion-workspace/issues/125) as well as the host.
+2. **VBUS and CC.** No `*_vbus_en` pin is driven anywhere in the SoC today.
+   Add `control_vbus_en`, `target_c_vbus_en`, `aux_vbus_en` and
+   `target_a_discharge` to the existing `gpio` peripheral, and present Rp on
+   TARGET through `fusb302.rs`. Both are small because the hard parts — an I2C
+   mux, a working FUSB302B driver, a power monitor — already exist.
+3. **The CSR/FIFO shim and the interrupt**, §15.
+4. **Firmware enumeration**, §16. Milestone: print a device descriptor.
+5. **Measure the PIO byte rate** against the CLINT tick, and only then decide
+   whether §15.4's DMA is needed.
+
+The AUX-to-TARGET loopback proposed on [#105] (https://github.com/awtoau/cynthion-workspace/issues/105) remains the right acceptance test,
+with one revision: it needs `aux_phy` free, and `aux_phy` is the console. Either
+move the console to `control_phy` behind `ApolloAdvertiser` for that test, or
+accept a third-party device for first light and defer the loopback.
+
+---
+
+## 19. What could not be determined
+
+- **In-situ area and fmax.** Every figure in §12 is standalone. The SoC has not
+  been built with the host core in it.
+- **The PIO byte rate** (§15.3). The bus cycle count is known; the CPU's stall
+  on an uncached `iobus` access is not, and it dominates.
+- **Host-plus-device in one bitstream** (§17). The ~18k LUT / ~45 BRAM figure is
+  addition, not synthesis.
+- **Whether the CONTROL VBUS switch actually delivers to TARGET-A on this
+  board.** `control_vbus_in_en` is `PinsN` and its post-configuration state was
+  not traced. Board question, and no board was touched.
+- **Whether any other high-speed host core exists.** The survey of non-GitHub
+  forges was still running when this was written. One near-miss was confirmed
+  and is worth recording (below); nothing high-speed was found, and the
+  recommendation would only change if something were.
+
+### 19.1 The one real alternative, and why it does not apply
+
+SpinalHDL ships a complete OHCI controller —
+`lib/src/main/scala/spinal/lib/com/usb/ohci/`, seven files including
+**`UsbOhciWishbone.scala`**. On paper it is everything §15 has to build by hand:
+a published standard register map, an existing Linux/BSD/Zephyr driver for it,
+DMA descriptors already specified, a Wishbone wrapper, and the same HDL
+ecosystem as our CPU. It is the thing [#101] (https://github.com/awtoau/cynthion-workspace/issues/101) was reaching for.
+
+It is **full and low speed only** — `UsbOhci.scala` carries `lowSpeed` and an
+`fs` timer constant and nothing else, because OHCI is an FS/LS specification.
+The high-speed companion is EHCI, and no open EHCI implementation was found.
+
+So the choice is stark and worth stating plainly: **12 Mbps with a standard
+register map and off-the-shelf drivers, or 480 Mbps with a bespoke interface.**
+[#105] (https://github.com/awtoau/cynthion-workspace/issues/105) asked for 480, so this note is a record of the road not taken rather than a
+recommendation — but if the requirement ever softens to full speed, this is the
+better engineering, and it deserves a fresh look rather than a port of §15.
+Its licence was not confirmed (the repository reports `NOASSERTION`) and would
+have to be before any use.
+
+---
+
+## 20. Artifacts
+
+- `scripts/usb_host_area.py` — the §12 measurement, now against the vendored copy.
+- `debris/scripts/usb-host-core-area.py`, `debris/scripts/usb-host-area.py` —
+  the original measurements, retired once the code was vendored.
+- `tmp/usb-host-area/area-results.json`.
+- GUH is no longer a checkout: `gateware/probes/usb_host/guh/` is pinned at `923c8490`.
+
+**Part II touched no hardware either. All figures are from synthesis and
+place-and-route.**
+
+---
+---
+
+# Part III — What is built
+
+**Date:** 2026-08-05T20:45:00+10:00
+**Branch:** `usb-host-start`
+
+The first increment of §18, and only the first: **the engine is vendored and it
+enumerates a device in simulation.** Nothing is attached to the SoC, no CSR shim
+exists, no firmware has been written, and no hardware has been touched.
+
+## 21. The engine, vendored and exercised
+
+`gateware/probes/usb_host/guh/` — `sie.py`, `reset.py`, `types.py` at `923c8490`,
+byte-identical to upstream, with the licence beside them. `enumerator.py`,
+`descriptor.py`, `engines/` and `periph/` were **not** taken, per §16.
+
+`gateware/probes/usb_host/model.py` is ours: the wire (two UTMI interfaces facing each
+other, with the line-state priority the chirp needs) and a model device that is
+LUNA's own `USBDevice` with a control endpoint and a 512-byte bulk IN endpoint.
+Both ends are upstream gateware written without knowledge of the other, which is
+what makes the result evidence rather than a tautology.
+
+`scripts/usb_host_sie_sim.py` is the check, and it is in `scripts/soc_sims.py`
+(**541 checks, up from 520**, 8.1 s). Its 21 assertions, in three groups:
+
+- **The bus comes up, both ways.** A high-speed device is detected as HIGH; a
+  full-speed-only device falls back to FULL. The host half of the chirp is the
+  piece §1.3 identified as missing everywhere else, and detecting the wrong speed
+  is a failure that reports itself as nothing at all.
+- **The wire is right, checked independently.** Tokens and data packets are
+  captured at the device's UTMI, and CRC5/CRC16 are recomputed in Python from the
+  USB 2.0 polynomials rather than compared against another piece of gateware.
+- **Five control transfers enumerate a device.** GET_DESCRIPTOR, SET_ADDRESS,
+  GET_DESCRIPTOR at the new address, SET_CONFIGURATION, then a 512-byte bulk IN
+  whose every byte is predicted. §16's claim — enumeration is firmware's job and
+  does not need the 830 LUT enumerator — is now executed rather than argued. The
+  negative control is the transfer to the *old* address, which must time out.
+
+Three of §15.2's four traps are now assertions rather than warnings: `rx_len`
+reads 0 after a 512-byte packet, `idle` is a level held for 11450 cycles rather
+than a strobe, and the DATA PID on the wire is whatever the caller asked for. The
+fourth (NYET reported as ACK) needs a device that emits NYET, which LUNA's device
+stack does not.
+
+## 22. Measured again, from the vendored copy
+
+`scripts/usb_host_area.py`, same method as §12 — LFSR-driven scaffold, SoC clock
+generator, `fifo_depth=512`, baseline subtracted:
+
+| build | LUT | FF | BRAM | LUTRAM | fmax on the ULPI clock |
+|---|---|---|---|---|---|
+| baseline (CRG + LED) | 33 | 24 | 0 | 0 | 398.72 MHz |
+| `USBSIE(bus=target_phy, fifo_depth=512)` | 2113 | 458 | **0** | 96 | 125.55 MHz PASS at 60 |
+
+**Delta: 2080 LUT, 434 FF, 0 BRAM, 96 LUTRAM.** The LUT figure reproduces §12
+exactly from an independent rebuild; the FF count is new. **The SoC's own timing
+is unchanged, because nothing was added to the SoC** — §12.3's warning stands and
+the in-situ number is still the next increment's job.
+
+## 23. What the driver needs, whatever schedules it
+
+`docs/rtic.md` and [#115] (https://github.com/awtoau/cynthion-workspace/issues/115) are unresolved, so nothing here assumes a
+scheduling model. The engine's interface is `events in, work out`, and what it
+asks of a driver is the same under a superloop, an interrupt handler or an RTIC
+task:
+
+1. **An edge, synthesised in the shim.** `status.idle` is a level and there is no
+   completion strobe. The shim must produce the rising edge, latch it, and hold
+   it level-high for the PLIC, which has no edge detector.
+2. **Response and byte count latched at completion.** `response` and `rx_len`
+   hold only until the next `start`, so a driver that is scheduled late reads a
+   different transfer's result. The shim must capture them, and must count RX
+   bytes itself because `rx_len` wraps.
+3. **One owner at a time.** The engine runs one transaction, has no queue, and
+   `start` is silently ignored unless it is idle. A dropped issue is therefore
+   invisible — the shim should raise a bit when it happens.
+4. **No deadline for correctness.** The engine holds its state indefinitely and
+   generates SOFs itself, so late servicing costs throughput, not correctness.
+   **This is the load-bearing statement for the RTIC question: host mode does not
+   need bounded latency to work, so it should not be the argument for or against
+   a scheduler.** It needs bounded latency to go fast, which is a different claim
+   and one to make with a measurement.
+5. **A bounded drain loop, not a byte per turn.** One high-speed packet is 512
+   FIFO accesses; whoever drains it should do so in one bounded loop.
+
+## 24. What is not done
+
+- **Nothing is attached to the SoC.** `target_phy` still belongs to
+  `UlpiRegisters` (§13), no CSR window exists, and the in-situ LUT/fmax figures
+  §19 asked for are still unmeasured.
+- **No firmware.** The enumeration above is a simulation testbench, not Rust.
+- **No CDC.** The bench runs the engine in `sync`; §14's crossing is untested.
+- **No VBUS or CC.** No `*_vbus_en` pin is driven anywhere, still.
+- **Nothing below UTMI.** The model wire hands over bytes, so bit stuffing, NRZI
+  and EOP are not exercised, and no ULPI PHY is involved.
+- **No hardware.** Same as Parts I and II.
+
+Next increment, in order: re-parent `target_phy` behind `UTMITranslator` (§13.2,
+which also unblocks [#120] (https://github.com/awtoau/cynthion-workspace/issues/120) and [#125] (https://github.com/awtoau/cynthion-workspace/issues/125)), then the in-situ build for the numbers §19
+could not give, then the CSR/FIFO shim of §15 with §23's five requirements, then
+firmware enumeration.
+
+
+---
+
+## soc-clocking.md: withdrawn CPU-ceiling ladder and divider table (issue #110)
+
+### Source: docs/soc-clocking.md
+
+# SoC clocking: a PLL divider trap, and a withdrawn ceiling
+
+One finding that is now designed around, and one retraction:
+
+1. A **PLL divider trap**: deriving `usb` from the same PLL as `sync` silently
+   breaks USB at almost every frequency in 60–130 MHz, leaving only three
+   usable. **The arithmetic still holds; it is no longer a constraint**, because
+   `gateware/soc/clocks.py` takes `usb` from the 60 MHz oscillator instead. Read
+   this before ever putting the PHY back on a PLL.
+2. The **"CPU corrupts its output above 60 MHz" result is WITHDRAWN.** Its
+   signature — correct counter values, dropped characters, fine while
+   `sync == usb` and broken once they differ — is the console's own
+   `SyncFIFOBuffered` bug, not the CPU. That FIFO has since been fixed and the
+   ladder has not been re-run, so **the CPU's working ceiling is unmeasured.**
+
+Issue [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) asked whether Lattice Diamond's place-and-route reaches a higher clock
+than nextpnr on the VexiiRiscv SoC. The premise was that nextpnr's
+achieved frequency climbs with the requested one -- 72.6 at 60, 76.3 at 80,
+86.1 at 90, 92.0 at 100 -- so ~92 MHz looked like where nextpnr stopped trying
+rather than where the silicon stopped working.
+
+**The premise was right and the question was aimed at the wrong stage.** The
+ceiling was not placement. Two things were believed to cap this design, and
+neither was the placer. Both have since moved:
+
+1. a **PLL divider trap** that silently breaks USB at almost every frequency —
+   real, and now designed around rather than lived with
+2. a **fabric limit below 92 MHz** which the CPU was said to cross by corrupting
+   its output — **withdrawn**, see section 2
+
+## 1. Only three frequencies work — IF `usb` comes from the PLL
+
+`VariableClockDomainGenerator` derives `usb` from the PLL's VCO by an **integer**
+division:
+
+    usb_div = int(round(vco_mhz / 60.0))
+
+The ULPI PHY requires 60 MHz. That division only yields exactly 60 when the VCO
+is a whole multiple of 60, and usually it is not:
+
+| sync | VCO | usb_div | usb | error | usable |
+|---|---|---|---|---|---|
+| 60 | 600.0 | 10 | **60.000** | +0.00% | yes |
+| 80 | 560.0 | 9 | 62.222 | +3.70% | no |
+| 90 | 630.0 | 10 | 63.000 | +5.00% | no |
+| 100 | 600.0 | 10 | **60.000** | +0.00% | yes |
+| 110 | 550.0 | 9 | 61.111 | +1.85% | no |
+| 120 | 600.0 | 10 | **60.000** | +0.00% | yes |
+
+Across 60..130 MHz in 2 MHz steps, **only 60, 100 and 120 land on an exact 60
+MHz `usb` clock.** Every other value ships a PHY clock that is wrong by 1-5%.
+
+This is not a derivation on paper. nextpnr states it in its own log for each
+build, which is where it was confirmed rather than assumed:
+
+    90/top.tim:  Derived frequency constraint of 63.0 MHz for net aux_phy_0__clk__o
+    100/top.tim: Derived frequency constraint of 60.0 MHz for net aux_phy_0__clk__o
+    110/top.tim: Derived frequency constraint of 61.1 MHz for net aux_phy_0__clk__o
+
+And the board agrees. A 90 MHz build places, packs and configures without
+complaint, and then **never appears on the USB bus at all** -- while a 100 MHz
+build, a *higher* CPU clock, enumerates immediately. A ULPI link is
+source-synchronous parallel signalling with no start bit and no resynchronising
+mechanism, so it has no tolerance to spend; 5% is not "slightly off", it is a
+dead interface.
+
+The failure mode is the expensive part: a design with a broken PHY clock looks
+exactly like a design that missed timing. Both produce silence. That is what
+made ~90 MHz look like a placement ceiling.
+
+`variable_clock.py` now **refuses to build** outside 0.5%, naming the arithmetic
+and the usable frequencies, rather than emitting a bitstream that cannot work.
+
+This also retires one row of the original table: the 80 MHz build that
+"succeeded" had `usb` at 62.2 MHz, so it could never have enumerated. Passing
+timing was never the same as working.
+
+### And now it is designed around, not lived with
+
+The whole trap exists because `usb` and `sync` divide **one VCO**. Nothing
+requires that. The board's primary clock is a discrete 60 MHz oscillator on A8
+and the FPGA *sources* the ULPI clock (`clk_dir='o'` on all three PHY
+resources), so `usb` can be that oscillator passed straight through — exactly
+60.000 MHz by construction, with no tolerance left to check and less jitter than
+a PLL copy of it.
+
+`gateware/soc/clocks.py` does that. The consequences:
+
+| | before | after |
+|---|---|---|
+| `usb` source | PLL output, integer-divided | the oscillator, directly |
+| `usb` accuracy | 1–5% wrong at most frequencies | exact, by construction |
+| `sync` choices in 60–130 MHz | **3** | every integer MHz 63–130 within 0.5%, bar eight |
+
+So section 1 is no longer a limit on the CPU clock. **It is still the reason not
+to put the PHY back on a PLL**, and `variable_clock.py`'s 0.5% refusal remains
+the right guard for anyone who tries.
+
+## 2. The CPU's ceiling is NOT known — this measurement is WITHDRAWN
+
+nextpnr's build script runs under `set -e` with no `--timing-allow-fail`, so a
+design that misses its constraint stops the build. That is a refusal to vouch
+for a placement, not an inability to produce one -- and nextpnr's static timing
+analysis is a worst-case-corner bound that real silicon at room temperature
+routinely beats. So "refused at 90" left the interesting question untouched.
+
+`./scripts/nextpnr_allow_fail_ladder.py` re-places the same netlist with
+`--timing-allow-fail`, packs it, and puts it on the board. Placement effort is
+identical; only the verdict changes.
+
+| requested | nextpnr achieved | bitstream | usb clock | on hardware |
+|---|---|---|---|---|
+| 60 | 72.6 / 89.0 MHz | yes | 60.000 | **PASS** -- product `369d0368`, ticks 0 -> 1 |
+| 90 | 86.1 MHz | yes | 63.000 | does not enumerate (PHY clock, not timing) |
+| 100 | 92.0 MHz | yes | 60.000 | enumerates, **output corrupted** |
+| 110 | 96.0 MHz | yes | 61.111 | enumerates, **output corrupted** |
+
+At 100 MHz the console printed:
+
+    tick00001
+    tk00002
+    rck 000003
+
+and at 110 MHz:
+
+    tck 000
+    ik00002
+    ic 000
+
+The conclusion drawn at the time was that the counter still increments -- 1, 2,
+3 -- so the CPU is executing while characters are dropped around it: a marginal
+design computing wrongly rather than halting.
+
+**That conclusion does not follow, because the console is in the path and it had
+a bug with exactly this signature.** From `stream_buffer.py`:
+
+> A `SyncFIFOBuffered` between `sync` at 80 MHz and `usb` at 60 worked perfectly
+> while both were 60 MHz, then produced a stream with **correct counter VALUES
+> and dropped CHARACTERS** -- `tic 00000`, `tck 000001` -- because bytes vanished
+> in transit while the arithmetic that produced them was untouched. That is the
+> signature of an unsynchronised crossing.
+
+Same symptom, same arithmetic-intact-characters-missing shape, and the same
+trigger: it works when `sync == usb` and fails when they differ. The ladder's own
+table IS that pattern -- 60 passes, everything above corrupts -- which is what an
+unsynchronised FIFO does, not what a timing-marginal CPU does.
+
+The "perfect PHY clock at 100 MHz" was read as isolating the fault to the
+design's own logic rather than to USB. It does not: an exact 60.000 MHz `usb`
+clock is precisely the case where the FIFO still has two unequal domains to
+cross. It rules out the PHY, not the crossing in front of it.
+
+`StreamBuffer` now takes `i_domain` and `o_domain` explicitly and is a genuine
+asynchronous FIFO when they differ. **The ladder has not been re-run since.**
+
+So the CPU's working ceiling is **unmeasured**. nextpnr achieved 92 MHz on the
+100 MHz build and 96 on the 110 MHz one, and whether either runs correctly is
+open. Any claim that this RISC-V "tops out around 75 MHz" -- including ones in
+this repo's own commit messages -- rests on this withdrawn measurement.
+
+Re-running it is cheap: the same script, the fixed `StreamBuffer`, and a readout
+that is not the console. Until then, no number here bounds the CPU.
+
+## Diamond, and what [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) asked
+
+The comparison against Lattice Diamond, why it could not answer the question as
+posed, and what to do about [#110] (https://github.com/awtoau/cynthion-workspace/issues/110) are recorded in the issue rather than here.
+This file is for the findings above. Note that only the first -- the three
+exact-60 PLL solutions -- is a standing result; the second is a withdrawal.
+
+## Reproducing
+
+    ./scripts/nextpnr_allow_fail_ladder.py --frequencies 90 100 110
+    ./scripts/riscv_verify_bitstream.py tmp/nextpnr_allow_fail/100/top.bit
+    ./scripts/diamond_riscv_ladder.py --check-edif --frequencies 100
+
+## A note on the measurement harness
+
+The first pass of this experiment reported `*** FAIL  no console tty appeared`
+at 90, 100 and 110 MHz -- **and also failed a known-good 60 MHz control.** A
+test that fails its own control is measuring the test.
+
+Two distinct bugs were behind it, and both are worth knowing:
+
+- **The boot banner is transient.** The firmware prints its product line once,
+  at boot. Enumeration after a reconfigure takes about 0.47 s (measured), and
+  the banner is emitted inside that window. Any check that configures, waits for
+  the tty, and only then opens the port has already missed it -- and then
+  reports "arithmetic is wrong" for a healthy board.
+- **Holding the port open across the reconfigure does not work either.** The
+  device re-enumerates, the kernel tears the old node down, and the next read
+  raises `SerialException` on a node that no longer backs a device.
+
+`./scripts/riscv_verify_bitstream.py` reopens as fast as the node appears and
+reports **INCONCLUSIVE** when it loses that race, rather than scoring a missed
+banner as a wrong answer. Absence of evidence gets said out loud. It passes the
+60 MHz control, which is the property the earlier harness lacked.
+
+
+---
+
+## soc-size-review.md: PLIC rows and the now-false claim that amaranth_soc EventMonitor does not elaborate (replaced by intc.py in 857c45d)
+
+### Source: docs/soc-size-review.md
+
+# Where the SoC's size actually is
+
+**A measured account of what the RISC-V SoC costs — LUTs and flip-flops in the
+fabric, bytes of `.text` and `.rodata` in the firmware — and of the measurement
+hazards that make several of the obvious ways to ask the question give wrong
+answers.**
+
+This is a reference, not a plan. What follows are numbers with the conditions
+they were taken under; what to *do* about any of them is an issue. See
+[`README.md`] (README.md) for that rule.
+
+**Reproduce with**, none of which touch the board:
+
+| script | answers |
+|---|---|
+| [`soc_peripheral_area.py`] (../scripts/soc_peripheral_area.py) | what each peripheral costs synthesised alone — an upper bound |
+| [`soc_instrumentation_cost.py`] (../scripts/soc_instrumentation_cost.py) | what the three instrumentation peripherals cost **in context** — a delta |
+| [`soc_upstream_copy_check.py`] (../scripts/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
+| [`pnr_noise.py`] (../scripts/pnr_noise.py) | how much of an Fmax difference is placement luck |
+| [`soc_icache_model.py`] (../scripts/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
+| [`soc_review.py`] (../scripts/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
+| [`soc_map_audit.py`] (../scripts/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
+| [`soc_decoder_cost.py`] (../scripts/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
+
+---
+
+## 0. The two budgets are not the same budget
+
+**Fabric size is LUTs and flip-flops.** The design has room: 58% of the LUT4 and
+30% of the DFF on a die that is a 25F wearing a 12F's marking.
+
+**Firmware size is SPEED.** The I-cache is 8 KiB, 64 sets x 2 ways.
+`firmware/cynthion-soc/Cargo.toml` records `opt-level` `z` → `3` growing `.text`
+79% and costing **5.4x the IPC**, and
+[`rtic.md`] (rtic.md) measures the
+hot footprint at 5,632 bytes — larger than the cache before any runtime is added.
+So in the firmware a library that is cleaner but bigger is a loss, and every
+change needs a `.text` delta beside it.
+
+## 1. Baseline
+
+Measured at `b403978`, before the changes in §5.
+
+| | |
+|---|---|
+| `.text` | 41,400 B |
+| `.rodata` | 17,056 B |
+| flash image | 58,480 B |
+| bootloader | 512 B (`.start` 12 + `.text` 500) |
+| TRELLIS_COMB | 14,178 / 24,288 (58%) |
+| TRELLIS_FF | 7,479 / 24,288 (30%) |
+| DP16KD | 44 / 56 (78%) |
+| `$glbnet$clk` Fmax | 73.69 MHz against a 60 MHz constraint |
+| `./dev.py test` | 97 checks |
+| `./scripts/soc_sims.py` | 531 checks across 15 simulations |
+
+## 2. Three ways to measure fabric area, and what each is good for
+
+This matters more than any single number below, because two of the three are
+routinely quoted as if they were the third.
+
+**Out of context** — synthesise one module alone. Fast, works for a module the
+top does not instantiate, and is an **upper bound**: alone, a peripheral keeps
+logic that would be folded away among its neighbours. `soc_peripheral_area.py`.
+
+**In context** — build the whole SoC twice and diff the utilisation. This is the
+delta, and it is the only kind of number worth acting on.
+`soc_instrumentation_cost.py` does it without editing any tracked file, by
+subclassing the modules under test with an empty `elaborate`.
+
+**DFF is exact in both.** A register is a register wherever it is placed. LUT4
+is mapping, and mapping depends on the neighbours; read the DFF column first.
+
+### An A/B needs nothing pinned
+
+No build-dependent constant reaches the netlist: the identity is the ECP5's
+USERCODE plus `gateware/usercode_map.py`. What that was worth in cells is in
+[#447] (https://github.com/awtoau/cynthion-workspace/issues/447) and
+[#443] (https://github.com/awtoau/cynthion-workspace/issues/443), with the
+conditions it was measured under.
+
+- [`soc_repro_check.py`] (../scripts/soc_repro_check.py) is the gate: two builds of
+  one tree, byte-compared, and `check.py`'s `repro` runs it.
+
+### The floor: a COMB delta under ~200 is the mapper
+
+- Null control, 2026-08-12, `432d29b`, `bist0-ck160-dqs1-merge0-sync60`,
+  `--no-parallel-refine`: one 32-bit identity constant given a different value,
+  no logic touched → **TRELLIS_COMB +194, TRELLIS_FF +1**
+  ([`soc_trim_delta.py --trim null-constant`] (../scripts/soc_trim_delta.py)).
+- Global, not local folding: the whole `gateware_id` block is 153 COMB, and the
+  move is 194.
+- So a COMB delta is a result only when it is well clear of ±194 **and** an FF,
+  BRAM or LUTRAM delta of the same sign supports it. Numbers this unsettles, and
+  the trims that survive it:
+  [#454] (https://github.com/awtoau/cynthion-workspace/issues/454).
+- [`soc_review.py`] (../scripts/soc_review.py) enforces it: a smaller move is
+  printed and explicitly not called a regression.
+
+### The other hazard: Fmax is placement luck
+
+Already known (71.45–76.99 MHz across identical builds) and confirmed again
+here: 84.88 MHz and 73.69 MHz from two builds differing by 22 cells. No Fmax
+figure in this document is offered as evidence of anything;
+[`pnr_noise.py`] (../scripts/pnr_noise.py) is what settles a timing question.
+
+## 3. What each peripheral costs
+
+Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
+
+| module | LUT4 eq | DFF | DP16KD | |
+|---|---:|---:|---:|---|
+| `hyperram_probe` | 750 | 289 | — | instrumentation |
+| `clint` | 400 | 137 | — | |
+| `plic` (5 sources, retired) | 286 | 52 | — | |
+| `uart16550` | 231 | 118 | — | **×2 in the SoC** |
+| `i2c_master` | 200 | 109 | — | |
+| `flash_probe` | 183 | 72 | — | instrumentation |
+| `serial_line` | 162 | 99 | — | |
+| `vexii_irq` | 149 | 101 | — | **in no SoC** |
+| `fabric_status` | 110 | 36 | — | no DTR without a platform |
+| `ulpi_window` | 98 | 96 | — | |
+| `stream_buffer` (64, sync) | 90 | 27 | — | |
+| `flash_ila` | 89 | 108 | 1 | instrumentation |
+| `sideband_csr` | 85 | 50 | — | |
+| `stream_buffer` (16, CDC) | 46 | 57 | — | |
+| `vbus_csr` | 23 | 24 | — | |
+| `i2c_mux` | 9 | 20 | — | |
+| `wishbone_pipe` | 9 | 34 | — | |
+
+Two things stand out. `hyperram_probe` is the **largest peripheral in the SoC**
+— larger than the CLINT, larger than the interrupt controller, larger than either console — and
+it is instrumentation. And `wishbone_pipe`, which recovered the design's timing
+margin, costs nine LUT4 and 34 flops.
+
+## 4. What the instrumentation costs, in context
+
+`FlashILA`, `FlashPinProbe` and `HyperRAMProbe`, built into the real SoC and then
+built again with their logic removed and their CSR bridges kept:
+
+| cell | with | without | delta | share of the design |
+|---|---:|---:|---:|---:|
+| TRELLIS_COMB | 14,476 | 13,402 | **1,074** | 7.4% |
+| TRELLIS_FF | 7,472 | 7,016 | **456** | 6.1% |
+| DP16KD | 44 | 43 | **1** | |
+
+**This understates a deletion.** Each stub keeps the CSR bridge that answers at
+its address, so a real removal recovers this plus three bridges and three
+decoder windows.
+
+The measurement that made the three worth counting together: they exist to
+answer questions, and two of those questions are answered.
+`peripherals/flash.py`'s own docstring says the ILA "was built to find the JEDEC read
+fault, which is fixed", and `peripherals/flash_cdc.py` records that once the PHY moves to
+its own domain the ILA's captures cross a clock boundary unsynchronised and are
+"evidence about gross behaviour only".
+
+### `ObservablePHY` is a 130-line verbatim copy, and it is still verbatim
+
+`gateware/soc/peripherals/flash.py`'s `ObservablePHY` re-implements
+`luna_soc`'s `SPIPHYController.elaborate` statement for statement, adding only
+assignments that expose internals to the ILA. Its docstring states the
+obligation — "If upstream changes, this must be re-synced or it is measuring a
+different circuit than the one that ships" — and nothing checked it.
+
+[`soc_upstream_copy_check.py`] (../scripts/soc_upstream_copy_check.py) now does.
+**As of the currently installed `luna_soc`: in sync.** 83 upstream statements,
+85 in the copy, the two extra being the instrumentation assignments and the `as
+fsm:` handle they need. The check was validated against known-bad mutations in
+both directions before its passing result was believed.
+
+## 5. Where the firmware's bytes are
+
+By module, attributing every `.text` symbol (`llvm-nm --print-size`):
+
+| | bytes | share |
+|---|---:|---:|
+| `cynthion_soc::run` — **one function** | 17,044 | 41.2% |
+| unattributed / small symbols | 5,034 | 12.2% |
+| `bench` (13 symbols) | 5,004 | 12.2% |
+| `core::fmt`, `core::str`, `core::num` | 4,638 | 11.3% |
+| `fusb302` | 1,746 | 4.2% |
+| `board` | 1,002 | 2.4% |
+| everything else | ~6,900 | 16.7% |
+
+**`run` is 41% of `.text` in a single symbol.** It is a 25-arm `match` on the
+command word, and `opt-level = "z"` with `lto = true` still inlines a function
+called from exactly one place — so `map_command`, `board_led`, `board_i2c`,
+`board_power`, `board_sideband`, `vbus_command`, `hyperram_command`, `help`,
+`load` and the rest are all absorbed into it. 17,044 bytes is 266 cache lines
+against 64 sets.
+
+**Splitting it costs 668 bytes.** Measured: `#[inline(never)]` on ten command
+handlers moves 7,000 bytes out of `run` (17,044 → 10,044) and grows `.text` from
+41,400 to **42,068**, because the call sequences and the lost cross-inlining are
+not free. Whether the locality is worth 668 bytes is **not measured** — the
+addresses a command touches are the same either way, and only a linker that then
+orders by hotness would change what the cache sees.
+[`soc_icache_model.py`] (../scripts/soc_icache_model.py) is what would settle it.
+
+### `core::str` cost 880 bytes to compare four ASCII words
+
+`vbus_command` was the only place in the firmware that touched `core::str`:
+
+```rust
+let argument = core::str::from_utf8(rest).unwrap_or("").trim();
+```
+
+`<str>::trim` consults `core::unicode::unicode_data::white_space::WHITESPACE_MAP`.
+The console line arrives as `&[u8]`, `crate::trim` is 88 bytes and does the byte
+equivalent, and every other parser in the firmware — `memory::Region::parse`,
+`gpio::led_by_name`, `fusb302` — already takes bytes.
+
+Measured, changing that one line and `vbus::Source::parse`'s signature:
+
+| | before | after | delta |
+|---|---:|---:|---:|
+| `.text` | 41,400 | 41,016 | **−384** |
+| `.rodata` | 17,056 | 16,560 | **−496** |
+| flash image | 58,480 | 57,600 | **−880** |
+
+`<str>::trim`, `str::validations` and `WHITESPACE_MAP` are absent from the image
+afterwards. **An estimate from reading the code put this at 1,868 bytes.** The
+measurement is 880. Both numbers are in this document because the gap between
+them is the point.
+
+## 6. What upstream actually supplies, and what it does not
+
+Checked against the installed libraries by running them, not by reading them.
+
+| we hand-roll | upstream has | verdict |
+|---|---|---|
+| `StreamBuffer`'s FIFO↔stream wiring | `amaranth.lib.fifo`'s `w_stream` / `r_stream` | **replaced** — byte-identical Verilog, §7 |
+| `Plic` | nothing | `amaranth_soc.event.Monitor` **raises `DriverConflict` and does not elaborate**, as `upstream-boundary.md` says. Re-verified here; `csr.event.EventMonitor` fails the same way |
+| `blockram` (from luna_soc) | `amaranth_soc.wishbone.sram.WishboneSRAM` | **not a swap.** Its signature carries no `cti`/`bte`/`err`, so cache-line refills lose registered-feedback bursting. Same 2 cycles a beat, fewer features |
+| `flash_cdc.ClockCrossedPHY` | `luna_soc`'s own `SPIControlPortCDC` | ours uses `AsyncFIFOBuffered` where upstream uses `AsyncFIFO`, and `peripherals/flash_cdc.py` records that the unbuffered form put the FIFO output mux and the PHY's carry chain on one path. Ours is the fixed one |
+| `SplitRW` (read and write are different registers) | nothing in `amaranth_soc.csr.action` | correct as written, and already shared by four peripherals |
+| `SerialLine` | `amaranth_stdio.serial.AsyncSerial` | already a wrapper; the four things it adds are all things `AsyncSerial` deliberately leaves out |
+
+### The luna_soc surface is three times what the doc says
+
+[`toolchain-simplification.md`] (toolchain-simplification.md) §2 states "the
+genuine surface is exactly two things" — `core.blockram` (127 lines) and the
+VexRiscv CPU (194). It predates the flash work. The shipping SoC also imports
+the whole of `luna_soc.gateware.core.spiflash`:
+
+    mmap.py 207   phy.py 246   port.py 172   controller.py 164
+    utils.py  93   __init__.py 116                  = 998 lines
+
+from `peripherals/flash.py` (`SPIFlashMemoryMap`, `SPIPHYController`,
+`SPIClockGenerator`, `SPIController`, `SPIControlPort`, `StreamCore2PHY`,
+`StreamPHY2Core`, `WaitTimer`, `PinSignature`), `top.py`
+(`ECP5ConfigurationFlashInterface`) and `peripherals/flash_cdc.py` (`SPIControlPort`).
+
+**1,125 lines, not 127.** The "321 lines against 4,078" trade in that document is
+arithmetic on a surface that has since tripled.
+
+## 7. Changes made, and what they measured
+
+| change | `.text` | `.rodata` | fabric |
+|---|---:|---:|---|
+| `peripherals/stream_buffer.py` uses `fifo.w_stream` / `r_stream` | — | — | **byte-identical Verilog** |
+| `vbus_command` and `vbus::Source::parse` take bytes | −384 | −496 | — |
+| `bench.rs`: duplicate `#[inline(always)]` removed | 0 | 0 | — |
+| `cpu/clint.py`: docstring pointed at a file that does not exist | — | — | — |
+
+After: `.text` 41,016 · `.rodata` 16,560 · flash image **57,600** (−880) ·
+TRELLIS_COMB 14,025 · TRELLIS_FF 7,481 · DP16KD 44 · `$glbnet$clk` 73.05 MHz ·
+`./dev.py test` 97 checks · `./scripts/soc_sims.py` 531 checks in 15
+simulations · `./dev.py lint` 8 passed.
+
+Both check counts are **tree-state dependent** and that is worth knowing before
+anyone reads a difference into one: the suite has a paired check on whether the
+working tree is clean, so an uncommitted tree reports 96 and 530 and a committed
+one 97 and 531. The numbers above are from the committed tree, as are the
+baselines in §1.
+
+The `stream_buffer` change was verified by converting both versions to Verilog
+and diffing: the only differences are `src` attributes and the order of two
+`assign` statements. `w_stream` and `r_stream` alias the FIFO's existing signals
+rather than adding any, and `wiring.connect` checks the two signatures agree
+where a hand assignment of `payload` to a differently sized `w_data` would
+silently truncate.
+
+## 8. Things that are wrong rather than merely large
+
+**`peripherals/vbus_csr.py`'s `input` register drives nothing.** `VbusControl` exposes
+`control_vbus_in_en` and `aux_vbus_in_en`, and `top.py` states that
+the two pads are "deliberately NOT requested". So the register is writable, reads
+back what was written, and reaches no pin — while `peripherals/vbus_csr.py`'s own docstring
+says "`vbus input both` restores the permissive state at runtime" and
+`vbus::inputs()` reports its value to the operator as though it were the state of
+the board. A shell that says the AUX input is open when nothing has opened it is
+worse than a shell with no such command.
+
+**`gateware/soc/cpu/irq.py` is in no design.** 119 lines, 149 LUT4-equivalent
+if it were ever instantiated. `upstream-boundary.md` keeps it so luna_soc's SVD
+generator "still finds the map" — but `repos/cynthion`'s facedancer top imports
+`InterruptController` from `luna_soc.gateware.cpu`, not from here, so nothing in
+either tree reaches it.
+
+**`hello_soc.py` claimed users it did not have** — its docstring said it "stays
+as the smaller reference point that several scripts still build against", and
+nothing built it. **Deleted**, with `cpu_area.py`: both existed to compare
+VexRiscv against VexiiRiscv, a settled choice, and they were the only importers
+of `luna_soc.gateware.cpu.VexRiscv` in the tree.
+
+**Three doc references in `gateware/` point at files that do not exist** —
+`docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`),
+`docs/luna_ecp5_fpga/hyperram-speed.md` (`hyperram/hyperram_identify.py:11,80`,
+`hyperram/hyperram_fifo.py:109`) and
+`docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`).
+`./dev.py docs` checks links in Markdown and nothing checks them in source
+comments, which is why these survived. A fourth, in `cpu/clint.py`, is fixed
+in §7.
+
+**`vbus::discharge()` has no caller** (`firmware/cynthion-soc/src/vbus.rs:305`).
+Two other functions reported as dead in the same survey — `hyperram::seek_word`
+and `hyperram::write_word_pub` — are called eleven times between them from
+`bench.rs`, so this list is only the ones checked against the whole tree.
+
+## 9. Two claims in the tree that measurement did not support
+
+Recorded because both read plausibly and both are wrong in the same direction —
+each makes a library look better than it is.
+
+**`amaranth_soc`'s event monitors do elaborate.** They do not. Both
+`event.Monitor` and `csr.event.EventMonitor` raise
+`amaranth.hdl._ir.DriverConflict` on `pending` and `bus__r_data` respectively.
+Reading their source suggests otherwise; running them does not.
+
+**`WishboneSRAM` is a drop-in for luna_soc's `blockram`.** It is not. It
+constructs its Wishbone signature with no `features`, so it has no `cti`, no
+`bte` and no `err` — and the CPU's cache-line refills are registered-feedback
+bursts. Its acknowledge also takes the same two cycles a beat that
+`bus/wishbone_pipe.py` already documents for the block RAM, so there is no latency
+argument either.
+
+
+---
+
+## gateware-architecture-plan.md: original plan text incl. 'silent SoC' blocker (issue #209, closed) and 6342 LUT CPU figure
+
+### Source: docs/gateware-architecture-plan.md
+
+# Making the test gateware reusable by the CPU build
+
+Written because the test code currently cannot carry forward. Eleven bitstream
+directories, each a whole-chip design; **17 of them bound to
+`JTAGRegisterInterface` against 5 with a bus interface.** A peripheral wired to a
+host-driven JTAG register file cannot be attached to a CPU, so today every test
+is a throwaway.
+
+This is the plan to fix that, and the mastership model it depends on.
+
+## Mastership: one bus, two possible masters, never both
+
+The tempting answer -- CPU and sideband as co-masters through an arbiter -- does
+not work. Locking is the problem: two masters that can both write a peripheral
+need a lock protocol, and neither a 6-LED display nor a flash controller has one.
+
+So the model is **exactly one master at a time**, decided by build:
+
+| build | bus master | sideband role |
+|---|---|---|
+| **test bitstream** (no CPU) | **the sideband responder** | it *is* the master |
+| **CPU build** | **the CPU** | an I2C peripheral *on* the CPU's bus |
+
+That second row is the important one. When a CPU is present the sideband stops
+being a master and becomes a **device the CPU owns**, addressed like any other
+peripheral, with an interrupt line. The host still reaches it -- Apollo still
+talks FPGA_ADV -- but writes now go through the CPU, which is the only thing that
+knows whether a peripheral is mid-transaction.
+
+**That also makes the sideband the EIC replacement** ([#95] (https://github.com/awtoau/cynthion-workspace/issues/95)): as a CPU peripheral with
+an interrupt it carries the port request, the commands and user data, and the
+EIC/UART mode distinction stops mattering. The two modes, and why the port request
+and the command traffic contend for the wire, are in
+[`chips/cynone-sideband.md`] (chips/cynone-sideband.md#8-the-second-job-the-control-port-request).
+
+## One I2C controller, three bus pin-sets
+
+r1.4 has **three physically separate I2C buses**, and the reason is forced rather
+than chosen: **both FUSB302Bs sit at address `0x22`**, so they cannot be
+distinguished on one bus. The bus table, the pins and the addresses are in
+[`hardware.md`] (hardware.md#the-buses); the chip notes are
+[`chips/fusb302b-type-c.md`] (chips/fusb302b-type-c.md) and
+[`chips/pac1954-power-monitor.md`] (chips/pac1954-power-monitor.md).
+
+The consequence for this plan: "just use one bus" is not available in hardware,
+but one *controller* is. A single I2C master with a 2-bit bus select driving three
+pin-sets is the multiplexed master [#98] (https://github.com/awtoau/cynthion-workspace/issues/98) already asks for, and it replaces three
+replicated controllers with one plus a mux.
+
+The interrupt lines get a source each, and the level-sensitive trap that a
+shared one would have carried is described in
+[`chips/fusb302b-type-c.md`] (chips/fusb302b-type-c.md#interrupts). Not urgent: PD
+negotiation is not on the critical path.
+
+**Done, and on silicon** ([#121] (https://github.com/awtoau/cynthion-workspace/issues/121)). `gateware/soc/peripherals/i2c_mux.py` is the select and
+the four Type-C signals; `gateware/soc/peripherals/i2c_master.py` gained an `idle` output
+so the select cannot move underneath a transfer. The two `int` lines were OR-ed
+onto one source here, **and [#135] (https://github.com/awtoau/cynthion-workspace/issues/135) gave each its own** — one controller does mean
+one device at a time on the bus, but that says nothing about which device the
+handler should be told to service, and a source is a pending bit and an enable.
+Each DPO2036's `FAULTB` has its own source too, edge-triggered. See
+[`architecture.md`] (architecture.md) decision 8. The handler still *masks* rather than
+clears: clearing needs a millisecond of I2C on the controller the foreground is
+also using, which is not a thing an interrupt handler may do. Normal context
+clears the device that asserted, acknowledges the pending bit and re-enables
+its source. [`soc-interrupts.md`] (soc-interrupts.md) is the controller.
+Note the earlier `gateware/probes/i2c/multiplexed.py` was never on silicon and is
+superseded.
+
+**On presenting the LEDs as a fake I2C device:** attractive for uniformity and
+wrong here. The LEDs are six wires in the same fabric -- wrapping them in a
+serial protocol adds a state machine, a byte-time of latency and an error path to
+something that is currently one combinational assignment. Uniformity is worth
+paying for at a *bus* boundary, not inside the chip. The LEDs should be a CSR
+register, same as everything else on the bus.
+
+## The port: peripherals become bus components
+
+Each test peripheral grows a CSR interface and loses its `JTAGRegisterInterface`.
+The register file does not disappear -- it becomes a **bridge**, so the same
+peripheral is reachable either way:
+
+    host over JTAG  ->  JTAG-to-Wishbone bridge  ->|
+                                                   |-> peripheral (CSR)
+    CPU                                         ->|
+
+That is what makes one implementation serve both builds. It is also how the
+SoC already reaches its console this way, so the pattern is proven in this tree
+rather than proposed.
+
+Order, cheapest and most-load-bearing first:
+
+1. **I2C master, multiplexed** ([#98] (https://github.com/awtoau/cynthion-workspace/issues/98)) -- unblocks FUSB302B and PAC1954 together.
+2. **LEDs** as a CSR register with the existing override/release semantics.
+3. **Flash** (QSPI) -- already has the most bus-shaped interface of the group.
+4. **HyperRAM** ([#90] (https://github.com/awtoau/cynthion-workspace/issues/90)) -- the largest, and the one with a real timing question.
+
+## Confirmed scope
+
+All four requested, with the sizing stated because they compete for one 12F:
+
+**All three USB ports as 480 Mbps CDC.** Given. This is the largest item -- three
+device stacks against 24288 LUTs with a CPU wanting ~6000 -- and the shipping
+bitstream will configure the ports differently. The point is proving all three
+*can* come up, not that one image uses them that way.
+
+**HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
+currently reports `hyperram absent` as a presence bit with no identity behind it.
+The registers themselves are already read and decoded from a standalone bitstream
+— [`chips/hyperram/w956a8.md`] (chips/hyperram/w956a8.md) — so what is missing is
+the CPU-side path, not the knowledge.
+
+**FUSB302B and die temperature over the sideband.** Small, because the gateware
+exists -- `gateware/probes/pins/fusb302_id.py` already reads both controllers. What is
+missing is sideband *commands*, not blocks; the opcode map and what adding to it
+costs are in [`chips/cynone-sideband.md`] (chips/cynone-sideband.md#4-commands). Temperature needs the `DTR`
+primitive instantiated, which it currently is not anywhere.
+
+**Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
+motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs
+enumerate and neither prints, cause not established
+([#209] (https://github.com/awtoau/cynthion-workspace/issues/209)).
+
+## What this does not resolve
+
+**Whether it all fits.** Three USB stacks plus a CPU plus caches plus HyperRAM on
+an LFE5U-12F is not obviously feasible, and nothing here has been synthesised
+together. The area numbers to beat: best CPU config measured at 6342 LUT and
+14 of 56 BRAM; the sideband test bitstream at 123920 bytes builds today with the
+responder, flash and power monitor.
+
+**The silent SoC.** Everything CPU-driven waits on it, and it is the one item in
+this plan with no established cause rather than an unstarted task.
+
+
+---
+
+## riscv-core-build.md and board-arbiter.md: narrative removed
+
+### Source: docs/riscv-core-build.md
+
+# Building the RISC-V core — and why you should, more often than you think
+
+**The core is generated, not vendored, and regenerating it takes seconds.** That
+sentence is the whole point of this file, because it was assumed false for a long
+time and the assumption cost real work.
+
+**Index:** [`hardware.md`] (hardware.md) · CPU notes:
+[`chips/vexiiriscv-cpu.md`] (chips/vexiiriscv-cpu.md)
+
+## The command
+
+`gateware/soc/cpu/cpu.py` runs it. Nothing else needs to be invoked by hand:
+
+```python
+import cpu.cpu
+vexii_cpu.generate(reset_addr=0x0, cache_sets=64)   # -> repos/vexiiriscv/VexiiRiscv.v
+```
+
+Under that it is one `sbt` run against `repos/vexiiriscv`:
+
+    sbt --batch --no-server "runMain vexiiriscv.Generate <flags>"
+
+**Requirements: `sbt` and a JDK. Java 25 works.** There is no toolchain freeze —
+that was believed and it is not true. Verified 2026-08-04 on
+`openjdk 25.0.4` with `sbt` from the distro. If a regeneration fails, read the
+error; do not conclude the toolchain is unusable.
+
+The generator writes `repos/vexiiriscv/VexiiRiscv.v` — a fixed path, because
+SpinalHDL's target directory is the process cwd and sbt's cwd must be the project
+root. `generate(output=...)` copies it to the caller's path; `top.py` passes
+`tmp/awto_soc/build/<variant>/VexiiRiscv.v`, and that copy is what synthesis
+reads.
+
+`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v` is a checked-in copy that
+`scripts/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
+can be regenerated without sbt.
+
+### Concurrency ([#306] (https://github.com/awtoau/cynthion-workspace/issues/306))
+
+* One generator at a time. `cpu.py`'s lock covers the sbt run **and** the copy,
+  so a caller passing `output=` cannot read a half-written file.
+* The lock lives beside the **checkout**, not beside the worktree:
+  `<checkout>/../../tmp/vexii-generate.lock`. `git worktree add` does not
+  populate submodules, so every worktree shares the main checkout's
+  `repos/vexiiriscv` — a per-worktree lock would have excluded nothing.
+* `VEXII_ROOT` moves the sources and the lock together.
+* Not caching the netlist is deliberate here: every build regenerates, and a
+  build that skipped it once picked up another configuration's core and left the
+  board mute with every check passing ([#306] (https://github.com/awtoau/cynthion-workspace/issues/306)).
+
+## The flags, and where they live
+
+`GENERATE_FLAGS` in `gateware/soc/cpu/cpu.py` is the single list. Each entry
+carries its reasoning in a comment there; that file is the authority and this is
+a map, not a copy.
+
+| what | flag |
+|---|---|
+| 32-bit, M/C/A, `rdtime` | `--xlen 32 --with-rvm --with-rvc --with-rva --with-rdtime` |
+| I-cache, 64 sets × 2 ways | `--with-fetch-l1 --fetch-l1-sets 64 --fetch-l1-ways 2` |
+| D-cache, same shape | `--with-lsu-l1 --lsu-l1-sets 64 --lsu-l1-ways 2` |
+| Wishbone on all three buses | `--fetch-wishbone --lsu-wishbone --lsu-l1-wishbone` |
+| branch target buffer | `--with-btb --relaxed-branch --relaxed-btb` |
+| JTAG debug module on ER2 | `--debug-jtag-instruction` |
+| **performance counters** | `--performance-counters 4` |
+| PMA regions | `--region base=...,size=...,main=,exe=` per window |
+
+`--region` is not optional. VexiiRiscv's `defaultPma` covers only `0x80000000`
+and `0x10000000`, so a design with memory at `0x00000000` has it in **no region
+at all** and every access traps — including every stack operation. The failure
+looks exactly like a dead CPU.
+
+## The performance counters, and the lesson attached to them
+
+`--performance-counters 4` gives `mhpmcounter3..6`, each selected by writing an
+event id to the matching `mhpmevent` CSR (`0x323..0x326`), read back from
+`0xb03..0xb06`. The ids are VexiiRiscv's own, in
+`repos/vexiiriscv/src/main/scala/vexiiriscv/misc/Service.scala`:
+
+| id | event |
+|---|---|
+| `0x04` | `STALLED_CYCLES_FRONTEND` — waiting on instruction fetch |
+| `0x05` | `STALLED_CYCLES_BACKEND` — waiting on data |
+| `0x10`/`0x11` | `ICACHE_ACCESS` / `ICACHE_MISS` |
+| `0x12` | `ICACHE_WAITING` |
+| `0x18`/`0x19` | `DCACHE_LOAD_ACCESS` / `DCACHE_LOAD_MISS` |
+| `0x1A` | `DCACHE_WAITING` |
+
+`src/bench.rs`'s `hpm` module reads them around a walk.
+
+**The plugin is not optional while `rdtime` is kept.** `--with-rdtime` adds
+zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
+`--performance-counters` generates a **byte-identical** core to
+`--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
+FSM are all still there. Only the count is free. [#471] (https://github.com/awtoau/cynthion-workspace/issues/471).
+
+**Why this file exists.** Chasing a HyperRAM performance question, five gateware
+probes were built and five readings of the source produced five wrong
+explanations — sixteen transactions per line, 316 CK inside the burst, a
+non-streaming data phase, slow plumbing, and a benchmark bounded by instruction
+fetch. Every one was refuted by measurement. The counters settled it in one
+build, and had been available in the core the entire time:
+
+    front-stall 7   back-stall 294   dcache-waiting 79   dcache-miss 1
+
+Seven cycles of fetch stall and zero I-cache misses killed the "bounded by flash"
+theory outright. **Ask the CPU before instrumenting the fabric.**
+
+## What regeneration costs
+
+* **Seconds of wall clock.** `sbt` is warm after the first run.
+* **Area.** The four counters are 670 LUT4-equivalents and 94 FFs of the 13,685
+  and 7,828 the SoC has, counted off the two netlists.
+* **Timing: not what one build said.** "Adding the counters stopped the design
+  closing at `SYNC_MHZ = 72`" was one build against one build, and the placement
+  distribution at fixed occupancy is 9 MHz wide ([#467] (https://github.com/awtoau/cynthion-workspace/issues/467)). Measured over 40 seeds a
+  side, **every** counter configuration is slower than the shipping four:
+  `pc8` -2.48 MHz, `pc0` -2.99, `pc2` -2.96, and removing the plugin outright
+  -6.52 [-7.77, -5.27]. The smaller design is the slower one, and the counters
+  are not what is holding the clock down. Full matrix in [#481] (https://github.com/awtoau/cynthion-workspace/issues/481).
+* The constraint a build is given does not change what nextpnr produces ([#478] (https://github.com/awtoau/cynthion-workspace/issues/478)),
+  so `SYNC_MHZ` cannot be used to buy or lose margin either.
+* **Nothing else.** The PAC, the linker scripts and the firmware are unaffected
+  unless a `--region` or an address moves, and `./dev.py run` regenerates the
+  peripheral map itself.
+
+## When to regenerate rather than reason
+
+Whenever the question is about the CPU's own behaviour: stalls, cache hit rates,
+branch prediction, whether an instruction is implemented. A flag and a rebuild is
+usually cheaper than an afternoon of inference, and it produces a number instead
+of an argument.
+
+### Source: docs/board-arbiter.md
+
+# The board arbiter — one owner for the tty, the JTAG and what is configured
+
+**Never open the console tty yourself. Never run `apollo configure` yourself.**
+Submit a job.
+
+```bash
+./dev.py board run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 "bist smoke"
+./dev.py board status
+```
+
+- Server: [`scripts/board_arbiter.py`] (../scripts/board_arbiter.py), HTTP on
+  127.0.0.1:9100.
+- Client: [`scripts/board.py`] (../scripts/board.py), which **starts the server**
+  if the port is down. No `daemon start` step.
+- Records: `tmp/board-arbiter/jobs/<id>.json`, log `tmp/logs/board-arbiter.log`.
+- Proof harness against real hardware:
+  [`scripts/board_arbiter_proof.py`] (../scripts/board_arbiter_proof.py).
+
+## Why
+
+Agents coordinated for the board in prose and reflashed each other's
+measurements ([#430] (https://github.com/awtoau/cynthion-workspace/issues/430)): rows attributed to an unknown build, firmware 109 commits
+stale while measurements were taken against it, `hyperram_verify` resolving one
+variant's bitstream while the board ran another ([#367] (https://github.com/awtoau/cynthion-workspace/issues/367)).
+
+The board is not just a tty. It is the tty **plus** Apollo JTAG **plus** the
+state of what is configured. Nothing owned all three.
+
+## The shape, and what is deliberately absent
+
+- **One verb.** Submit a job, get a transcript with its provenance.
+- **Verbs are operations, never leases.** There is no acquire/release; an agent
+  never gets handed the tty.
+- **One high-level verb, primitives underneath**, all on `POST /jobs` with a
+  `kind`:
+
+  | kind | does |
+  |---|---|
+  | `run` (default) | resolve bitstream → configure if what is loaded is not what was asked → **confirm** → run the commands → transcript |
+  | `configure` | configure and confirm; no commands |
+  | `confirm` | is a design running, and which failure if not |
+  | `shell` | commands on whatever is loaded, provenance saying what that is |
+
+- **Not building.** A variant with no bitstream is refused, naming what is
+  built. `./dev.py` is the entry point;
+  [`soc_build_fanout.py`] (../scripts/soc_build_fanout.py) keeps the builds.
+- **Not flashing firmware.** [`soc_run.py`] (../scripts/soc_run.py) owns that.
+- **Not command dispatch.** A job's commands are SoC *shell* commands. The only
+  host program the arbiter runs is `apollo configure`, through
+  [`soc_confirm.py`] (../scripts/soc_confirm.py).
+
+The scope rule is the whole design: it owns a resource, it does not dispatch
+commands. The retired `cyn` (`debris/CYN_ARCHITECTURE.md`) died of the opposite.
+**A second unrelated verb is the signal it is repeating `cyn`.**
+
+## What a transcript carries
+
+- the bitstream sha256, its path and size — the identity that makes [#367] (https://github.com/awtoau/cynthion-workspace/issues/367)
+  impossible rather than remembered
+- whether **this job** configured, or found the image already loaded
+- the commit the **board** reports from `info` (firmware and gateware), not the
+  host checkout — those differ whenever the board was flashed from elsewhere
+- the `confirm` verdict by name
+- the die temperature the part reports
+- per command: the reply, `ok`/`timeout`/`preempted`, and the elapsed
+- the host checkout's commit and dirty flag, and which worktree submitted it
+
+## Why it cannot report a pass having run nothing
+
+`passed` requires **all** of:
+
+1. the pre-configure gate open (Apollo on the bus),
+2. a `confirm` verdict of `ok` — `apollo configure` exiting 0 is not a running
+   design ([#360] (https://github.com/awtoau/cynthion-workspace/issues/360)),
+3. the board's own `info` reporting an image commit,
+4. every command returning the shell's prompt,
+5. at least one command, for `run` and `shell`.
+
+Anything else is `failed`, `refused` or `preempted`, and the client exits
+non-zero. [`tests/test_board_arbiter.py`] (../tests/test_board_arbiter.py) drives
+each leg to a failure.
+
+## While a build is running
+
+- The arbiter holds the variant's `<build>/.build.lock` ([#351] (https://github.com/awtoau/cynthion-workspace/issues/351)) while it hashes
+  and configures the bitstream. `soc_run.py` rewrites `top.bit` in place, and
+  without the lock the sha256 recorded and the bytes the ECP5 got can be from
+  different builds.
+- A job submitted while that variant is building is **refused**, naming the
+  lock. It does not wait, and it does not configure half a file.
+
+## Going around it
+
+- The tty's holders are read from `/proc`
+  ([`board_holders.py`] (../scripts/board_holders.py)). Anything but
+  [`tio_user.py`] (../scripts/tio_user.py) — which owns the tty by design and
+  fans it out on 9000 — is a refusal naming the pid and command line.
+- An interactive session stays possible: run `tio_user.py`, and the arbiter
+  reads the console through its socket rather than competing for the node.
+
+## The idle queue
+
+`priority=idle` runs when nothing else is queued and is **preempted by a real
+submission** — abandoned mid-sweep. Nothing depends on it finishing.
+
+```bash
+./dev.py board idle --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \
+                    --repeat 200 --budget 6 "bist all 8"
+```
+
+**Idle results are not measurements and cannot be made into one.** Three
+barriers, because a caveat beside a number is read as the number:
+
+1. separate directory — `tmp/board-arbiter/idle/`, never `results/hyperram/`
+2. separate schema — `board-idle-observation`, which
+   [`hyperram_matrix_diff.py`] (../scripts/hyperram_matrix_diff.py) `load()`
+   refuses, by schema **and** by path
+3. none of a matrix run's keys — no `failures`, no `summary`, no `pins`
+
+They earn their board time with **events**, never rows:
+
+- a **wedge**, with the state that caused it still on the board until the next
+  job configures
+- a **tally that moved** between identical runs
+- a **cell that changed verdict** — compared over cells *both* runs reached,
+  since a preempted sweep prints a prefix
+- a **cell that disagrees with itself** across passes of one job — same
+  configuration, seconds apart, which is the sharpest form of it ([#437] (https://github.com/awtoau/cynthion-workspace/issues/437))
+- **die drift** ≥ 5 °C ([#341] (https://github.com/awtoau/cynthion-workspace/issues/341))
+- **BUILD CHANGED** — a different bitstream sha256 or board image than the
+  previous observation. Nothing is compared across it; another session
+  rebuilding the variant mid-soak is the event, not the cells that moved.
+
+## Preemption, and what it costs
+
+- The reader loop checks the preempt flag every 50 ms, so a sweep is abandoned
+  mid-command rather than at the next command.
+- An abandoned sweep leaves the board printing, so the arbiter marks it unknown:
+  the next `run` configures (that is the reset), and a `shell` job is refused
+  until something does. The cost of a preemption is one configure, ~2.5 s.
+
+## Timing, measured on this board (2026-08-12, `bist1-ck120`, image `80a242f`)
+
+| operation | measured |
+|---|---|
+| `info`, `bist status`, `bist smoke`, `bist latency 8` | 0.04–0.07 s |
+| `bist all 1` / `bist all 8` (4096 cells) | 4.39 s / 4.59 s |
+| configure + confirm | ~2.5 s |
+| AUX console re-enumeration after a configure | 0.41 s ([#419] (https://github.com/awtoau/cynthion-workspace/issues/419)) |
+| a job on an already-loaded variant, end to end | 0.27 s |
+
+## One board, many worktrees
+
+- The **port is the mutex**: agents work in git worktrees, and a lock under one
+  worktree's `tmp/` arbitrates nothing.
+- State and records live in the **main working tree**, resolved through
+  `git rev-parse --git-common-dir`.
+- The first client to find the port down starts the server **from its own
+  checkout**; `status` reports which root that was.
+
+## Superseded
+
+`scripts/fpga_job_runner.py` and `fpga-jobs/` — a directory queue drained
+one-shot, whose lock was worktree-local. Its `/proc` holder scan survives as
+`board_holders.py`; its positive/negative-control discipline survives as the
+arbiter's refusal rules and `board_arbiter_proof.py`.
+
+
+---
+
+## usb-performance.md: narrative sections and the HyperRAM 220.2 MB/s figure (HyperRAM speeds live in chips/hyperram/w956a8.md)
+
+### Source: docs/usb-performance.md
+
+# LUNA USB gateware: measured performance
+
+LUNA's USB2 stack on Cynthion r1.4. It reaches 91% of the USB 2.0 protocol
+maximum, responds to a token in one clock cycle, and never NAKs. Every figure
+below that fell short traced to the measurement harness or the physical
+topology, not to the gateware.
+
+## Results
+
+All on r1.4, high speed negotiated, 512-byte bulk packets, ULPI PHY.
+
+| configuration | Mbps | MB/s | % of 426 |
+|---|---|---|---|
+| USB 2.0 line rate | 480.0 | 60.0 | — |
+| Protocol maximum (13 × 512 B per microframe) | 426.0 | 53.2 | 100% |
+| **Bulk IN, direct root port** | **388.0** | **48.5** | **91%** |
+| Bulk OUT, direct root port | 338.8 | 42.3 | 80% |
+| Bulk IN, four hub levels deep | 292.2 | 36.5 | 69% |
+| Bulk loopback with a FIFO | 244.2 | 30.5 | 57% |
+| CDC-ACM loopback, combinational | 195.4 | 24.4 | 46% |
+
+The protocol maximum was derived from the spec rather than quoted: a 512-byte
+bulk transaction is 4512 bit times at 2.0833 ns = 9.40 µs, so 13 fit in a 125 µs
+microframe. That matches the commonly cited `1000 × 8 × 512 × 13 ≈ 53 MB/s`.
+
+## The device is not the constraint
+
+Instrumented in gateware over **284,306 transactions** at 388 Mbps
+(`gateware/probes/usb_bulk/usb_timing.py`):
+
+| measurement | value | what it means |
+|---|---|---|
+| ACKs per IN token | **1.0000** | zero NAKs, zero retries |
+| bytes per token | **512.0** | every packet full length |
+| token → first data byte | **1 cycle, 17 ns** | LUNA responds immediately |
+| last byte → ACK | 9.30 µs minimum | bus turnaround, host side |
+| ACK → next token | 317 ns minimum | host asking again |
+
+Against a ~10.6 µs transaction period, the device contributes **0.16% of the
+budget**. The kernel logged no errors, resets, stalls or babble during the run.
+
+A device that NAKs makes the host back off, which from the host is
+indistinguishable from a slow host. The ratio being exactly 1.0000 rules that
+out.
+
+## Choosing an endpoint type
+
+CDC-ACM and raw bulk, measured back to back with the same loopback:
+
+| | Mbps |
+|---|---|
+| CDC-ACM, combinational loopback | 195.4 |
+| Raw bulk, combinational loopback | 188.0 |
+| Raw bulk, FIFO loopback | 244.2 |
+
+CDC costs essentially nothing. LUNA's `USBSerialDevice` is `USBStreamInEndpoint`
+plus `USBStreamOutEndpoint` plus descriptors — no added data path. Swapping CDC
+for bulk while holding the loopback constant changed nothing (bulk was marginally
+*slower*); swapping the wire for a FIFO gained 26%. Choose CDC when a tty is
+wanted, bulk when it is not; how the endpoints are connected is what matters.
+
+`max_packet_size` does matter, and defaults wrongly for high speed: it is 64, the
+full-speed bulk limit. Leaving it there enumerates at high speed while running at
+roughly an eighth of the achievable rate.
+
+## What limits throughput, in order of size
+
+**1. USB topology — 33%.** Four hub levels cost 292.2 Mbps against 388.0 on a
+direct root port. Confirmed with the PHY held constant: AUX measured 388.0 direct
+and 292.2 through hubs, TARGET measured 387.8 direct — the two PHYs differ by
+0.05%, so the entire gain is hub depth.
+
+**2. Combinational loopback — 26%.** Wiring `rx.ready` to `tx.ready` defeats
+LUNA's double buffering: while a packet awaits ACK, `tx.ready` drops, which drops
+`rx.ready`, which NAKs the host's next OUT packet. Every packet then pays a full
+bus round trip. A packet-sized FIFO between the streams removes it.
+
+**3. Host controller scheduling — the remaining 9%.** Outside the device, not
+recoverable from this side.
+
+## Things that turned out not to matter
+
+Recorded so they are not re-investigated:
+
+- **Host language.** Five implementations — pyserial, pyusb synchronous, libusb1
+  async at four queue depths, and native C with no interpreter — all landed
+  between 287 and 297 Mbps through the same hub chain. C beat the best Python by
+  1.2%.
+- **Queue depth.** Depths of 1, 4, 8 and 16 are indistinguishable in both
+  languages. The hypothesis that unpipelined synchronous I/O was leaving the bus
+  idle is false.
+- **Stale submodules.** `repos/luna` is level with upstream, and the installed
+  `luna_usb` is byte-identical to it across `transfer.py`, `endpoints/stream.py`,
+  `acm.py` and `stream.py`.
+- **Clock configuration.** The entire USB data path is `usb`-domain only — 24
+  `m.d.usb` statements and zero `m.d.sync` in the transfer and endpoint code — so
+  there is no clock-domain crossing between endpoint and application logic.
+  Raising `sync` would not help: at 60 MHz × 8 bits the datapath already carries
+  480 Mbps, above the protocol ceiling.
+- **LUNA issue [#276] (https://github.com/awtoau/cynthion-workspace/issues/276)**, which caps speed to full speed, applies only to custom
+  UTMI PHYs. `USBDevice` sets `always_fs = False` on the ULPI path Cynthion uses.
+
+## Measurement traps
+
+Three of the numbers above were initially wrong, all because the instrument was
+doing work inside the timed region.
+
+**Per-byte verification in Python.** Checking a counting sequence byte by byte as
+it arrived cost 3.4 ms per 64 KiB — a ceiling of ~150 Mbps, *below the figure it
+then reported as the link speed*. It applied to IN only, producing a 56% IN/OUT
+asymmetry that looked exactly like a gateware defect and was investigated as one.
+Buffering the capture and verifying afterwards raised IN by 53% and collapsed the
+asymmetry to 9%.
+
+**Reporting payload instead of bus traffic.** A loopback carries every byte in
+both directions, so the bus figure is double the payload one. Quoting payload
+alone understated the link by exactly 2×.
+
+**Comparing along a diagonal.** Measuring AUX-through-hubs against TARGET-direct
+changes two variables at once. The conclusion happened to be right, but it was an
+inference dressed as a measurement until the fourth cell of the matrix was filled
+in.
+
+Rule: do nothing to the data while the clock is running, and when a result
+surprises, suspect the instrument before the device.
+
+## Files
+
+| path | purpose |
+|---|---|
+| `gateware/probes/usb_serial/usb_serial.py` | CDC-ACM device, host sees a tty |
+| `gateware/probes/usb_bulk/usb_bulk.py` | bulk loopback, with and without a FIFO |
+| `gateware/probes/usb_bulk/usb_oneway.py` | one direction at a time, selectable PHY |
+| `gateware/probes/usb_bulk/usb_timing.py` | per-transaction timing from inside the FPGA |
+| `scripts/usb_serial_speed.py` | CDC throughput, payload and bus columns |
+| `scripts/usb_oneway_speed.py` | one-way throughput, verification after timing |
+| `scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
+| `debris/scripts/usb_speed_native.c` | native C, to rule out the host language |
+
+## In context
+
+The capture path is bounded by the slower of USB and HyperRAM:
+
+| | MB/s |
+|---|---|
+| HyperRAM, FIFO access at 512-byte granularity | 220.2 |
+| USB bulk, direct port | 48.5 |
+
+4.5× headroom. USB is the constraint.
+
+
+---
+
+## docs/drafts/gsg-scenarios-master.md and the eleven gsg-scenario-*.md children as first written (merged into the master)
+
+### Source: docs/drafts/gsg-scenarios-master.md
+
+# Master: port Great Scott Gadgets' Cynthion scenarios to our SoC
+
+Upstream ships three bitstreams and documents about a dozen distinct things a Cynthion
+can do. We have replaced luna-soc with our own VexiiRiscv SoC. This issue is the survey
+of what upstream actually does, and the index of one child issue per scenario.
+
+The reference half — what each scenario is and what implements it upstream, with the
+wire contracts — is in [`docs/gsg-scenarios.md`] (https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md).
+This issue holds the part that is not durable: what porting each one costs and how it
+would be tested.
+
+## The one fact that shapes every child
+
+**This SoC has no USB device controller and no USB packet path of any kind on the
+TARGET port.**
+
+The peripherals are: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`,
+`i2c_mux`, `vbus`, `fabric_status`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
+`gateware/soc/peripherals/ulpi_window.py` reads and writes a USB3343's PHY registers over
+`target_phy` and cannot send or receive a single packet. Moondancer's firmware expects
+three sets of `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none of
+them exist here.
+
+So for every scenario, "what would porting it require" begins at the same place: build
+or adopt a USB packet path. The children differ in how much they need on top of that.
+
+## What we do have, and it is more than it sounds
+
+| Asset | Where | Why it matters |
+|---|---|---|
+| Our own board platform | `gateware/board/cynthion_r1_4.py` | `control_phy`, `aux_phy`, `target_phy` resources and `apollo_port_sharing` already declared |
+| A working luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, instantiated in the SoC at `gateware/soc/top.py` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
+| CONTROL port handover | `gateware/probes/sideband/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
+| VBUS switch control | `gateware/soc/peripherals/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
+| HyperRAM | `gateware/soc/peripherals/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
+| PAC generated from the SoC's own map | `./dev.py pac` | A new peripheral gets Rust accessors without hand-transcription |
+| `smolusb::control::Control` | upstream, trait-based over `D: UsbDriver` | The control-transfer state machine is hardware-independent and ports verbatim. It is the one part that is portable today |
+
+## The testing constraint, which is the real one
+
+Our three test tiers do not overlap the way the scenarios need.
+
+* **`./dev.py test` runs `qemu-system-riscv32 -M virt`.** That machine has a 16550, a
+  PLIC and a CLINT and *nothing else of ours* — no ULPI, no USB, no HyperRAM, no
+  `fabric_status`. QEMU can test firmware logic that does not touch a PHY: protocol
+  parsers, command dispatch, descriptor construction, the `smolusb` control state
+  machine driven by a mock. It cannot test a single USB peripheral.
+* **`./dev.py sim` runs 15 Amaranth pysim simulations** (`scripts/soc_sims.py`), 9 of
+  them sub-second and in the pre-commit gate. There is currently **no USB simulation and
+  no ULPI simulation**. Adding one is the highest-leverage thing on this whole list,
+  because it is the only tier that can test a packet path without a board.
+* **`./dev.py test-board`** runs the shell suite on real hardware. `run`, `console` and
+  `flash` are declared `needs_hardware` and are deliberately excluded from `gate` and
+  `ci`.
+
+A scenario whose only test is "plug it in and look" is a scenario that will silently rot.
+Each child states its test tier explicitly, and where the answer is "hardware only", say
+so rather than pretending.
+
+## The children
+
+| # | Scenario | Bitstream / firmware upstream | Verdict |
+|---|---|---|---|
+| 1 | [USB protocol analyzer] (gsg-scenario-analyzer.md) | `analyzer.bit`, no firmware | Hard — biggest gateware build, but no firmware and a fully specified wire contract |
+| 2 | [Analyzer built-in test device] (gsg-scenario-analyzer-test-device.md) | inside `analyzer.bit`, AUX PHY | Portable — closest to what already runs on AUX |
+| 3 | [Facedancer device emulation] (gsg-scenario-facedancer.md) | `facedancer.bit` + `moondancer.bin` | Hard — needs the USB peripheral set *and* the libgreat command surface |
+| 4 | [USB proxy / MITM] (gsg-scenario-usb-proxy.md) | same as 3 | Free once 3 lands — it is host-side only |
+| 5 | [USER I/O from Facedancer] (gsg-scenario-user-io.md) | same as 3 | Portable — our `gpio` and LED peripherals already exist |
+| 6 | [Self-test] (gsg-scenario-selftest.md) | `selftest.bit`, no firmware | Portable — JTAG register reads, and we already have ULPI register access |
+| 7 | [Bitstream configuration and flashing] (gsg-scenario-flashing.md) | Apollo MCU + `flash_bridge.py` | Already done, differently — worth an audit, not a port |
+| 8 | [MCU firmware update and recovery] (gsg-scenario-mcu-firmware.md) | Apollo + Saturn-V, DFU | Already done — no SoC involvement at all |
+| 9 | [Bulk throughput test] (gsg-scenario-speed-test.md) | `luna/gateware/applets/speed_test.py` | Portable — we have measured 195.4 Mbps on AUX already |
+| 10 | [Custom gateware tutorials] (gsg-scenario-custom-gateware.md) | tutorial sources, luna `USBDevice` | Portable — a platform-compatibility question, not a SoC one |
+| 11 | [Factory hardware validation] (gsg-scenario-factory-hil.md) | `cynthion-test` + Tycho | Needs hardware we lack — Tycho, Sasserides, GreatFET One, Black Magic Probe |
+
+## Shared prerequisites
+
+Three pieces of work are prerequisites for several children at once. They are called out
+here so they are not re-argued in each.
+
+**P1. A ULPI packet path on `target_phy`.** Today `target_phy` reaches only
+`ulpi_window.UlpiRegisters`. Scenarios 1, 3 and 4 all need `luna.gateware.interface.ulpi`'s
+full PHY plus a UTMI-level consumer. The `USBSerialDevice` on `aux_phy` proves the layer
+works on this platform; the work is instantiating it on the right PHY without disturbing
+the register window that the board tests depend on.
+
+**P2. A ULPI simulation.** Neither QEMU nor the current sim set can see a USB packet.
+Until a bus-functional ULPI model exists in `scripts/`, every USB scenario is
+hardware-only, which makes all of them untestable in `gate` and `ci`. This should
+probably be done before scenario 1, not during it.
+
+**P3. A host-side board layer.** Upstream's `cynthion` Python package speaks to a board
+identified by VID:PID `1d50:615b` with interface subclass `0x10` (analyzer) or `0x20`
+(moondancer). Anything we build either matches those descriptors — and then Packetry and
+Facedancer work unmodified — or does not, and needs its own host tooling. **Match them.**
+The descriptors are the cheapest part of any of this and they are what buys us upstream's
+entire host stack for free.
+
+## Website versus code
+
+Six discrepancies found between what greatscottgadgets.com documents and what the
+repositories contain, plus one upstream defect. They are recorded in
+[`docs/gsg-scenarios.md`] (https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md#website-versus-code) rather
+than here, because they stay true. The defect —
+`cynthion build facedancer` raising `NameError` — is worth reporting upstream.
+
+## Scope
+
+This issue does not commit us to porting anything. It exists so that the decision about
+each scenario is made against what upstream actually does rather than against a memory of
+it.
+
+### Source: docs/drafts/gsg-scenario-analyzer.md
+
+# Scenario 1: USB protocol analyzer (Packetry)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §1.
+
+## What it is
+
+Capture Low-, Full- and High-Speed USB 2.0 traffic passing through the TARGET port pair
+and stream it to Packetry on the host. This is Cynthion's headline capability and the
+factory-default bitstream.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/analyzer/top.py::USBAnalyzerApplet`
+  — capture engine `analyzer/analyzer.py`, HyperRAM FIFO `analyzer/fifo.py` (2^22 × 16-bit),
+  `analyzer/speed_detection.py`, `analyzer/event_detection.py`.
+- Firmware: **none**. Pure gateware, no CPU.
+- Host: `packetry: src/backend/cynthion.rs`.
+
+## Hardware it needs
+
+TARGET-C or TARGET-A carrying the traffic under observation, CONTROL carrying the capture
+stream to the host. Two cables. A device and a host to watch — or scenario 2's built-in
+test device instead.
+
+## What porting it would require
+
+The absence of a CPU is the good news: nothing here needs firmware, a PAC, or the libgreat
+protocol. It is entirely a gateware problem.
+
+Needed, and not present:
+
+1. **P1, the ULPI packet path on `target_phy`.** Today that PHY reaches only
+   `ulpi_window.UlpiRegisters`. The analyzer needs the full `luna.gateware.interface.ulpi`
+   PHY and a UTMI-level receive path. The `USBSerialDevice` already running on `aux_phy`
+   proves the layer works on our platform.
+2. **The capture engine itself.** `USBAnalyzer` is ~400 lines of Amaranth with no luna-soc
+   dependency. It should port more or less as-is; the question is whether we take it or
+   write our own.
+3. **A HyperRAM stream port.** Upstream's `HyperRAMPacketFIFO` instantiates luna's
+   `HyperRAMInterface`/`HyperRAMPHY` directly. We have our own DQS PHY
+   (`gateware/soc/peripherals/hyperram_dqs_phy.py`) behind a Wishbone map at `0x2000_0000`, tuned
+   and measured. Reusing ours means writing a streaming front end for it; using luna's
+   means two HyperRAM controllers in one repo. **This is the one real design decision in
+   this scenario** and it should be settled before any code is written.
+4. **A bulk IN endpoint on CONTROL**, plus the vendor request handler for the five
+   control requests, plus the descriptors.
+5. **The port request.** Already solved — `gateware/probes/sideband/sideband_advertise.py`.
+6. **VBUS switching.** `gateware/soc/peripherals/vbus_csr.py` exists but is CPU-driven; the
+   analyzer has no CPU, so the switch control must be driven from gateware state instead.
+
+Match the wire contract exactly and Packetry works unmodified:
+
+| Item | Value |
+|---|---|
+| VID:PID | `1d50:615b` |
+| Interface | class `0xff`, subclass `0x10`, protocol `0x01` |
+| Capture stream | bulk IN `0x81`, 16 KiB reads, 4 transfers in flight |
+| Vendor requests | `0` get state, `1` set state, `2` get speeds, `3` set test-device config, `4` get protocol minor version |
+
+State byte: capture-enable bit plus a 2-bit speed selector.
+
+## How it would be tested
+
+- **QEMU: no.** No firmware exists to run, and `-M virt` has no ULPI.
+- **Simulation: yes, and this is where the coverage has to live.** A bus-functional ULPI
+  model driving known packet sequences into the capture engine, asserting the byte stream
+  that comes out the other end, is a pure-`pysim` test that would sit in
+  `scripts/soc_sims.py`. It needs P2 built first. The HyperRAM FIFO can be simulated
+  against the existing HyperRAM model separately.
+- **Hardware: required for the end-to-end claim.** Packetry connecting, negotiating speed,
+  and decoding a real enumeration is not simulatable. That test belongs in
+  `./dev.py test-board`, gated on hardware, not in `gate`.
+
+The split: the capture engine and the FIFO can be covered in `gate`. Speed detection
+against a real chirp, and Packetry interop, cannot.
+
+## Verdict
+
+**Hard.** The largest gateware build of any child, and it carries the repo's only genuine
+architectural decision (whose HyperRAM controller). But it needs no firmware, no PAC and
+no host tooling, and its wire contract is completely specified by Packetry's source.
+
+### Source: docs/drafts/gsg-scenario-analyzer-test-device.md
+
+# Scenario 2: Analyzer built-in test device
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §2.
+
+## What it is
+
+A second USB device instantiated on the **AUX** PHY inside the analyzer bitstream, on board
+revisions ≥ r0.6. It presents an interrupt endpoint at Low, Full or High speed under host
+control, giving the analyzer a known traffic source to be validated against without needing
+a separate device plugged in. VID:PID `1209:000a`.
+
+Not documented on the website at all. Found only in the code.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/analyzer/top.py::AnalyzerTestDevice`.
+- Host control: analyzer vendor request `3` (set test config), and
+  `packetry: src/backend/cynthion.rs::configure_test_device`.
+- Firmware: none.
+
+## Hardware it needs
+
+A loopback cable from AUX to TARGET, and nothing else. That is the entire point of it.
+
+## What porting it would require
+
+This is the smallest port on the list and the one closest to what already runs.
+
+- `USBSerialDevice` on `aux_phy` in `top.py` is already a luna `USBDevice` on
+  the same PHY, enumerating at high speed. Swapping a CDC-ACM function for an
+  interrupt-endpoint function is a descriptor and endpoint-handler change, not new
+  infrastructure.
+- The three-speed switching (Low/Full/High selected at runtime) is the only genuinely new
+  part; upstream builds separate descriptor sets per speed and adds a standard request
+  handler for each.
+- No CPU involvement, no HyperRAM, no libgreat.
+
+## How it would be tested
+
+- **QEMU: no.** No firmware.
+- **Simulation: yes.** A luna `USBDevice` responding to a driven host model is exactly the
+  kind of thing pysim handles, and upstream luna has test infrastructure for it. This
+  could land as a sub-second sim in the fast tier.
+- **Hardware: yes, and cheaply.** AUX enumerating on the host as `1209:000a` is a
+  one-cable check. `./dev.py test-board` territory.
+
+## Why it might be worth doing first
+
+It is the only scenario that produces a **test fixture** rather than a feature: once this
+exists, scenario 1 has a traffic source that does not depend on borrowing a real USB device,
+and the analyzer can be validated on a bench with one loopback cable. Building the thing
+that tests the hard scenario before building the hard scenario is the right order.
+
+Against that: it tests the analyzer, and we have no analyzer yet. On its own it proves only
+that we can put a chosen device on AUX — which `USBSerialDevice` already proves.
+
+## Verdict
+
+**Portable.** Nearest neighbour to code we already run. Small, and its value is almost
+entirely as scaffolding for scenario 1.
+
+### Source: docs/drafts/gsg-scenario-facedancer.md
+
+# Scenario 3: Facedancer device emulation (Moondancer)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §3.
+
+## What it is
+
+Emulate a real USB device on the TARGET port, with the device's behaviour written in Python
+on the host. The FPGA runs a RISC-V SoC whose firmware ("Moondancer") gives the host
+fine-grained control of the target USB port over the libgreat command protocol.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/facedancer/top.py` — a luna-soc SoC
+  with a VexRiscv CPU, 64 KiB block RAM at `0x0`, SPI flash at `0x1000_0000`, HyperRAM at
+  `0x2000_0000`, CSRs at `0xf000_0000` (`leds`, `gpio0/1`, `uart0/1`, `timer0/1`, `spi0`,
+  `usb0/1/2` each with `ep_control`/`ep_in`/`ep_out`, `advertiser`, `info`).
+- Firmware: `cynthion: firmware/moondancer/src/bin/moondancer.rs`, plus `moondancer-pac`,
+  `lunasoc-hal`, `smolusb`, `libgreat`.
+- Host: the `facedancer` package's Moondancer backend via
+  `cynthion: cynthion/python/src/boards/cynthion_moondancer.py` (board ID `0x10`).
+
+## Hardware it needs
+
+CONTROL to the control host, TARGET-C/A to the host being fooled. Two cables, two hosts
+(or one host and two ports).
+
+## What porting it would require
+
+This is the deepest port, and it has two independent halves.
+
+### Half one: the USB peripherals (gateware)
+
+Moondancer's firmware addresses **three** USB device peripherals, each split into four CSR
+blocks: `usb{0,1,2}` plus `ep_control`, `ep_in`, `ep_out`. We have **none** of them.
+`target_ulpi` gives register access to the PHY and cannot move a packet.
+
+So this needs P1 (the ULPI packet path) *and* a CPU-attached endpoint peripheral set on top
+of it — a control-endpoint block, an IN block and an OUT block, each with a CSR interface,
+each raising a PLIC interrupt. That is a genuine peripheral design, not an adaptation.
+
+Note that the three USB peripherals correspond to the three PHYs, and only one of them
+(`usb0`, TARGET) is needed for basic emulation. Building one set rather than three is a
+legitimate reduction in scope, and it should be stated explicitly rather than discovered.
+
+### Half two: the command surface (firmware)
+
+The Moondancer firmware registers six libgreat/GCP classes — `core`, `firmware`,
+`selftest`, `gpio`, `leds`, `moondancer`. The `moondancer` class is the USB device control
+surface: `connect`, `disconnect`, `bus_reset`, `read_control`, `set_address`,
+`configure_endpoints`, `stall_endpoint_in`, `stall_endpoint_out`,
+`clear_feature_endpoint_halt`, `read_endpoint`, `ep_out_prime_receive`,
+`write_control_endpoint`, `write_endpoint`, `get_interrupt_events`, `get_nak_status`,
+`ep_out_interface_enable`.
+
+We have no GCP dispatch in `firmware/cynthion-soc`. The verb table, the class registry and
+the transport (vendor request `0x65`, bulk IN `0x81`, bulk OUT `0x02` — `cynthion:
+shared/libgreat.toml`) all have to exist before any verb does anything.
+
+**`smolusb::control::Control` is the exception, and it is a real one.** It is trait-based —
+`dispatch_event` takes `&D where D: UsbDriver` — so the control-transfer state machine is
+hardware-independent and ports verbatim against whatever driver we write. That is the one
+part of this scenario that is portable today, and it is not a small part.
+
+### Half three, implicitly: the host
+
+Present the same descriptors upstream does — VID:PID `1d50:615b`, interface subclass
+`0x20`, protocol `0x00` — and the unmodified `facedancer` package drives it. Deviating
+means writing and maintaining a backend.
+
+## How it would be tested
+
+- **QEMU: partially, and more than it first appears.** `-M virt` has no USB, but the GCP
+  dispatch layer, the verb table, descriptor construction, and `smolusb`'s control state
+  machine driven against a mock `UsbDriver` are all pure firmware logic. That is a real
+  fraction of half two and it belongs in `./dev.py test`.
+- **Simulation: yes for the peripheral.** A CSR-driven endpoint block against a ULPI model
+  is a pysim test. Needs P2.
+- **Hardware: required for anything end-to-end.** "A host enumerates our emulated keyboard"
+  cannot be simulated. Upstream's own answer is the same: their firmware unit tests
+  (`cd firmware/moondancer/ && python -m unittest`) require CONTROL **and** AUX both cabled
+  to the host. That test suite is worth reading as a specification of expected behaviour
+  even before we can run it.
+
+## Verdict
+
+**Hard.** Two large pieces of new work — an endpoint peripheral family and a command
+protocol — with only the control state machine coming for free. It is also the scenario
+with the largest payoff, because scenarios 4 and 5 fall out of it at nearly zero extra
+cost.
+
+### Source: docs/drafts/gsg-scenario-usb-proxy.md
+
+# Scenario 4: USB proxy / MITM
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §4.
+
+## What it is
+
+Forward USB transactions between a target host and a real device attached to the control
+computer, with Python filters able to observe or rewrite them in flight. GSG documents it
+as a distinct Cynthion scenario with its own page.
+
+## What implements it upstream
+
+**Nothing on the device.** The bitstream and firmware are byte-identical to scenario 3 —
+`facedancer.bit` + `moondancer.bin`. The proxy is entirely host-side:
+
+- `facedancer: facedancer/proxy.py::USBProxyDevice`
+- `facedancer: facedancer/filters/` — `USBProxySetupFilters`, `USBProxyPrettyPrintFilter`
+- Example: `cynthion: cynthion/python/examples/facedancer-usbproxy.py`
+
+`USBProxyDevice` substitutes for an emulated device class; every verb it uses is a verb
+scenario 3 already provides.
+
+## Hardware it needs
+
+CONTROL to the control computer, TARGET to the host being proxied, and the **real device**
+plugged into a port of the control computer. Three connections and two hosts. On macOS it
+needs root, to claim the proxied device away from the OS.
+
+## What porting it would require
+
+**Nothing, beyond scenario 3.** If our SoC presents the moondancer descriptor set and
+implements the `moondancer` GCP class faithfully, `USBProxyDevice` works without a line
+changed on either side.
+
+The one thing worth checking rather than assuming: proxying is more latency-sensitive than
+emulation, because a real device is waiting at the other end and the host's timeouts are
+not adjustable. Upstream hits this too — it is why the proxy documentation warns about
+enumeration failures. Any per-verb overhead we add relative to Moondancer shows up here
+first, so this scenario doubles as the performance regression test for scenario 3.
+
+## How it would be tested
+
+- **QEMU: no.** Nothing device-side is specific to this scenario, so there is nothing new
+  to test in QEMU that scenario 3 does not already cover.
+- **Simulation: no.** Same reason.
+- **Hardware: the only tier, and it needs the most of it** — two hosts and a third real
+  device. Of every scenario here, this has the worst test story, and that is inherent
+  rather than something we could fix with better tooling.
+
+Practically: this should be a manual acceptance check after scenario 3, with a named
+reference device, not an automated test anyone pretends to keep green.
+
+## Verdict
+
+**Free once scenario 3 lands** — but effectively untestable in CI. Track it as an
+acceptance criterion for scenario 3 rather than as work in its own right.
+
+### Source: docs/drafts/gsg-scenario-user-io.md
+
+# Scenario 5: USER I/O from Facedancer
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §5.
+
+## What it is
+
+Reach the six USER LEDs, the USER button and USER Pmod A pins from Python while a
+Facedancer emulation is running — so an emulation can flash an LED on each bus reset, or
+wait for a button press before typing. Pmod B is unavailable: it carries the SoC UART and
+JTAG.
+
+## What implements it upstream
+
+- Gateware: the Facedancer bitstream's `leds` and `gpio0`/`gpio1` CSR peripherals.
+- Firmware: `cynthion: firmware/moondancer/src/gcp/leds.rs` and `gcp/gpio.rs` — two GCP
+  classes.
+- Host: `cynthion: cynthion/python/src/interfaces/led.py` and `interfaces/gpio.py`,
+  reached through `cynthion.Cynthion()`. Pin map in
+  `boards/cynthion_moondancer.py::GPIO_MAPPINGS` — PMOD A1–A10 plus `USER`.
+
+## Hardware it needs
+
+Two USB cables (CONTROL and TARGET) and, for the Pmod example, a breadboard with a switch
+and an LED. Nothing exotic.
+
+## What porting it would require
+
+This is the least USB-dependent scenario in the whole set, and most of it already exists.
+
+- **LEDs:** `top.py` drives the six USER LEDs from an `amaranth_soc.gpio`
+  block at `GPIO_BASE`. Present.
+- **USER button and Pmod A:** the platform declares them; the GPIO peripheral is upstream
+  `amaranth_soc.gpio`, unmodified, with per-pin direction control — which is what the Pmod
+  example needs.
+- **What is missing is the path from the host to those registers.** Upstream reaches them
+  over libgreat/GCP, which means this scenario inherits scenario 3's transport even though
+  it needs none of scenario 3's USB peripherals.
+
+That inheritance is the interesting part. **This scenario could be delivered over our
+existing console instead** — the CDC-ACM `USBSerialDevice` on AUX already gives the host a
+tty to the firmware, and the firmware already has a shell that `./dev.py test` drives. A
+`leds` and `gpio` command pair on that shell would give a Python user the same capability
+without a single USB peripheral existing.
+
+That would not be compatible with `cynthion.Cynthion()`, and the tradeoff should be named:
+compatibility with upstream's host API versus being able to ship it now. If the GCP
+transport is built for scenario 3 anyway, this becomes near-free at that point.
+
+## How it would be tested
+
+- **QEMU: yes, for the command layer.** The shell already runs under `-M virt` and
+  `./dev.py test` already asserts on its output. Register writes to a GPIO block that
+  QEMU does not have will not work, but the parse-and-dispatch half will.
+- **Simulation: yes.** `soc_board_sim` already exists in the fast tier and covers the board
+  peripheral block. Extending it to assert LED and GPIO register behaviour is incremental.
+- **Hardware: for the final claim only** — an LED visibly lighting, a button read. Cheap,
+  and already the kind of thing `./dev.py test-board` does.
+
+The best test coverage of any scenario here, because none of it needs a packet.
+
+## Verdict
+
+**Portable.** The peripherals exist; only the host-facing transport is in question. Worth
+doing early if we decide the console shell is an acceptable interface, and near-free later
+if we do not.
+
+### Source: docs/drafts/gsg-scenario-selftest.md
+
+# Scenario 6: Self-test
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §6.
+
+## What it is
+
+Validate a board's own hardware — the debug connection, all three ULPI PHYs, and the
+HyperRAM. Documented as the final step of bringing up a self-built Cynthion, and the only
+scenario whose purpose is to answer "is this board good".
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/selftest/gateware.py::SelftestDevice`, built by
+  `cynthion/python/src/gateware/selftest/top.py`. It exposes a **JTAG** register interface —
+  applet ID `0x54455354` ("TEST"), a 6-bit LED register, ULPI register windows for
+  `target_phy`, `aux_phy` and `control_phy`, and a HyperRAM register read path. Map in
+  `cynthion/python/src/selftest/registers.py`.
+- Firmware: **none** for the hardware tests. (The Moondancer firmware separately has a
+  `selftest` GCP class with one verb, `0x10 test_error_return_code` — that is protocol
+  plumbing, not a hardware test. Do not confuse them; the name collision is upstream's.)
+- Host: `cynthion: cynthion/python/src/selftest/host.py::StandaloneTester` — cases
+  `test_debug_connection`, `test_host_phy`, `test_target_phy`, `test_sideband_phy`,
+  `test_hyperram`.
+
+## Hardware it needs
+
+CONTROL only. One cable, no second device, no target traffic. The cheapest hardware
+requirement of anything in this set.
+
+## What porting it would require
+
+Structurally this is the closest match to work we have already done, because the tests are
+**register reads over a debug transport**, not USB traffic.
+
+- **The three PHY tests** read a USB3343's vendor/product ID registers over ULPI. Our
+  `gateware/soc/peripherals/ulpi_window.py` already does exactly this for `target_phy`, with a
+  documented four-phase clock-domain handshake and a bounded wait. Extending it to
+  `aux_phy` and `control_phy` is a resource-request change, and it is the only new gateware
+  the PHY tests need.
+- **The HyperRAM test** reads the identification registers. We have a HyperRAM controller,
+  a probe peripheral (`peripherals/hyperram_probe.py`) and an identify script
+  (`scripts/hyperram_identify.py`). This is already covered by our own tooling, differently.
+- **The debug-connection test** is an Apollo JTAG check that does not involve the FPGA
+  design at all.
+- **The transport is the real difference.** Upstream reaches the registers over a
+  JTAG-tunnelled debug interface; we reach ours over the CPU's CSR bus, and we have a third
+  option — the sideband link — that upstream does not use for this. We have
+  `gateware/soc/bus/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
+  either.
+
+The question this scenario really asks is not "can we port it" but **"do we want upstream's
+self-test, or is our board test suite already it?"** We have `soc_hyperram_sim`,
+`soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim` and `./dev.py test-board`. Upstream's
+five cases may already be a subset of what we check. That comparison should be done before
+any porting, because the likely outcome is "we already have this, under different names".
+
+Taking `control_phy` off Apollo to test it requires the port request —
+`gateware/probes/sideband/sideband_advertise.py` — which is already built.
+
+## How it would be tested
+
+Self-test *is* a test, so the question is how we test the tester. A new diagnostic's first
+run is the control, not the experiment: it must be run against a board already believed
+good before its verdict on any other board means anything.
+
+- **QEMU: no.** No firmware in upstream's version, and no PHYs in `-M virt`.
+- **Simulation: yes for the register paths.** `ulpi_window`'s handshake is exactly the kind
+  of thing that should have a pysim test and currently does not. That gap is worth closing
+  regardless of whether this scenario is ever ported.
+- **Hardware: yes, and it is the point.** A self-test that passes in simulation and has
+  never been run against a known-bad board has proved nothing. The useful validation is
+  running it against a board we already believe is good and confirming it says so.
+
+## Verdict
+
+**Portable**, and possibly redundant. Do the comparison against our existing board tests
+first; the port may reduce to "add `aux_phy` and `control_phy` to the ULPI window".
+
+### Source: docs/drafts/gsg-scenario-flashing.md
+
+# Scenario 7: Bitstream configuration and flashing
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §7.
+
+## What it is
+
+Getting a bitstream onto the FPGA — volatile over JTAG, or persistently into the SPI
+configuration flash — plus the flash inspection primitives around it.
+
+## What implements it upstream
+
+- Firmware: the Apollo SAMD11 debug controller (`apollo` repo).
+- Gateware: `apollo: apollo_fpga/gateware/flash_bridge.py` — a bitstream loaded into the
+  FPGA *purely so the FPGA can bridge the host to the SPI flash at speed*. This is what
+  `apollo flash-fast` uses; plain `flash-program` goes through the MCU and is slower.
+- Host: the `apollo` CLI — `configure`, `reconfigure`, `flash-program`, `flash-fast`,
+  `flash-erase`, `flash-read`, `flash-info`, `svf`, `jtag-scan`, `force-offline`, the
+  `spi`/`jtag-spi` register primitives, and `leds`.
+- Wrapped by `cynthion run <name>` (volatile SRAM) and `cynthion flash <name>`
+  (configuration flash). For `facedancer`, both first place `moondancer.bin` at
+  `0x000b_0000`.
+
+## Hardware it needs
+
+CONTROL only.
+
+## What porting it would require
+
+**Nothing. We already do this, and in places we do it differently on purpose.**
+
+- `./dev.py run` builds and configures the board; `./dev.py fw` writes flash and
+  reconfigures without re-synthesising; `./dev.py stage` stages firmware over JTAG without
+  rebuilding the bitstream; `./dev.py flash` reads and verifies the SPI flash.
+- We have our own fast-loading path (`scripts/fast_loader.py`) and our own flash tooling
+  (`gateware/soc/peripherals/flash.py`, `scripts/flash_backup.py`).
+- Our SoC maps SPI flash at `0x1000_0000`, matching upstream's choice, with a modal
+  memory-map controller and a `spiflash` CSR block.
+
+So this is **not a port**. What it is worth is an **audit**: three specific questions.
+
+1. Does `apollo flash-fast`'s bridge bitstream do anything our `fast_loader.py` does not?
+   Upstream's approach — load a bitstream whose only job is to be a fast SPI bridge — is a
+   different design from ours and may be faster or slower. This is measurable.
+2. Our firmware image lives where our linker puts it; upstream's Moondancer lives at
+   `0x000b_0000`. If we ever want `cynthion flash --soc-firmware` to work against our
+   bitstream, that offset is the contract.
+3. `cynthion run <name>` and `cynthion flash <name>` are the commands a Cynthion user
+   already knows. Whether our bitstreams should be reachable through them, or only through
+   `./dev.py`, is a question about who the audience is — and it has not been asked.
+
+## How it would be tested
+
+- **QEMU: partially.** Flash *contents* handling — image layout, staging offsets, the
+  bootloader's read path — is firmware logic. `./dev.py test` already boots the firmware
+  under `-M virt`.
+- **Simulation: yes, and already done.** `qspi_burst_sim` covers the QSPI burst path and
+  `soc_bus_sim` the fabric. Both are in `./dev.py sim` today.
+- **Hardware: yes, and already done.** `./dev.py flash` reads and verifies real flash;
+  `run`, `console` and `flash` are all declared `needs_hardware`. Flash erase and program
+  are authorised operations here — the board recovers over JTAG through Apollo.
+
+This scenario has the best test coverage of any on the list, because it is the one we
+have actually been living in.
+
+## Verdict
+
+**Already done, differently.** Convert this child into a short audit rather than a port:
+measure `flash-fast` against `fast_loader.py`, and decide whether the `cynthion` CLI should
+reach our bitstreams.
+
+### Source: docs/drafts/gsg-scenario-mcu-firmware.md
+
+# Scenario 8: MCU firmware update and recovery
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §8.
+
+## What it is
+
+Updating the Apollo debug controller's firmware, and recovering a board whose Apollo
+firmware is broken.
+
+- `cynthion update --mcu-firmware` flashes `apollo.bin` over DFU. Unlike the bitstreams,
+  `apollo.bin` is **committed prebuilt** at
+  `cynthion: cynthion/python/assets/apollo.bin` — it is not built from source by the
+  Cynthion toolchain.
+- Holding PROGRAM at power-on invokes the Saturn-V bootloader
+  (`greatscottgadgets/saturn-v`, a separate repo) on the CONTROL port. DFU device
+  `1d50:615c`, alt 0 `Flash`, alt 1 `SRAM`. This is the unbrick path.
+- Installing Saturn-V in the first place needs an **SWD programmer** on the `uC` header —
+  Black Magic Probe, J-Link, or an OpenOCD-compatible adapter — plus an
+  `arm-none-eabi` toolchain. That is the first step of self-built-board bringup.
+
+## Hardware it needs
+
+CONTROL only for DFU. An SWD programmer and a 10-pin cable for the initial bootloader
+install or for a board with no working bootloader.
+
+## What porting it would require
+
+**Nothing.** This is entirely the SAMD11 and its host tooling. Our SoC is not involved at
+any point — the FPGA is held unconfigured for most of it.
+
+We already build Apollo firmware from source rather than shipping a prebuilt binary
+(`repos/apollo`, with `scripts/apollo_budget_check.py` and
+`scripts/apollo_memory_report.py` guarding the flash budget, and
+`docs/apollo_samd11_mcu/` documenting it). That is strictly more than upstream's user-facing
+path offers, which ships a blob.
+
+Two things worth recording rather than porting:
+
+1. **The prebuilt-blob discrepancy.** A user running `cynthion update --mcu-firmware` gets
+   a binary they cannot reproduce from the repo they cloned. We build ours. If we ever ship
+   to anyone else, that difference is a feature and should be stated.
+2. **The DFU contract is fixed** — `1d50:615c`, alt 0/1 — and any Apollo build of ours must
+   keep it, or `dfu-util` and `cynthion update` stop working against our boards.
+
+## How it would be tested
+
+- **QEMU: no.** Wrong architecture, wrong chip; this is Cortex-M0 firmware.
+- **Simulation: no.**
+- **Hardware: the only tier.** Flashing Apollo and confirming the board re-enumerates is
+  inherently a hardware operation. It is also low-risk here: Apollo is recoverable over
+  SWD, and the bootloader region can be locked.
+
+Our existing guards — the flash-budget check and the vector-table verification — are
+static analysis, not runtime tests, and they catch the specific failure that matters
+(an image that links but does not boot).
+
+## Verdict
+
+**Already done, and better than upstream's user path.** No SoC work. Keep this child open
+only to record the DFU contract and the prebuilt-blob difference; close it after that.
+
+### Source: docs/drafts/gsg-scenario-speed-test.md
+
+# Scenario 9: Bulk throughput test
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §9.
+
+## What it is
+
+A bulk IN/OUT speed test used to characterise the USB data path. Not a user-facing feature
+— it is how upstream finds out whether the data path is as fast as it should be, and it is
+in the factory test set.
+
+## What implements it upstream
+
+- Gateware: `luna: luna/gateware/applets/speed_test.py`. Also shipped prebuilt as
+  `speedtest.bit` in the `cynthion-test` factory repo.
+- Firmware alternative: `cynthion: firmware/moondancer/examples/bulk_speed_test.rs`, driven
+  by `firmware/moondancer/scripts/bulk_speed_test.py`.
+- Descriptor strings: manufacturer "Luna Project", product "Bulk Speed Test"
+  (`cynthion: shared/usb.toml`).
+
+Note there are two of these — a pure-gateware applet and a SoC firmware example. They
+measure different things: the applet measures the USB path, the firmware example measures
+the USB path *plus* the CPU's ability to feed it.
+
+## Hardware it needs
+
+CONTROL, or CONTROL plus AUX depending on the variant. One or two cables.
+
+## What porting it would require
+
+Very little, and part of it is already done.
+
+**We have already measured 195.4 Mbps CDC-ACM loopback** through `USBSerialDevice` on
+`aux_phy` (`gateware/probes/usb_serial/usb_serial.py`, instantiated in `top.py`).
+That is a throughput measurement on this platform's USB path, taken with a design that is
+in the tree today.
+
+What upstream's applet adds over that is a bulk endpoint with no CDC framing and a
+host-side script that reports a number reproducibly. Both are small.
+
+The design note in `usb_serial.py` is worth carrying over: `max_packet_size` defaults to
+64 (the full-speed bulk limit), and leaving it there enumerates at high speed while moving
+data at roughly an eighth of the achievable rate. That is the precise failure mode a speed
+test exists to catch, and we have already been bitten by the class of it.
+
+The pure-gateware applet variant needs no CPU and no libgreat. The firmware variant needs
+scenario 3's peripherals and is not worth doing separately.
+
+## How it would be tested
+
+- **QEMU: no.** No USB in `-M virt`.
+- **Simulation: partly, and misleadingly.** A simulation can prove the endpoint moves bytes
+  but cannot produce a throughput number that means anything — sim time is not wall time.
+  Do not build a "speed test" in `sim` and report its figure; that is exactly the mistake
+  of quoting a host TSC as a device measurement.
+- **Hardware: the only tier that can produce the number**, and the number is the whole
+  point.
+
+The right shape is a hardware measurement, recorded with its conditions, in `docs/`. A
+throughput figure without the packet size, the speed negotiated and the host it was
+measured against is not a result.
+
+## Verdict
+
+**Portable**, and largely already achieved. Its value is as a regression detector for the
+USB path once scenario 1 or 3 exists — a number that moves is the earliest warning that
+something in the data path got slower.
+
+### Source: docs/drafts/gsg-scenario-custom-gateware.md
+
+# Scenario 10: Custom gateware (the tutorial series)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §10.
+
+## What it is
+
+GSG documents Cynthion as an FPGA development platform, not only as an instrument, and the
+tutorial series is what backs that claim: `Gateware Blinky` (Amaranth plus toolchain), then
+`USB Gateware` parts 1–4 building a USB device from luna's `USBDevice` — enumeration, WCID
+descriptors, control transfers, bulk transfers.
+
+This is a scenario in the sense that matters: it is a documented promise about what a user
+can do with the board, and it is the one that says our platform must stay compatible.
+
+## What implements it upstream
+
+- Sources: `cynthion: cynthion/python/examples/tutorials/`, each with a matching
+  `test-gateware-usb-device-0N.py` host script.
+- Platform files: `cynthion: cynthion/python/src/gateware/board/cynthion_r{0_1..0_7,1_0..1_4}.py`
+  — 13 board revisions, selected by the `LUNA_PLATFORM` environment variable.
+- Entry point: `luna.top_level_cli(Top)`, which synthesises and uploads in one step.
+- Toolchain: the tutorials recommend YoWASP (`yowasp-yosys`, `yowasp-nextpnr-ecp5`) rather
+  than OSS CAD Suite, for portability.
+
+## Hardware it needs
+
+CONTROL for the blinky tutorial. CONTROL plus TARGET for the USB device tutorials — the
+device under construction appears on TARGET.
+
+## What porting it would require
+
+Nothing needs porting. What needs *checking* is compatibility, and there is a real question
+here.
+
+**We have our own platform file**, `gateware/board/cynthion_r1_4.py`, not
+luna's. Any tutorial example a user runs against our repo resolves `platform.request("led", n)`,
+`platform.request("target_phy")` and `apollo_port_sharing` through ours. So the concrete
+question is: **does our platform present the same resource names, at the same indices, with
+the same semantics, as upstream's `cynthion_r1_4.py`?** If it does, every tutorial works
+unchanged. If it silently differs — an LED index, a Pmod pin order, an attribute name — a
+tutorial fails in a way that reads as the user's mistake.
+
+That comparison is mechanical and has not been done. It is the entire content of this
+child.
+
+Two known-good signs: `gateware/board/core.py` already reports
+`control_phy: advertising` through `port_sharing()`, matching luna's interface, and
+`usb_serial.py` already builds a luna `USBDevice` against our platform successfully — which
+is tutorial parts 1–4's exact dependency.
+
+Also worth noting: LED indices on this board are colour-ordered
+(0 red, 1 orange, 2 yellow, 3 green, 4 blue, 5 violet). A tutorial that says "LED 3" and
+our platform that says "LED 3" must mean the same lamp.
+
+## How it would be tested
+
+This is the scenario with the **cleanest** test story of any here, because a tutorial has
+a defined pass condition and upstream ships the checker.
+
+- **QEMU: no.** Gateware, not firmware.
+- **Simulation: yes, for the elaboration half.** Every tutorial example can be *elaborated*
+  against our platform in pysim without a board — that alone catches every resource-name
+  mismatch, which is the failure this child exists to prevent. It is fast enough for the
+  `gate` tier and needs no ULPI model.
+- **Hardware: for the USB tutorials' final check**, using upstream's own
+  `test-gateware-usb-device-0N.py` scripts as the oracle. That is a ready-made acceptance
+  suite we did not have to write.
+
+An "elaborate every upstream tutorial against our platform" sim would be a genuinely cheap,
+genuinely useful addition to `scripts/soc_sims.py`.
+
+## Verdict
+
+**Portable** — and mostly a compatibility audit rather than a port. Small, cheap, testable
+without hardware, and it protects a promise upstream has made publicly.
+
+### Source: docs/drafts/gsg-scenario-factory-hil.md
+
+# Scenario 11: Factory hardware validation
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §11.
+
+## What it is
+
+Not a user scenario — it is where upstream's real hardware-in-the-loop coverage lives. The
+`greatscottgadgets/cynthion-test` repository, driven from the `cynthion` repo's
+`Jenkinsfile`, tests a board against a purpose-built fixture before it ships.
+
+It is in this survey because it answers a question the other ten children keep raising:
+*how does upstream actually test any of this on hardware?* The answer is "with a rig", and
+that is worth knowing before we assume they have a trick we are missing.
+
+## What implements it upstream
+
+`greatscottgadgets/cynthion-test` — `cynthion-test.py`, `selftest.py`, `speedtest.py`,
+`calibrate.py`, `check.py`, `ranges.py`, `eut.py`, plus prebuilt `analyzer.bit`,
+`selftest.bit`, `speedtest.bit` and `flashbridge.bit` committed into the repo, and firmware
+images for the supporting instruments.
+
+## Hardware it needs — and this is the point
+
+- 1 × Cynthion r1.4.0 as the unit under test
+- 1 × **Tycho r2.0.0** test fixture
+- 1 × **Sasserides r1.0.0** (A and B boards, assembled as a stack with test pins)
+- 1 × GreatFET One
+- 1 × Black Magic Probe
+- 1 × 24 V supply (Mean Well GST25B24-P1J or equivalent)
+- 3 × ADT-Link UT6A-UT6B-NC cables with U1 pins 1 and 8 connected
+- 10-pin ARM debug cable, 34-pin ribbon cable, PASS and FAIL buttons, a switched hub, and
+  mechanical arrangements to hold the board against the pin bed
+
+We have none of the fixture hardware. Tycho and Sasserides are GSG's own designs and are
+not off-the-shelf.
+
+## What porting it would require
+
+Not portable, and it should not be treated as a goal. But three things in it are worth
+taking without the rig:
+
+1. **`ranges.py` is a specification.** It encodes the expected voltage and current ranges
+   for a good board. Those numbers are useful to us as documented expectations even with no
+   way to measure them automatically — they say what "good" means.
+2. **`selftest.py` and `speedtest.py` are the harness around scenarios 6 and 9.** Reading
+   how upstream sequences and interprets those tests is free specification for those
+   children.
+3. **The Jenkinsfile shows what upstream runs per commit** versus what it runs per board.
+   We have no CI running on GitHub, so our equivalent of the per-commit half is
+   `./dev.py ci` and it is worth checking whether anything upstream gates on is missing
+   from ours.
+
+## How it would be tested
+
+Not applicable — it *is* the test. The relevant observation is about our own coverage:
+
+Upstream's hardware confidence comes from a fixture we do not have. Ours has to come from
+somewhere else, and the two available answers are the Amaranth simulations
+(`./dev.py sim`, 15 of them, 9 in the pre-commit gate) and `./dev.py test-board` on the one
+board we have. That is the argument for **P2 in the master issue** — a ULPI simulation —
+being a prerequisite rather than a nice-to-have. We cannot buy hardware coverage the way
+upstream does, so we have to simulate what they instrument.
+
+## Verdict
+
+**Needs hardware we lack.** Do not port. Mine `ranges.py`, `selftest.py` and the
+`Jenkinsfile` for specification, and close it.
+
+
+---
+
+## docs/apollo_samd11_mcu/: retired UART-watchdog / SPI-on-PA08-PA09 plans, and the first drafts of the kept docs (issues #15, #33, #53, #55, #56, #61, #65)
+
+### Source: docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md
+
+# Implementation Plan - Cynthion Serial Architecture Redesign
+
+**Status**: Ready for Phase 1  
+
+## Phase Overview
+
+| Phase | Task | Goal | Blockers |
+|-------|------|------|----------|
+| **1** | Toolchain Build | Get complete build working (firmware + gateware) | Resolve toolchain issues |
+| **2** | Apollo Firmware Fixes | DFU buffers, races, dual CDC ports | See Apollo Fixes section |
+| **3** | JTAG Always Available | Separate JTAG from moondancer control | Requires Phase 2 |
+| **4** | FPGA Stub Test | Minimal gateware, test serial path | Requires Phase 1 |
+| **5** | moondancer Diagnostic | Serial-only output, heartbeat protocol | Requires Phase 4 |
+| **6** | Serial Loop Test | AUX/TARGET/CONTROL port verification | Requires Phase 5 |
+| **7** | Full moondancer | Facedancer with serial-only architecture | Requires Phase 6 |
+| **8** | UART Watchdog | PA03/PA04 INT-based timeout detection | Requires Phase 7 |
+
+## Phase 1: Toolchain Build
+
+**Objective**: Get complete clean build of Apollo firmware, moondancer firmware, and gateware.
+
+**Status snapshot (2026-07-22)**:
+- Tracker issue: [#55] (https://github.com/awtoau/cynthion-workspace/issues/55)
+
+### P1.1: Environment Setup
+- [ ] Run prerequisite validation and environment setup via the canonical install flow
+  (`./scripts/install.py prereqs`, then setup as needed)
+
+**Commands to run**:
+```bash
+./scripts/install.py prereqs
+```
+
+### P1.2: Apollo Firmware Build
+- [ ] Clean build of Apollo firmware for Cynthion d11
+- [ ] Identify any compiler warnings/errors
+- [ ] Document build time, binary size
+- [ ] Verify firmware produces .elf/.bin artifacts
+
+Use the canonical workspace entry points (`cyn apollo build` or
+`./scripts/install.py setup`) rather than direct per-repo build commands here.
+
+### P1.3: moondancer Firmware Build
+- [ ] Clean build of moondancer RISC-V firmware
+- [ ] Identify any compiler warnings/errors
+- [ ] Document build time, binary size
+- [ ] Verify firmware produces .elf artifact
+
+**Command**:
+```bash
+cd awto-cynthion/firmware/moondancer && cargo build --release
+```
+
+### P1.4: Gateware Build (Analyzer)
+- [ ] Build analyzer gateware bitstream
+- [ ] Identify synthesis/place&route warnings
+- [ ] Document build time
+- [ ] Verify .bit artifact produced
+
+**Command**:
+```bash
+cd awto-cynthion/cynthion/python && python -m cynthion.gateware.analyzer.top --dry-run
+```
+
+### P1.5: Gateware Build (Facedancer)
+- [ ] Build facedancer gateware bitstream
+- [ ] Identify synthesis issues
+- [ ] Document build time
+- [ ] Verify .bit artifact produced
+
+**Command**:
+```bash
+cd awto-cynthion/cynthion/python && python -m cynthion.gateware.facedancer.top --dry-run
+```
+
+### P1.6: Document Build Issues
+- [ ] List all warnings/errors encountered
+- [ ] Categorize: toolchain version, dependency, code issue
+- [ ] Note any timeouts or resource exhaustion
+- [ ] Propose fixes for Phase 2+
+
+## Phase 2: Apollo Firmware Fixes
+
+**Objective**: Address DFU buffers, potential races, dual CDC serial ports.
+
+Mode-exclusivity design reference:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
+### P2.1: DFU Memory Buffer Optimization
+- [ ] Review current JTAG buffer sizing (256 bytes fixed)
+- [ ] Review DFU descriptor (4096 bytes configured)
+- [ ] Implement DFU memory pool for dynamic allocation
+- [ ] Benchmark: stack usage, timing, throughput
+
+**Files**:
+- `awto-apollo/firmware/src/jtag.c` — JTAG buffers
+- `awto-apollo/firmware/src/mcu/samd11/usb_descriptors.c` — DFU descriptor
+
+### P2.2: Race Condition Analysis
+- [ ] Review round-robin scheduler in main.c
+- [ ] Identify potential races between tud_task(), fpga_adv_task()
+- [ ] Identify potential races between UART operations and USB control
+- [ ] Add synchronization primitives where needed (atomic flags, spinlocks)
+
+**Files**:
+- `awto-apollo/firmware/src/main.c` — scheduler loop
+- `awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` — FPGA_ADV task
+- `awto-apollo/firmware/src/vendor.c` — USB control request handlers
+
+### P2.3: Dual CDC Interface (JTAG + Console)
+- [ ] Add second CDC interface to USB descriptors
+- [ ] Map /dev/ttyACM0 → JTAG (debug console)
+- [ ] Map /dev/ttyACM1 → Apollo console (moondancer relay)
+- [ ] Route UART input/output to correct CDC interface
+
+Current status:
+- Primary tracking is in [#55] (https://github.com/awtoau/cynthion-workspace/issues/55).
+- Earlier dual-CDC feasibility work is historical context from
+  [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) (closed as deferred).
+- If promoting the near-working second-port path, open a new child issue under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55).
+
+**Files**:
+- `awto-apollo/firmware/src/mcu/samd11/usb_descriptors.c` — dual CDC setup
+- `awto-apollo/firmware/src/console.c` — console output routing
+
+## Phase 3-8: Implementation
+
+See [../../debris/docs/apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired) for details on:
+- Phase 3: JTAG always available (separate from moondancer)
+- Phase 4: FPGA stub gateware test
+- Phase 5: moondancer diagnostic serial build
+- Phase 6: Serial loop verification
+- Phase 7: Full moondancer integration
+- Phase 8: UART watchdog on PA03/PA04
+
+## Success Criteria
+
+Phase 1 complete when:
+- [ ] Apollo firmware builds without errors
+- [ ] moondancer firmware builds without errors
+- [ ] Analyzer gateware elaborates without errors
+- [ ] Facedancer gateware elaborates without errors
+- [ ] No Python 2 code paths used
+- [ ] Build times documented
+
+### Source: docs/apollo_samd11_mcu/apollo_watchdog_architecture.md
+
+## Apollo Watchdog Architecture (Phase 3)
+
+### Problem
+Apollo (SAMD11 ARM Cortex-M0+ MCU) and Moondancer (RISC-V softcore on ECP5 FPGA) need robust supervision:
+- Currently: no watchdog protection
+- Risk: firmware hangs, no recovery mechanism
+- Impact: requires manual device restart
+
+### Apollo-Specific Solution: ARM Supervisor
+Apollo becomes the watchdog for moondancer:
+1. moondancer sends periodic "heartbeat" to Apollo
+2. Apollo monitors heartbeat over serial
+3. If heartbeat lost → Apollo asserts reset
+4. moondancer automatically restarts
+
+### Benefits
+- ✓ No additional hardware needed
+- ✓ Apollo (always-on) supervises moondancer
+- ✓ Automatic recovery on firmware hang
+- ✓ Future: can log reboot events
+
+### Implementation Phases
+1. **Phase 3a:** Serial heartbeat protocol design
+2. **Phase 3b:** Apollo supervisor firmware
+3. **Phase 3c:** moondancer integration (send heartbeat)
+4. **Phase 3d:** Testing & validation
+
+See [../../debris/docs/apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired) for the original proposal. The shipping link is the FPGA_ADV sideband:
+[`../chips/cynone-sideband.md`] (../chips/cynone-sideband.md).
+
+---
+
+### Source: docs/apollo_samd11_mcu/apollo_uart_spi_design_conflict_analysis.md
+
+## Apollo UART/SPI Design Conflict Analysis
+
+**Status**: Phase 2 Design Review  
+**Related Issues**: [#15] (https://github.com/awtoau/cynthion-workspace/issues/15), [#33] (https://github.com/awtoau/cynthion-workspace/issues/33)  
+**Reference Docs**: 
+- [`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md) — proposed UART redesign, **retired**
+- [`cynthion_architecture_scan_2026_05_22.md`] (cynthion_architecture_scan_2026_05_22.md) — Pin analysis & Debug SPI discovery
+- [`apollo_code_review.md`] (apollo_code_review.md) — Phase 2 code review findings
+
+### The Problem
+
+**Current Architecture Vulnerability** (Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15)):
+- moondancer enables `FPGA_ADV` pulse-train to request USB port
+- Apollo counts rising edges (>2 in 200ms) and surrenders CONTROL USB
+- **If moondancer crashes**: Advertiser stays enabled → Host loses all USB access
+- **Recovery**: Power cycle required
+
+**Current Pin Conflict**:
+- UART uses PA11/PA14 (same as JTAG TMS/TDI)
+- Forces choice between UART console debugging and JTAG access
+- Limits diagnostic capability
+
+### Hardware: ATSAMD11D14A
+
+**Pin Summary** (board-level pin usage):
+```
+ATSAMD11D14A @ 48 MHz, 4KB SRAM, 16KB flash
+
+Used Pins (currently):
+├── PA03  ← FPGA_INITN (status input)
+├── PA04  ← FPGA_DONE (status input)
+├── PA06  ← USB_SWITCH (mux control)
+├── PA08  → FPGA_PROGRAM (reset trigger, post-bootup only)
+├── PA09  ← FPGA_ADV (pulse-train input for USB negotiation)
+├── PA10  ← TDO (JTAG data out)
+├── PA11  ← TMS (JTAG mode select) [CONFLICT: also UART RX]
+├── PA14  → TDI (JTAG data in) [CONFLICT: also UART TX]
+├── PA15  → TCK (JTAG clock)
+├── PA16-PA17, PA22-PA23, PA27 → LEDs (5× blue/pink)
+
+Unassigned:
+├── PA00, PA01, PA02, PA05, PA07, PA12, PA13, PA18-PA21, PA24-PA26, PA28-PA31
+│   (Availability depends on the exact package and board routing.)
+└── PA05  ? CONTROL_RESET_DETECT (not currently defined in firmware)
+```
+
+### SERCOM Peripheral Options
+
+**SERCOM0** (SPI JTAG — already configured):
+```c
+// File: src/boards/cynthion_d11/spi.c:44-47
+PA14 → SERCOM0 PAD0 (MOSI)
+PA15 → SERCOM0 PAD1 (SCK)
+PA10 ← SERCOM0 PAD2 (MISO)
+```
+Status: ✅ Implemented, used for FPGA programming via bit-bang SPI
+
+**SERCOM2** (Dual-use candidate):
+```c
+// File: src/boards/cynthion_d11/uart.c:85-88 (CURRENT — conflicts with JTAG)
+PA11 ← SERCOM2 PAD3 (RX) [conflicts with TMS]
+PA14 → SERCOM2 PAD0 (TX) [conflicts with TDI]
+
+// File: src/boards/cynthion_d11/spi.c:92-95 (PLANNED but unimplemented)
+case SPI_FPGA_DEBUG:
+    _pm_enable_bus_clock(PM_BUS_APBC, SERCOM2);
+    _gclk_enable_channel(SERCOM2_GCLK_ID_CORE, GCLK_CLKCTRL_GEN_GCLK0_Val);
+    // TODO: pinmux never completed (line 56)
+```
+
+### Design Proposals
+
+#### Option 1: UART-Based Watchdog ⭐ **Recommended**
+
+**Reference**: [`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md) (retired)
+
+**Architecture**:
+```
+Apollo (SAMD11) ←→ moondancer (ECP5/VexRiscv)
+
+PA08 → SERCOM2 TX ──→ moondancer UART RX
+PA09 ← SERCOM2 RX ──← moondancer UART TX
+PA03 ← INT (watchdog) ← moondancer watchdog signal
+PA04 ← status ────── ← moondancer status output
+```
+
+**Benefits**:
+- ✅ Bidirectional communication (heartbeat/diagnostics)
+- ✅ Solves USB vulnerability: Apollo stays on CONTROL USB always
+- ✅ Frees JTAG pins PA11/PA14 for debugging
+- ✅ Hardware UART (reliable, no bit-banging)
+
+**Implementation** (3 phases):
+1. Apollo: Change SERCOM2 pinmux PA11/PA14 → PA08/PA09
+2. FPGA: Add UART slave CSR on facedancer gateware
+3. moondancer: Replace advertiser with UART response handler
+
+**Risks**:
+- ⚠️ Breaks backward compatibility (old UART on PA11/PA14 becomes unavailable)
+- ⚠️ FPGA gateware changes needed (adds complexity)
+
+---
+
+#### Option 2: Debug SPI on SERCOM2
+
+**Reference**: [`cynthion_architecture_scan_2026_05_22.md` (Section 5)] (cynthion_architecture_scan_2026_05_22.md#5-unimplemented-spi_fpga_debug)
+
+**Architecture**:
+```
+Apollo (SAMD11) ←→ FPGA (ECP5)
+
+PA08 → SERCOM2 PAD0 (MOSI)
+PA09 → SERCOM2 PAD1 (SCK)
+PA10 ← SERCOM0 PAD2 (MISO) [shared with JTAG SPI]
+```
+
+**Status**: Clocking already configured, pinmux TODO
+
+**Benefits**:
+- ✅ Direct SPI access to FPGA debug/config
+- ✅ Uses existing infrastructure (clocking set up)
+- ✅ Can coexist with JTAG SPI (different chip selects)
+
+**Implementation**:
+1. Complete `src/boards/cynthion_d11/spi.c` case SPI_FPGA_DEBUG: pinmux
+2. Define PA08/PA09 SPI pin mappings in apollo_board.h
+3. Enable `_BOARD_HAS_DEBUG_SPI` for D11
+4. Test with existing debug tools
+
+**Risks**:
+- ⚠️ Still uses pulse-train for USB negotiation (vulnerability remains)
+- ⚠️ **Conflict with Option 1**: Both want PA08/PA09
+
+---
+
+#### Option 3: Hybrid (Requires SERCOM1 or SERCOM3-5)
+
+Move UART to different SERCOM to support both UART + Debug SPI:
+- Investigate PA00/PA01/PA05/PA07/PA12/PA13 for SERCOM1/SERCOM3-5 availability
+- Requires additional datasheet review for MUX options
+- More complex, lower priority
+
+---
+
+### Pin Reallocation Summary
+
+| Pin | Current | Option 1 (UART) | Option 2 (SPI) | Hardware SPI? |
+|-----|---------|-----------------|----------------|--------------|
+| PA03 | FPGA_INITN | INT watchdog | FPGA_INITN | SERCOM0 PAD1 |
+| PA04 | FPGA_DONE | status | FPGA_DONE | SERCOM0 PAD0 |
+| PA08 | FPGA_PROGRAM | SERCOM2 TX ✅ | SERCOM2 MOSI ✅ | **CONFLICT** |
+| PA09 | FPGA_ADV | SERCOM2 RX ✅ | SERCOM2 SCK ✅ | **CONFLICT** |
+| PA10 | TDO (JTAG) | TDO (freed) | TDO (MISO) | SERCOM0 PAD2 |
+| PA11 | TMS (JTAG) + UART RX | TMS (freed) | TMS (JTAG) | SERCOM2 PAD3 |
+| PA14 | TDI (JTAG) + UART TX | TDI (freed) | TDI (JTAG) | SERCOM0 PAD0 |
+| PA15 | TCK (JTAG) | TCK (JTAG) | TCK (JTAG) | SERCOM0 PAD1 |
+
+---
+
+### Recommendation
+
+**Implement Option 1 (UART Redesign)** because:
+
+1. **Solves critical vulnerability** (Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15)) — moondancer crash no longer breaks CONTROL USB
+2. **Enables true debugging** — bidirectional heartbeat/diagnostics
+3. **Frees JTAG pins** — PA11/PA14 available for actual JTAG debugging
+4. **Better long-term** — Debug SPI is convenient but not critical (existing bit-bang SPI works)
+5. **Simpler hardware** — UART is native SERCOM feature, no special pinmux needed
+
+**Next Steps**:
+- [ ] Finalize UART protocol specification
+- [ ] Implement Phase 1: Apollo firmware (SERCOM2 pinmux PA08/PA09)
+- [ ] Implement Phase 2: FPGA gateware (add UART slave CSR)
+- [ ] Implement Phase 3: moondancer firmware (UART response handler)
+- [ ] Test watchdog timeout scenarios
+
+---
+
+### udev Rules
+
+Install via `cyn setup` or manually:
+
+```udev
+# /etc/udev/rules.d/54-cynthion.rules
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615c", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="615b", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+```
+
+---
+
+**For more help, see the full documentation files or run:**
+```bash
+./scripts/install.py --help
+cyn --help
+cyn list
+```
+
+### Source: docs/apollo_samd11_mcu/apollo_to_fpga_spi_design.md
+
+# Apollo-to-FPGA SPI Design
+
+**Status**: Design proposal  
+**Related Issues**: [#15] (https://github.com/awtoau/cynthion-workspace/issues/15), [#33] (https://github.com/awtoau/cynthion-workspace/issues/33)
+
+## Scope
+
+This document defines the SPI-only design path between Apollo (ATSAMD11D14A)
+and FPGA-facing debug/control surfaces. It intentionally excludes watchdog
+control protocol design, which is documented in
+[apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+## Problem
+
+The existing Apollo board support contains partial support for a dedicated
+FPGA debug SPI path on SERCOM2, but that path is not fully wired in firmware.
+Clocking is configured while pinmux setup was left incomplete.
+
+Consequence:
+- debug/maintenance flows rely on existing JTAG/SPI paths only
+- a cleaner Apollo-to-FPGA SPI transport is not currently available as a
+  dedicated interface
+
+## Hardware Context
+
+Board-level signals relevant to this design:
+- `PA08`
+- `PA09`
+- `PA10`
+
+Current firmware context:
+- `SERCOM0` is used for existing SPI/JTAG-related behavior
+- `SERCOM2` has a partial debug SPI setup path in firmware
+
+## Proposed SPI Topology
+
+Use `SERCOM2` as the dedicated Apollo-to-FPGA SPI controller for debug/control.
+
+Planned mapping:
+- `PA08` -> `SERCOM2 PAD0` (MOSI)
+- `PA09` -> `SERCOM2 PAD1` (SCK)
+- `PA10` <- `SERCOM0 PAD2` (MISO shared with existing path)
+
+Notes:
+- Shared MISO and board-level routing must be validated against actual
+  constraints before bring-up.
+- If shared-MISO behavior is unstable, this design should be revised to a fully
+  dedicated SPI routing.
+
+## Firmware Design
+
+Target files (Apollo firmware):
+- `src/boards/cynthion_d11/spi.c`
+- `src/boards/cynthion_d11/apollo_board.h`
+
+Required changes:
+1. Complete `SPI_FPGA_DEBUG` pinmux setup in `spi.c`.
+2. Define/confirm `PA08`/`PA09` debug SPI mappings in board headers.
+3. Gate feature with board capability macro (for example
+   `_BOARD_HAS_DEBUG_SPI`) so unsupported revisions fail clearly.
+4. Add concise runtime logging for SPI initialization failure modes.
+
+## Verification Plan
+
+1. Build-time checks
+- Verify firmware compiles with debug SPI feature enabled.
+- Verify unsupported boards fail with explicit messages.
+
+2. Electrical/protocol checks
+- Confirm clock and MOSI activity on expected pins.
+- Confirm stable MISO reads across repeated transfers.
+
+3. Functional checks
+- Read/write a known debug register via SPI path.
+- Validate no regression in existing JTAG/SPI behavior.
+
+## Risks
+
+Low:
+- Uses existing MCU peripheral capability.
+
+Medium:
+- Shared-signal interactions with existing SPI/JTAG paths.
+
+High:
+- Hidden board-routing assumptions that invalidate the shared-MISO plan.
+
+## Out of Scope
+
+- Watchdog heartbeat protocol and timeout semantics.
+- USB role-switching policy changes.
+- moondancer supervisory behavior.
+
+Those remain in
+[apollo_moondancer_uart_watchdog_design.md] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+### Source: docs/apollo_samd11_mcu/cynthion_architecture_scan_2026_05_22.md
+
+# Cynthion Architecture Scan Report
+
+**Date**: 2026-05-22  
+**Scope**: awtoau repositories (apollo, cynthion, luna, saturn-v, facedancer, packetry, hardware)  
+**Focus**: UART/Serial communication design decisions, pulse-train mechanism, watchdog/failsafe design
+
+## Key Findings
+
+### 1. ApolloAdvertiser Implementation (apollo_fpga/gateware/advertiser.py)
+
+**Design**: Generates a 20ms square wave on FPGA_ADV pin (PA09)
+- Half-period: 10ms (calculated as 10% of 100ms in code comment)
+- Creates rising edges every 10ms
+- = ~10 rising edges per 200ms detection window
+
+**Added**: Commit 0b4b855 (Oct 16, 2023) by mndza (Diego)
+```
+apollo_fpga.gateware: add ApolloAdvertiser
+
+When this is added as a submodule to a design, an advertisement message
+is sent periodically to Apollo. Apollo will take over the port when
+these announcements are interrupted or when the PROGRAM button is
+pressed.
+```
+
+**Code Location**: `awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py:42-48`
+```python
+# Generate clock with 20ms period
+half_period = int(self.clk_freq_hz * 10e-3)  # 10ms
+timer = Signal(range(half_period))
+clk = Signal()
+m.d.sync += timer.eq(Mux(timer == half_period-1, 0, timer+1))
+with m.If((timer == 0) & (~self.stop)):
+    m.d.sync += clk.eq(~clk)  # Toggle clock every 10ms
+```
+
+### 2. Apollo FPGA_ADV Detection Logic (awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c)
+
+**Detection Window**: 200ms (line 27)
+```c
+#define WINDOW_PERIOD_MS 200UL
+```
+
+**Detection Threshold**: >2 rising edges in 200ms window (line 125)
+```c
+bool fpga_requesting_port(void) {
+    return window_edges > 2;  // >2 edges = FPGA wants port
+}
+```
+
+**Implementation**: Uses EIC (External Interrupt Controller) to count rising edges
+- EIC configured on line 56: `gpio_set_pin_function(FPGA_ADV, MUX_PA09A_EIC_EXTINT7);`
+- Interrupt handler counts edges on every rising edge (line 141)
+- Every 200ms, window_edges = edge_counter, then counter reset (lines 87-90)
+
+**USB Port Switching Logic** (lines 93-97):
+```c
+if (fpga_requesting_port() == false) {
+    take_over_usb();      // No pulse-train = Apollo takes port
+} else if (fpga_usb_allowed) {
+    hand_off_usb();       // Pulse-train detected = hand to FPGA
+}
+```
+
+### 3. Pin Assignments (awto-apollo/firmware/src/boards/cynthion_d11/apollo_board.h)
+
+**FPGA Control Pins**:
+- FPGA_PROGRAM = PA08 (reset signal)
+- FPGA_ADV = PA09 (pulse-train for USB negotiation)
+- FPGA_INITN = PA03 (initialization status)
+- FPGA_DONE = PA04 (configuration done status)
+
+**JTAG Pins** (conflict with current UART):
+- TMS = PA11 (conflicted with UART RX)
+- TDI = PA14 (conflicted with UART TX)
+- TCK = PA15
+- TDO = PA10
+
+### 4. Current UART Configuration
+
+**Location**: `awto-apollo/firmware/src/boards/cynthion_d11/uart.c:34-43`
+
+**Current Pinmux** (CONFLICTS WITH JTAG):
+```c
+static void _uart_configure_pinmux(bool use_for_uart) {
+    if (use_for_uart) {
+        gpio_set_pin_function(PIN_PA11, MUX_PA11D_SERCOM2_PAD3);  // RX (JTAG TMS)
+        gpio_set_pin_function(PIN_PA14, MUX_PA14D_SERCOM2_PAD0);  // TX (JTAG TDI)
+    }
+}
+```
+
+**SERCOM2 Configuration** (lines 99-102):
+```c
+sercom->USART.CTRLA.reg =
+    SERCOM_USART_CTRLA_TXPO(0)    |  // TX on PAD[0] = PA14
+    SERCOM_USART_CTRLA_RXPO(3)    |  // RX on PAD[3] = PA11
+    ...
+```
+
+### 5. Unimplemented SPI_FPGA_DEBUG
+
+**Location**: `awto-apollo/firmware/src/boards/cynthion_d11/spi.c`
+
+**Status**: TODO on line 56
+```c
+case SPI_FPGA_DEBUG:
+    // TODO  <-- NEVER IMPLEMENTED
+    break;
+```
+
+**Clocking Already Set Up** (lines 92-95):
+```c
+case SPI_FPGA_DEBUG:
+    _pm_enable_bus_clock(PM_BUS_APBC, SERCOM2);
+    _gclk_enable_channel(SERCOM2_GCLK_ID_CORE, GCLK_CLKCTRL_GEN_GCLK0_Val);
+    break;
+```
+
+**Analysis**: Someone previously planned to use SERCOM2 for FPGA debug SPI, set up the clocking, but never completed the pinmux configuration. This was abandoned in favor of SERCOM0 for JTAG SPI.
+
+**Note** (line 29): `// Alternatively, SERCOM2.` - Shows SERCOM2 was considered for SPI JTAG but rejected in favor of SERCOM0.
+
+### 6. moondancer Firmware Integration
+
+**Location**: `awto-cynthion/firmware/moondancer/src/bin/moondancer.rs`
+
+**USB Port Takeover Logic**:
+```rust
+let advertiser = peripherals.ADVERTISER;
+advertiser.control().write(|w| w.enable().bit(true));  // Enable pulse-train
+```
+
+**Shutdown Handler**:
+```rust
+let advertiser = unsafe { pac::ADVERTISER::steal() };
+advertiser.control().write(|w| w.enable().bit(false));  // Disable pulse-train on exit
+```
+
+**Vulnerability**: No watchdog or failsafe mechanism if firmware panics/hangs between enable and disable.
+
+### 7. Advertiser CSR in FPGA
+
+**Location**: `awto-cynthion/cynthion/python/src/gateware/facedancer/advertiser.py`
+
+**Control Register** (line 19-25):
+```python
+class Control(csr.Register, access="w"):
+    """enable : Set this bit to '1' to start ApolloAdvertiser and disconnect
+                the Cynthion USB control port from Apollo.
+    """
+    enable : csr.Field(csr.action.W, unsigned(1))
+```
+
+**Logic** (line 57-58):
+```python
+with m.If(self._control.f.enable.w_stb):
+    m.d.sync += stop.eq(~self._control.f.enable.w_data)
+```
+
+**Note**: Inverted logic - writing 1 to enable sets stop=0 (start pulse-train)
+
+### 8. Design Questions & Missing Pieces
+
+**No Evidence Found For**:
+- Why UART wasn't used from the beginning
+- Investigation into gate count constraints
+- Prior UART-based design attempts
+- Design decision documentation or discussion
+
+**No "rover" Label In Code**:
+- Searched all .py, .rs, .c, .h files
+- "rover" appears to be an issue/organization label only, not in commit messages or code
+
+**Unimplemented Features**:
+- SPI_FPGA_DEBUG never completed
+- No bidirectional communication mechanism
+- No watchdog timeout protection
+
+## Architecture Vulnerability
+
+The current design creates a **single point of failure**:
+
+1. moondancer firmware enables advertiser pulse-train
+2. Apollo detects pulse-train and hands off USB port
+3. **If moondancer crashes**: Advertiser CSR keeps running
+4. **If moondancer firmware panics**: No handler to disable advertiser
+5. **Result**: Host loses all USB access (even CONTROL port)
+
+## Recommended Solution Path
+
+Replace pulse-train with hardware UART using:
+- **PA08** → SERCOM2 TX (currently FPGA_PROGRAM, used only post-bootup)
+- **PA09** → SERCOM2 RX (currently FPGA_ADV pulse-train, can be repurposed)
+- **PA03** ← watchdog interrupt (FPGA_INITN, status pin)
+- **PA04** ← status feedback (FPGA_DONE, status pin)
+
+**Advantages**:
+1. Bidirectional synchronous communication
+2. Moondancer can send heartbeat responses
+3. Apollo can detect moondancer timeout and force reset
+4. JTAG pins freed for actual JTAG debugging
+5. Uses native SERCOM2 hardware (no bit-banging)
+
+## References
+
+**Files Examined**:
+- awto-apollo_samd11_mcu/apollo_fpga/gateware/advertiser.py - Pulse-train generator
+- awto-apollo/firmware/src/boards/cynthion_d11/fpga_adv.c - Edge detection logic
+- awto-apollo/firmware/src/boards/cynthion_d11/uart.c - Current UART on JTAG pins
+- awto-apollo/firmware/src/boards/cynthion_d11/spi.c - SPI configuration (unimplemented DEBUG variant)
+- awto-apollo/firmware/src/boards/cynthion_d11/apollo_board.h - Pin definitions
+- awto-cynthion/firmware/moondancer/src/bin/moondancer.rs - Advertiser control
+- awto-cynthion/cynthion/python/src/gateware/facedancer/advertiser.py - CSR wrapper
+
+**Related Commits**:
+- 0b4b855: apollo_fpga.gateware: add ApolloAdvertiser (Oct 2023)
+- 6decb7d: gateware: ApolloAdvertiser generates rising edges now
+- f68195e: apollo_fpga.gateware: convert request handler to new interface
+
+**No References To**:
+- Issue [#15] (https://github.com/awtoau/cynthion-workspace/issues/15) in git history
+- Prior watchdog implementations
+- Gate count constraint discussions
+- UART design alternative evaluations
+
+### Source: docs/apollo_samd11_mcu/apollo_dfu_buffer_analysis.md
+
+# Apollo DFU Buffer Issues
+
+**Status**: Phase 2 Code Review  
+**Date**: 2026-05-23  
+**Severity**: Medium  
+
+## Problem Statement
+
+DFU (Device Firmware Update) buffer handling on SAMD11 MCU variant has potential issues:
+
+1. **Tight Memory Constraints**: ATSAMD11D14A has only 4KB SRAM
+   - 4KB allocated to DFU buffer (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
+   - USB stack requires ~2-3KB
+   - Application code + stack share remainder
+   - No explicit overflow protection
+
+2. **Detach Sequence Synchronization**: 
+   - `dfu_mount()` handler triggers immediate reboot to bootloader
+   - No guarantee detach request completes before reboot
+   - Potential for incomplete transfers leaving device in bad state
+
+3. **Missing Documentation**:
+   - Buffer size limits per MCU not documented
+   - DFU timeout behavior unspecified
+   - Recovery path for interrupted transfers unclear
+
+## Affected Files
+
+- `src/mcu/rp2040/dfu.c` — DFU implementation
+- `src/mcu/samd11/usb_descriptors.c` — Descriptor configuration
+- `src/boards/cynthion_d11/tusb_config.h` — TinyUSB config
+
+## Current Code
+
+```c
+// src/mcu/samd11/usb_descriptors.c
+TUD_DFU_RT_DESCRIPTOR(ITF_NUM_DFU_RT, 0, 0x0d, 500, 4096),
+```
+
+## Recommended Actions
+
+- [ ] Document buffer size limits (min/max) per MCU variant
+- [ ] Add compile-time assertion: buffer + USB stack + app < total_ram
+- [ ] Implement explicit buffer overflow checks in DFU handler
+- [ ] Add timeout mechanism for detach sequence
+- [ ] Define recovery procedure for interrupted transfers
+- [ ] Test firmware update on SAMD11 with <16KB free memory
+
+## Testing Matrix
+
+| Test Case | MCU | Status |
+|-----------|-----|--------|
+| Normal DFU update | SAMD11 | ? |
+| Interrupted transfer | SAMD11 | ? |
+| Low memory condition | SAMD11 | ? |
+| Timeout behavior | SAMD11 | ? |
+| Buffer exhaustion | SAMD11 | ? |
+
+## Notes
+
+- RP2040 variant has more RAM (264KB), less critical but should follow same pattern
+- TinyUSB version may have built-in protection; check version and settings
+- Actual buffer exhaustion testing needed to confirm issue severity
+
+### Source: docs/apollo_samd11_mcu/apollo_code_review.md
+
+# Apollo Firmware Code Review
+
+**Date**: 2026-05-23  
+**Scope**: Review of known/potential issues in Apollo debug controller firmware  
+**Status**: Phase 2 documentation task
+
+## Summary
+
+Apollo is the ARM-based debug controller on Cynthion. This review covers three areas flagged for Phase 2 analysis:
+1. **DFU buffer handling**
+2. **Race conditions** in USB/FPGA state management
+3. **Dual CDC** (composite USB with two serial ports)
+
+---
+
+## 1. DFU (Device Firmware Update) Buffer Issues
+
+### Current Implementation
+- **Location**: `src/mcu/rp2040/dfu.c`, `src/mcu/samd11/usb_descriptors.c`
+- **Config**: DFU Runtime interface enabled (`CFG_TUD_DFU_RUNTIME = 1`)
+- **Buffer size**: 4096 bytes (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
+
+### Known Considerations
+
+1. **Buffer allocation on SAMD11** (limited RAM)
+   - ATSAMD11D14A has 4KB SRAM and 16KB flash
+   - 4KB DFU buffer + USB stack + application stack = tight memory
+   - No explicit mention of buffer overflow checks
+
+2. **Detach/Reboot sequence**
+   - `dfu_mount()` handler triggers reboot to bootloader
+   - Timing-dependent: detach request must complete before reboot
+   - No explicit synchronization mechanism
+
+3. **Missing documentation**
+   - Buffer size limits for different MCUs not documented
+   - DFU timeout behavior not specified
+   - Recovery path if DFU transfer interrupted is unclear
+
+### Recommendations
+
+- [ ] Document buffer requirements per MCU variant
+- [ ] Add explicit buffer overflow protection
+- [ ] Review detach sequence synchronization
+- [ ] Add timeout handling for incomplete transfers
+
+---
+
+## 2. Race Conditions
+
+There are none. Checked against the firmware in [#61] (https://github.com/awtoau/cynthion-workspace/issues/61): it is bare-metal, so only an
+ISR can preempt, and the three this review reported were in code that does not
+exist. What can preempt what is in
+[`../chips/samd11-apollo.md`] (../chips/samd11-apollo.md).
+
+Still open from it: `debug_spi.c:138` releases the UART pinmux on every board
+revision, and the `r0.2+` TODO above it was never answered.
+
+---
+
+## 3. Dual CDC (Composite USB)
+
+### Current Implementation
+
+**Location**: `src/mcu/samd11/usb_descriptors.c`, `src/mcu/rp2040/usb_descriptors.c`
+
+```c
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_DFU_RT_DESC_LEN)
+```
+
+Current descriptor structure:
+- 1× CDC (UART console)
+- 1× DFU Runtime
+
+### Investigation Results
+
+**Status**: The codebase **does not currently implement dual CDC**
+
+What exists:
+- Single CDC interface for debug UART
+- DFU Runtime interface
+- Debug SPI interface
+
+What's missing:
+- Second CDC endpoint/interface
+- Dual-endpoint configuration
+- Composite descriptor for 2×CDC + DFU
+
+### Known Limitations
+
+1. **Single serial port** to MCU limits debug capability
+2. **No separate FPGA→Host debug channel** (only JTAG indirect access)
+3. **Console and vendor requests share** a single USB pipe
+
+### Recommendations for Dual CDC
+
+If implementing dual CDC:
+
+- [ ] Add second CDC interface descriptor
+- [ ] Allocate additional endpoints (IN/OUT per CDC)
+- [ ] Update `tusb_config.h` with second CDC config
+- [ ] Map second CDC to FPGA debug/UART bridge
+- [ ] Test with TinyUSB's composite example
+- [ ] Verify buffer requirements under dual-channel load
+
+---
+
+## Code Quality Issues Found
+
+| Issue | File | Line | Severity | Notes |
+|-------|------|------|----------|-------|
+| Incomplete UART config | `src/boards/cynthion_d11/uart.c` | — | Low | TODO: support parity, stop bits |
+| Incomplete board init | `src/boards/daisho/uart.c` | — | Low | FIXME: implement all of this! |
+| Platform-specific JTAG TODO | `src/boards/daisho/platform_jtag.h` | — | Low | TODO: optimize these? |
+| Uncertain r0.2 behavior | `src/debug_spi.c` | — | Medium | TODO: don't run on r0.2+? |
+| Neopixel support missing | `src/boards/qtpy/apollo_board.h` | — | Low | TODO: handle RGB neopixel |
+| SPI FIFO optimization | `src/boards/cynthion_d21/spi.c` | — | Low | TODO: use FIFO to bulk send |
+
+---
+
+## Testing Requirements
+
+### For DFU Buffer Issues
+- [ ] Test firmware update on SAMD11 with <16KB free memory
+- [ ] Test interrupted DFU transfer recovery
+- [ ] Validate timeout behavior
+
+### For Race Conditions
+- [ ] Concurrent FPGA state change requests
+- [ ] USB disconnect during FPGA reconfiguration
+- [ ] Rapid online/offline cycling
+- [ ] Multi-host access scenarios (if supported)
+
+### For Dual CDC (if implemented)
+- [ ] Simultaneous writes to both CDC ports
+- [ ] High-speed data transfer on both channels
+- [ ] USB buffer exhaustion handling
+- [ ] Device enumeration with full descriptor set
+
+---
+
+## Priority Assessment
+
+### High Priority
+- Race condition fixes (state synchronization)
+- Buffer overflow protection (DFU and USB)
+
+### Medium Priority
+- Code documentation (hardware revision behavior)
+- Timeout handling (DFU detach sequence)
+- Dual CDC implementation (if feature needed)
+
+### Low Priority
+- Minor TODOs (UART config, SPI optimization)
+- Neopixel support
+
+---
+
+## Next Actions
+
+1. **Document buffer requirements** per MCU variant
+2. **Add DFU timeout handling**
+3. **Resolve `debug_spi.c:138`** — decide whether `uart_release_pinmux()` should
+   run on r0.2+, and delete the TODO either way
+4. **If dual CDC needed**: Plan integration of second CDC interface
+
+---
+
+## Files to Review Further
+
+- `src/vendor.c` — USB request handler (potential races)
+- `src/fpga.c` — FPGA state management (critical section)
+- `src/debug_spi.c` — Hardware version detection
+- `src/mcu/rp2040/dfu.c` — DFU implementation
+
+### Source: docs/apollo_samd11_mcu/apollo_change_process.md
+
+# Apollo Change Tracking Process
+
+## Purpose
+Use this process for Apollo firmware work related to USB mode control, CDC/UART behavior, and issue verification.
+
+Primary design reference for mode arbitration and interface boundaries:
+- `docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md`
+
+Goals:
+- Keep changes reproducible.
+- Keep evidence attached to each change.
+- Keep issue status aligned with runtime proof.
+
+## Scope
+- Apollo source tree: `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo`
+- Workspace evidence and patch archive: this repo
+- Primary issue tracking: GitHub issue comments (for example issue 22)
+
+## Apollo Command Structure (Reference)
+
+Host-side Apollo CLI top-level commands:
+
+1. Device/introspection:
+  - `info`
+  - `jtag-scan`
+  - `flash-info`
+2. Flash programming:
+  - `flash-erase`
+  - `flash-program`
+  - `flash-fast`
+  - `flash-read`
+3. FPGA config/control:
+  - `configure`
+  - `reconfigure`
+  - `force-offline`
+4. Low-level buses:
+  - `spi`, `spi-inv`, `spi-reg`
+  - `jtag-spi`, `jtag-reg`
+  - `svf`
+5. Utility:
+  - `leds`
+
+Device-side request dispatch lives in Apollo firmware `firmware/src/vendor.c` and routes:
+
+1. JTAG requests:
+  - start/stop
+  - set/get buffers
+  - scan / run clock / goto state / get state / bulk scan
+2. Programming/control requests:
+  - trigger reconfiguration
+  - force FPGA offline
+  - allow FPGA takeover USB
+3. Debug/flash SPI requests:
+  - debug SPI send/read
+  - flash SPI send
+  - take/release flash lines
+
+## Critical Constraint: UART vs JTAG on cynthion_d11
+
+On cynthion_d11, UART and JTAG share pins (PA14/PA11 overlap), so they are operationally mutually exclusive during programming operations.
+
+Implications:
+
+1. `apollo flash-program` and `apollo configure` require JTAG ownership of those pins.
+2. Any host process opening CDC ACM ports (for example `apollod.py`) can trigger UART callbacks and interfere with JTAG transactions.
+3. During flash/program/configure operations:
+  - stop port consumers first (`apollod`, serial monitors, other `ttyACM*` readers)
+  - use Apollo hold mode (`cyn reset --mode hold-apollo`)
+  - then run `cyn riscv flash`
+
+Typical symptom of contention:
+- `usb.core.USBError: [Errno 32] Pipe error`
+- ECP5/JTAG operation timeout during `apollo flash-program`
+
+## Required Artifacts Per Change
+For each meaningful firmware change set, collect all of the following:
+
+1. Change note (what/why).
+2. Build result.
+3. Flash result.
+4. Runtime test output (USB mode, tty mapping, capture/probe output).
+5. Patch file exported to `patches/apollo/`.
+6. Issue comment linking the artifacts.
+
+## Step-by-Step Process
+
+1. Record intent before editing
+- Create a short note in the issue comment draft with:
+  - hypothesis
+  - target files
+  - verification plan
+
+2. Make firmware changes
+- Edit files under Apollo repo, typically:
+  - `firmware/src/console.c`
+  - `firmware/src/main.c`
+
+3. Build and flash
+- Build:
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware"`
+  - `make APOLLO_BOARD=cynthion`
+- Flash:
+  - `make APOLLO_BOARD=cynthion dfu`
+
+4. Capture runtime evidence in this repo
+- Save logs to `tmp/` with ISO-style date stamps.
+- Minimum runtime checks:
+  - `lsusb` mode stability polling (615c vs 615b)
+  - tty discovery from sysfs
+  - serial capture/probe output
+
+5. Export patch files
+- Preferred (commit-based patch):
+  - `cd "${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo"`
+  - `git add <files>`
+  - `git commit -m "apollo: <summary>"`
+  - `mkdir -p "$WORKSPACE/patches/apollo"` (`$WORKSPACE` = this repo's root)
+  - `git format-patch -1 HEAD -o "$WORKSPACE/patches/apollo"`
+- If not ready to commit (WIP snapshot):
+  - `git diff > "$WORKSPACE/patches/apollo/0000-wip-<topic>.diff"`
+
+6. Update issue with evidence
+- Post one concise comment containing:
+  - change summary
+  - build/flash outcome
+  - runtime outcome
+  - links to artifact filenames
+  - explicit pass/fail against close criteria
+
+## Close Criteria (Verification Issues)
+Do not close until all are true:
+
+1. Control-plane is stable (expected USB mode remains stable for test window).
+2. Data-plane behavior is demonstrated by runtime evidence.
+3. Reproduction steps are documented.
+4. Patch artifact is exported under `patches/apollo/`.
+5. Final issue comment references all evidence files.
+
+## Change Log Template
+Append one entry per firmware change set.
+
+```
+## YYYY-MM-DDTHH:MM:SS+10:00 - <short title>
+
+- Hypothesis:
+- Files changed:
+- Build result:
+- Flash result:
+- Runtime result:
+- Artifacts:
+  - tmp/<file1>
+  - tmp/<file2>
+  - patches/apollo/<patch-file>
+- Issue update:
+  - <issue URL>
+- Status:
+  - pass | fail | partial
+```
+
+## Current Work Notes (Issue 22)
+Latest active Apollo files changed:
+
+1. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/console.c`
+2. `${REPOS_ROOT:-$HOME/git/awtoau}/awto-apollo/firmware/src/main.c`
+
+Patch export is required before final closure of issue 22.
+
+### Source: docs/apollo_samd11_mcu/apollo_serial_interface_and_mode_exclusivity_design.md
+
+# Apollo Serial Interface and Mode Exclusivity Design
+
+## Purpose
+
+This document consolidates the current Apollo serial/control interface, links the related issue set, and defines a minimal, enforceable exclusivity policy so JTAG programming cannot be interrupted by serial/debug or takeover transitions.
+
+## Linked Issue Map
+
+Primary tracker:
+- [#55] (https://github.com/awtoau/cynthion-workspace/issues/55) - Apollo serial architecture redesign tracker
+
+Reliability prerequisites:
+- [#54] (https://github.com/awtoau/cynthion-workspace/issues/54) - synchronize FPGA state transitions and USB handoff
+- [#53] (https://github.com/awtoau/cynthion-workspace/issues/53) - DFU buffer and detach robustness
+
+Second UART / dual-CDC work:
+- [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) - dual-CDC feasibility (closed, deferred)
+- [#22] (https://github.com/awtoau/cynthion-workspace/issues/22) - UART forwarding verification and runtime evidence
+
+JTAG debug architecture:
+- [#19] (https://github.com/awtoau/cynthion-workspace/issues/19) - route VexRiscv JTAG via ECP5 JTAGG
+- [#20] (https://github.com/awtoau/cynthion-workspace/issues/20) - Apollo Python GDB server over serial path
+
+Broader architecture context:
+- [#15] (https://github.com/awtoau/cynthion-workspace/issues/15) - Apollo supervisor model and multi-channel control direction
+
+## Current Apollo Interface Surface
+
+Reference source: `docs/apollo_samd11_mcu/apollo_change_process.md`.
+
+Host-side command groups:
+- Device and introspection: `info`, `jtag-scan`, `flash-info`
+- Flash/programming: `flash-erase`, `flash-program`, `flash-fast`, `flash-read`
+- FPGA control: `configure`, `reconfigure`, `force-offline`
+- Low-level buses: `spi`, `spi-inv`, `spi-reg`, `jtag-spi`, `jtag-reg`, `svf`
+- Utility: `leds`
+
+Device-side request groups (in Apollo firmware `firmware/src/vendor.c`):
+- JTAG requests: start/stop, scan, run clock, goto state, get state, bulk scan
+- Programming/control: reconfigure, force offline, allow FPGA USB takeover
+- SPI paths: debug SPI send/read, flash SPI send, flash-line arbitration
+
+## Problem Statement
+
+Observed in issues [#54] (https://github.com/awtoau/cynthion-workspace/issues/54) and [#22] (https://github.com/awtoau/cynthion-workspace/issues/22):
+- control-plane transitions (Apollo hold, FPGA takeover, offline/reset) can overlap
+- runtime serial consumers can run while JTAG/programming operations are active
+- the same physical/functional resources are being driven by competing paths
+
+Net effect:
+- JTAG programming/debug sessions are vulnerable to interruption
+- serial verification can become flaky due to mode transitions during capture windows
+
+## Design Goal
+
+Prevent interruption of JTAG programming operations by making JTAG mode sticky and exclusive until explicit exit or explicit emergency reset.
+
+## Proposed Mode Model
+
+Define a small control-plane state model:
+
+- `MODE_APOLLO_HOLD`
+  - default mode
+  - serial/debug flows may run
+  - takeover remains explicit policy
+
+- `MODE_JTAG_PROGRAM`
+  - exclusive mode for JTAG/program/configure sequences
+  - mode changes are blocked while active
+  - serial forwarding and takeover transitions are blocked
+
+- `MODE_EMERGENCY_RESET`
+  - explicit override path
+  - cancels active JTAG ownership and returns to `MODE_APOLLO_HOLD`
+
+## Hard Invariants
+
+1. Exactly one mode owner at a time.
+2. While in `MODE_JTAG_PROGRAM`, no mode change is allowed except emergency reset.
+3. All non-JTAG control operations return explicit `BUSY` or `INVALID_MODE` while JTAG mode is active.
+4. USB takeover is explicit policy, never an implicit side effect of reset helpers.
+5. Emergency reset is the only preemption path for JTAG mode.
+
+## Command Policy Matrix
+
+| Command Class | Allowed in Hold | Allowed in JTAG Program | Allowed in Emergency Reset | Notes |
+|---|---|---|---|---|
+| `flash-program` / `configure` / `svf` | No (must switch) | Yes | No | Exclusive JTAG owner required |
+| `jtag-scan` / `jtag-reg` | Optional | Yes | No | JTAG command family |
+| UART/CDC capture/probe | Yes | No | No | Block during active programming |
+| `allow_fpga_takeover_usb` | Explicit only | No | No | Block while JTAG mode is active |
+| Emergency reset command | Yes | Yes | Yes | Only legal preemption path |
+
+## Implementation Sketch
+
+In Apollo firmware control path:
+
+- add one global mode state (`HOLD`, `JTAG_PROGRAM`, `EMERGENCY_RESET`)
+- gate vendor request handlers with a simple policy check
+- return explicit error code when blocked (`BUSY`, `INVALID_MODE`)
+- ensure emergency reset clears JTAG ownership and returns to HOLD deterministically
+
+Suggested control struct:
+
+```c
+typedef enum {
+    MODE_APOLLO_HOLD,
+    MODE_JTAG_PROGRAM,
+  MODE_EMERGENCY_RESET
+} apollo_mode_t;
+
+typedef struct {
+    volatile apollo_mode_t mode;
+  volatile bool jtag_owner_active;
+} apollo_mode_ctrl_t;
+```
+
+## Transition Rules (Minimal)
+
+1. Enter `MODE_JTAG_PROGRAM`:
+- acquire ownership lock
+- reject if another owner exists
+- block serial/takeover handlers while active
+
+2. Exit `MODE_JTAG_PROGRAM`:
+- explicit stop command only
+- release ownership lock and return to `MODE_APOLLO_HOLD`
+
+3. Emergency reset:
+- can run from any mode
+- if JTAG mode active, cancel JTAG session first
+- force return to `MODE_APOLLO_HOLD`
+
+4. Takeover policy changes:
+- rejected while JTAG mode active
+- allowed again only after JTAG exit/reset
+
+## Validation Plan
+
+1. JTAG lock test:
+- enter JTAG mode and issue long program/configure sequence
+- in parallel, issue takeover/serial/reset-helper commands
+- verify blocked commands return deterministic errors
+
+2. Serial interruption test:
+- while JTAG mode active, attempt CDC/serial debug operations
+- verify they are rejected or paused
+
+3. Emergency reset override test:
+- trigger emergency reset during JTAG mode
+- verify JTAG ownership is canceled and device returns to HOLD
+
+4. Evidence requirements:
+- attach logs and pass/fail matrix to [#54] (https://github.com/awtoau/cynthion-workspace/issues/54)
+- update [#55] (https://github.com/awtoau/cynthion-workspace/issues/55) with milestone result
+
+## Execution Order
+
+1. Land minimal JTAG lock policy for [#54] (https://github.com/awtoau/cynthion-workspace/issues/54).
+2. Re-run UART forwarding validation in [#22] (https://github.com/awtoau/cynthion-workspace/issues/22).
+3. Re-open dual-CDC implementation as a new child issue under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55), using [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) as historical context.
+
+---
+
+## Decision Record: Arbitration Model (ADR)
+
+**Status:** Accepted — 2026-07-23. Resolves item 2 of
+[#65] (https://github.com/awtoau/cynthion-workspace/issues/65).
+**Scope:** Cynthion **d11** board (ATSAMD11D14A). The d21 / samd11_xplained
+boards have a different pin budget and are out of scope for the hardware
+constraint below (their arbitration can be softer).
+
+### Context — the constraint is physical, not a policy choice
+
+On d11, four SAMD11 pins are contended by three Apollo subsystems with **no
+hardware arbitration** — each path steals the pins into its own peripheral via
+`gpio_set_pin_function()` (see [[apollo-d11-pin-exclusivity]] and
+[#65] (https://github.com/awtoau/cynthion-workspace/issues/65)):
+
+| Pin  | JTAG-over-USB (bit-bang GPIO) | JTAG-over-SPI (SERCOM0)   | UART console (SERCOM2) |
+|------|-------------------------------|---------------------------|------------------------|
+| PA10 | TDO                           | TDO / MISO (PAD2)         | —                      |
+| PA11 | TMS                           | —                         | **RX** (PAD3)          |
+| PA14 | TDI                           | TDI / MOSI (PAD0)         | **TX** (PAD0)          |
+| PA15 | TCK                           | TCK / SCK (PAD1)          | —                      |
+
+PA14 is the triple-overlap (TDI *and* SPI-MOSI *and* UART-TX). The pins **cannot
+be split**: relocating UART to PA08/PA09 is not viable because on d11 those are
+`FPGA_PROGRAM` (PA08) and `PHY_RESET` + `FPGA_ADV`→`EIC_EXTINT7` (PA09) — Apollo's
+core supervisory lines. See the correction note added to
+[`apollo_moondancer_uart_watchdog_design.md`] (../../debris/docs/apollo_moondancer_uart_watchdog_design.md)
+(retired).
+
+Because the resource is physically single-owner, arbitration is not a
+convenience feature — it is the only thing standing between a JTAG programming
+sequence and silent corruption when a UART/console consumer repinmuxes PA14
+mid-flash.
+
+### Decision
+
+Adopt the **sticky mutual-exclusion state machine** already sketched in the
+"Proposed Mode Model" above, with these d11-specific bindings and one
+strengthening:
+
+1. **JTAG owns the pins exclusively while `MODE_JTAG_PROGRAM` is active.** Entry
+   into JTAG-program / configure / SVF acquires the pin-owner lock. While held,
+   any handler that would call `gpio_set_pin_function()` on PA10/PA11/PA14/PA15
+   for a non-JTAG peripheral (i.e. `uart_initialize()`, SERCOM2 console, debug
+   SPI) returns `BUSY` and does **not** touch the pinmux.
+
+2. **JTAG programming is uninterruptible.** Once a program/configure/SVF
+   sequence has begun, it runs to completion or to explicit emergency reset.
+   There is no "pause and lend the pins" path. The lock is released only by (a)
+   the JTAG command family completing and issuing explicit stop, or (b)
+   `MODE_EMERGENCY_RESET`. This is stricter than a plain mutex: even the *owner*
+   cannot voluntarily yield mid-sequence, because a half-programmed FPGA is the
+   failure we are preventing.
+
+3. **The lock guards the pinmux, not just the command dispatcher.** The check
+   lives at the point of `gpio_set_pin_function()` / `uart_initialize()`, so a
+   TinyUSB CDC callback (line-coding / DTR change — see `console.c`
+   `tud_cdc_line_coding_cb`, `tud_cdc_line_state_cb`) firing during a flash
+   cannot lazily re-init the UART and steal PA14. Today those callbacks call
+   `uart_initialize()` unconditionally; under this decision they must consult the
+   lock first.
+
+4. **Emergency reset is the sole preemption path** (unchanged from Hard
+   Invariant 5). It cancels JTAG ownership, restores pins to a safe default, and
+   returns to `MODE_APOLLO_HOLD`.
+
+5. **Default HOLD is UART/console-owner.** In `MODE_APOLLO_HOLD` the pins may be
+   held by the UART console bridge; the *first* JTAG entry request repinmuxes
+   them to JTAG and takes the lock. There is no implicit hand-back — returning to
+   HOLD re-enables lazy UART init on the next CDC event.
+
+### Enforcement points (firmware)
+
+- One global `apollo_mode_ctrl_t` (already in the Implementation Sketch).
+- Gate `uart_initialize()` and the three `console.c` CDC callbacks on
+  `mode != MODE_JTAG_PROGRAM`.
+- Gate the JTAG-SPI (`SPI_FPGA_JTAG`) and any future debug-SPI pinmux on the
+  same lock — SPI is a JTAG-family owner, so it is allowed *inside*
+  `MODE_JTAG_PROGRAM` but blocked for a console consumer while JTAG holds it.
+- Entry to programming vendor requests (`flash-program`, `configure`, `svf`,
+  `reconfigure`) acquires the lock; the matching stop releases it.
+
+### Consequences
+
+- The UART console and JTAG are strictly one-at-a-time on d11 — this is now an
+  enforced invariant instead of an undefined race.
+- A host that opens the Apollo CDC port during a flash no longer corrupts the
+  flash; it gets a UART that stays uninitialized (or a `BUSY`) until JTAG exits.
+- No behavioural change on d21 / xplained, which are not pin-starved.
+
+---
+
+## Second virtual serial port (host side): redundant on d11
+
+**Question:** does the sticky-exclusion decision make a *second* USB virtual
+serial port (the deferred dual-CDC work, [#56] (https://github.com/awtoau/cynthion-workspace/issues/56))
+redundant, or can it still be used?
+
+**Current reality.** d11 Apollo exposes a **single** CDC interface today
+(`CFG_TUD_CDC 1`; `ITF_NUM_CDC = 0` in `mcu/samd11/usb_descriptors.c`). That one
+CDC is a lazy USB↔UART bridge: `console.c` forwards host bytes to the SERCOM2
+UART on **PA11/PA14** — the JTAG pins. There is no second port; "the second
+virtual serial port" means the dual-CDC idea from [#56] (https://github.com/awtoau/cynthion-workspace/issues/56).
+
+**Decision — the second CDC is redundant *for its originally-intended purpose*
+on d11, but not useless.**
+
+- **Redundant as a second UART bridge.** The obvious use for a second CDC — a
+  separate host serial channel bridged to a *second* physical UART — has no
+  physical UART to bridge to. SAMD11 SERCOM/pin budget on d11 has exactly one
+  UART-capable pin pair, and it is the JTAG-contended one. A second CDC cannot
+  surface a second independent serial line to the FPGA. So the classic
+  "console + second forwarded UART" motivation is dead on d11 (it was only ever
+  viable on the boards with spare PA08/PA09).
+
+- **Still usable as a non-UART control/status channel.** A second CDC endpoint
+  does **not** have to be a UART bridge. Under the exclusion model it is actually
+  attractive as a **pinless side-channel** that stays up while JTAG owns the
+  pins:
+  - a **status/notification port** the host can keep open during a flash to
+    receive `BUSY` / progress / mode-transition events — precisely when the
+    primary UART bridge is (correctly) muted by the lock;
+  - a **control port** for issuing `emergency reset` / mode queries out-of-band,
+    so the operator is never locked out while JTAG is uninterruptible;
+  - a **structured GDB-server / diagnostics** transport (aligns with [#20] (https://github.com/awtoau/cynthion-workspace/issues/20)'s
+    "GDB over serial path") that carries framed messages rather than raw UART
+    bytes and therefore needs no SERCOM pins at all.
+
+  These consume USB endpoints and ~1–2 KB RAM on the 4 KB-SRAM SAMD11, so
+  feasibility is a memory-budget question (the reason [#56] (https://github.com/awtoau/cynthion-workspace/issues/56) was deferred), **not**
+  a pin question.
+
+**Recommendation.** Keep the second CDC *deferred* as a UART bridge (it can never
+be one on d11), and if dual-CDC is re-opened under [#55] (https://github.com/awtoau/cynthion-workspace/issues/55), re-scope it explicitly as
+a **pinless control/status side-channel** that complements the uninterruptible
+JTAG lock — the one CDC role the pin constraint does not foreclose. Record this
+so [#56] (https://github.com/awtoau/cynthion-workspace/issues/56)'s revival doesn't re-inherit the dead "second forwarded UART" framing.
+

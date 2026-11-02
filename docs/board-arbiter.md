@@ -158,9 +158,4 @@ They earn their board time with **events**, never rows:
 - The first client to find the port down starts the server **from its own
   checkout**; `status` reports which root that was.
 
-## Superseded
 
-`scripts/fpga_job_runner.py` and `fpga-jobs/` — a directory queue drained
-one-shot, whose lock was worktree-local. Its `/proc` holder scan survives as
-`board_holders.py`; its positive/negative-control discipline survives as the
-arbiter's refusal rules and `board_arbiter_proof.py`.

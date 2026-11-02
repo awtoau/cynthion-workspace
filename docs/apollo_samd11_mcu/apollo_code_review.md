@@ -1,174 +1,31 @@
-# Apollo Firmware Code Review
+# Apollo firmware review: open items
 
-**Date**: 2026-05-23  
-**Scope**: Review of known/potential issues in Apollo debug controller firmware  
-**Status**: Phase 2 documentation task
+Apollo = ATSAMD11D14A (4 KiB SRAM, 16 KiB flash), bare metal. Pin/ISR facts: [../chips/samd11-apollo.md](../chips/samd11-apollo.md). Flash/RAM budget: same file, § Memory budget.
 
-## Summary
+## DFU ([#53](https://github.com/awtoau/cynthion-workspace/issues/53))
 
-Apollo is the ARM-based debug controller on Cynthion. This review covers three areas flagged for Phase 2 analysis:
-1. **DFU buffer handling**
-2. **Race conditions** in USB/FPGA state management
-3. **Dual CDC** (composite USB with two serial ports)
+- Descriptor `TUD_DFU_RT_DESCRIPTOR(ITF_NUM_DFU_RT, 0, 0x0d, 500, 4096)` in `mcu/samd11/usb_descriptors.c:104` (and `mcu/rp2040/usb_descriptors.c:107`): 500 = detach timeout, 4096 = advertised transfer size. DFU runtime moves no data, so no 4 KiB buffer is allocated (the earlier "4 KiB of 4 KiB SRAM" claim was wrong). `CFG_TUD_DFU_RUNTIME 1` in `boards/qtpy/tusb_config.h:70`.
+- Open: detach/reboot sequencing is timing-dependent with no explicit synchronisation; DFU timeout and interrupted-transfer recovery are undocumented.
 
----
+## Races
 
-## 1. DFU (Device Firmware Update) Buffer Issues
+None: bare metal, only an ISR can preempt ([#61](https://github.com/awtoau/cynthion-workspace/issues/61)); what preempts what is in [../chips/samd11-apollo.md](../chips/samd11-apollo.md).
 
-### Current Implementation
-- **Location**: `src/mcu/rp2040/dfu.c`, `src/mcu/samd11/usb_descriptors.c`
-- **Config**: DFU Runtime interface enabled (`CFG_TUD_DFU_RUNTIME = 1`)
-- **Buffer size**: 4096 bytes (`TUD_DFU_RT_DESCRIPTOR(..., 500, 4096)`)
+- Open from #61: `src/debug_spi.c:138` releases the UART pinmux on every board revision; the `r0.2+` TODO above it was never answered. Decide whether `uart_release_pinmux()` runs on r0.2+, then delete the TODO.
 
-### Known Considerations
+## Dual CDC ([#56](https://github.com/awtoau/cynthion-workspace/issues/56), closed, deferred)
 
-1. **Buffer allocation on SAMD11** (limited RAM)
-   - ATSAMD11D14A has 4KB SRAM and 16KB flash
-   - 4KB DFU buffer + USB stack + application stack = tight memory
-   - No explicit mention of buffer overflow checks
+- Descriptor today: 1x CDC (UART console bridge) + 1x DFU runtime (`CONFIG_TOTAL_LEN = TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_DFU_RT_DESC_LEN`); `CFG_TUD_CDC 1`. Console and vendor requests share one USB pipe; FPGA debug is JTAG-indirect only.
+- A second CDC cannot be a second UART bridge on d11 (one UART-capable pin pair, and it is JTAG's). Role left open: pinless status/control side-channel, see [apollo_serial_interface_and_mode_exclusivity_design.md](apollo_serial_interface_and_mode_exclusivity_design.md).
+- If built: second CDC descriptor + IN/OUT endpoints, `tusb_config.h` entry, buffer check under dual load (~1-2 KB RAM).
 
-2. **Detach/Reboot sequence**
-   - `dfu_mount()` handler triggers reboot to bootloader
-   - Timing-dependent: detach request must complete before reboot
-   - No explicit synchronization mechanism
+## Code-quality TODOs
 
-3. **Missing documentation**
-   - Buffer size limits for different MCUs not documented
-   - DFU timeout behavior not specified
-   - Recovery path if DFU transfer interrupted is unclear
-
-### Recommendations
-
-- [ ] Document buffer requirements per MCU variant
-- [ ] Add explicit buffer overflow protection
-- [ ] Review detach sequence synchronization
-- [ ] Add timeout handling for incomplete transfers
-
----
-
-## 2. Race Conditions
-
-There are none. Checked against the firmware in [#61](https://github.com/awtoau/cynthion-workspace/issues/61): it is bare-metal, so only an
-ISR can preempt, and the three this review reported were in code that does not
-exist. What can preempt what is in
-[`../chips/samd11-apollo.md`](../chips/samd11-apollo.md).
-
-Still open from it: `debug_spi.c:138` releases the UART pinmux on every board
-revision, and the `r0.2+` TODO above it was never answered.
-
----
-
-## 3. Dual CDC (Composite USB)
-
-### Current Implementation
-
-**Location**: `src/mcu/samd11/usb_descriptors.c`, `src/mcu/rp2040/usb_descriptors.c`
-
-```c
-#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_DFU_RT_DESC_LEN)
-```
-
-Current descriptor structure:
-- 1× CDC (UART console)
-- 1× DFU Runtime
-
-### Investigation Results
-
-**Status**: The codebase **does not currently implement dual CDC**
-
-What exists:
-- Single CDC interface for debug UART
-- DFU Runtime interface
-- Debug SPI interface
-
-What's missing:
-- Second CDC endpoint/interface
-- Dual-endpoint configuration
-- Composite descriptor for 2×CDC + DFU
-
-### Known Limitations
-
-1. **Single serial port** to MCU limits debug capability
-2. **No separate FPGA→Host debug channel** (only JTAG indirect access)
-3. **Console and vendor requests share** a single USB pipe
-
-### Recommendations for Dual CDC
-
-If implementing dual CDC:
-
-- [ ] Add second CDC interface descriptor
-- [ ] Allocate additional endpoints (IN/OUT per CDC)
-- [ ] Update `tusb_config.h` with second CDC config
-- [ ] Map second CDC to FPGA debug/UART bridge
-- [ ] Test with TinyUSB's composite example
-- [ ] Verify buffer requirements under dual-channel load
-
----
-
-## Code Quality Issues Found
-
-| Issue | File | Line | Severity | Notes |
-|-------|------|------|----------|-------|
-| Incomplete UART config | `src/boards/cynthion_d11/uart.c` | — | Low | TODO: support parity, stop bits |
-| Incomplete board init | `src/boards/daisho/uart.c` | — | Low | FIXME: implement all of this! |
-| Platform-specific JTAG TODO | `src/boards/daisho/platform_jtag.h` | — | Low | TODO: optimize these? |
-| Uncertain r0.2 behavior | `src/debug_spi.c` | — | Medium | TODO: don't run on r0.2+? |
-| Neopixel support missing | `src/boards/qtpy/apollo_board.h` | — | Low | TODO: handle RGB neopixel |
-| SPI FIFO optimization | `src/boards/cynthion_d21/spi.c` | — | Low | TODO: use FIFO to bulk send |
-
----
-
-## Testing Requirements
-
-### For DFU Buffer Issues
-- [ ] Test firmware update on SAMD11 with <16KB free memory
-- [ ] Test interrupted DFU transfer recovery
-- [ ] Validate timeout behavior
-
-### For Race Conditions
-- [ ] Concurrent FPGA state change requests
-- [ ] USB disconnect during FPGA reconfiguration
-- [ ] Rapid online/offline cycling
-- [ ] Multi-host access scenarios (if supported)
-
-### For Dual CDC (if implemented)
-- [ ] Simultaneous writes to both CDC ports
-- [ ] High-speed data transfer on both channels
-- [ ] USB buffer exhaustion handling
-- [ ] Device enumeration with full descriptor set
-
----
-
-## Priority Assessment
-
-### High Priority
-- Race condition fixes (state synchronization)
-- Buffer overflow protection (DFU and USB)
-
-### Medium Priority
-- Code documentation (hardware revision behavior)
-- Timeout handling (DFU detach sequence)
-- Dual CDC implementation (if feature needed)
-
-### Low Priority
-- Minor TODOs (UART config, SPI optimization)
-- Neopixel support
-
----
-
-## Next Actions
-
-1. **Document buffer requirements** per MCU variant
-2. **Add DFU timeout handling**
-3. **Resolve `debug_spi.c:138`** — decide whether `uart_release_pinmux()` should
-   run on r0.2+, and delete the TODO either way
-4. **If dual CDC needed**: Plan integration of second CDC interface
-
----
-
-## Files to Review Further
-
-- `src/vendor.c` — USB request handler (potential races)
-- `src/fpga.c` — FPGA state management (critical section)
-- `src/debug_spi.c` — Hardware version detection
-- `src/mcu/rp2040/dfu.c` — DFU implementation
+| file | item | severity |
+|---|---|---|
+| `src/boards/cynthion_d11/uart.c` | UART parity / stop bits unsupported | low |
+| `src/boards/daisho/uart.c` | `FIXME: implement all of this!` | low |
+| `src/boards/daisho/platform_jtag.h` | `TODO: optimize these?` | low |
+| `src/debug_spi.c` | `TODO: don't run on r0.2+?` (see Races) | medium |
+| `src/boards/qtpy/apollo_board.h` | RGB neopixel unhandled | low |
+| `src/boards/cynthion_d21/spi.c` | `TODO: use FIFO to bulk send` | low |
