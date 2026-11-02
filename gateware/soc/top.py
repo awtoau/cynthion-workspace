@@ -2036,6 +2036,20 @@ class AwtoSoc(Elaboratable):
         return m
 
 
+
+def _map_digest():
+    """The peripheral-map digest, from the PAC generator in its own process.
+
+    A subprocess because the generator patches the CPU generator to elaborate
+    the map; that must not leak into this build (#307).
+    """
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    out = subprocess.run([sys.executable, str(root / "scripts" / "soc" / "soc_generate_pac.py"),
+                          "--digest"], capture_output=True, text=True, check=True)
+    return out.stdout.strip().splitlines()[-1]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -2196,6 +2210,7 @@ def main():
         build_dir=build_dir,
         variant_slug=variant.slug(),
         source_digest=source_digest(),
+        map_digest=_map_digest(),
         device=platform.device,
         speed=platform.speed,
         sync_hz=round(solved.actual_sync_mhz * 1e6),

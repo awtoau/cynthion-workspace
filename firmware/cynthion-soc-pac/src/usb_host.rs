@@ -24,6 +24,14 @@ pub struct RegisterBlock {
     tx_last: TxLast,
     tx_cmd: TxCmd,
     tx_level: TxLevel,
+    tr_ctrl: TrCtrl,
+    tr_state: TrState,
+    tr_cnt_lo: TrCntLo,
+    tr_cnt_hi: TrCntHi,
+    tr_idx_lo: TrIdxLo,
+    tr_idx_hi: TrIdxHi,
+    tr_sel: TrSel,
+    tr_data: TrData,
 }
 impl RegisterBlock {
     #[doc = "0x00 - USB_HOST.ROLE, 2 bits at +0x00"]
@@ -121,6 +129,46 @@ impl RegisterBlock {
     pub const fn tx_level(&self) -> &TxLevel {
         &self.tx_level
     }
+    #[doc = "0x18 - USB_HOST.TR_CTRL, 4 bits at +0x18"]
+    #[inline(always)]
+    pub const fn tr_ctrl(&self) -> &TrCtrl {
+        &self.tr_ctrl
+    }
+    #[doc = "0x19 - USB_HOST.TR_STATE, 4 bits at +0x19"]
+    #[inline(always)]
+    pub const fn tr_state(&self) -> &TrState {
+        &self.tr_state
+    }
+    #[doc = "0x1a - USB_HOST.TR_CNT_LO, 8 bits at +0x1a"]
+    #[inline(always)]
+    pub const fn tr_cnt_lo(&self) -> &TrCntLo {
+        &self.tr_cnt_lo
+    }
+    #[doc = "0x1b - USB_HOST.TR_CNT_HI, 8 bits at +0x1b"]
+    #[inline(always)]
+    pub const fn tr_cnt_hi(&self) -> &TrCntHi {
+        &self.tr_cnt_hi
+    }
+    #[doc = "0x1c - USB_HOST.TR_IDX_LO, 8 bits at +0x1c"]
+    #[inline(always)]
+    pub const fn tr_idx_lo(&self) -> &TrIdxLo {
+        &self.tr_idx_lo
+    }
+    #[doc = "0x1d - USB_HOST.TR_IDX_HI, 8 bits at +0x1d"]
+    #[inline(always)]
+    pub const fn tr_idx_hi(&self) -> &TrIdxHi {
+        &self.tr_idx_hi
+    }
+    #[doc = "0x1e - USB_HOST.TR_SEL, 3 bits at +0x1e"]
+    #[inline(always)]
+    pub const fn tr_sel(&self) -> &TrSel {
+        &self.tr_sel
+    }
+    #[doc = "0x1f - USB_HOST.TR_DATA, 8 bits at +0x1f"]
+    #[inline(always)]
+    pub const fn tr_data(&self) -> &TrData {
+        &self.tr_data
+    }
 }
 #[doc = "ROLE (rw) register accessor: USB_HOST.ROLE, 2 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`role::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`role::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@role`] module"]
 #[doc(alias = "ROLE")]
@@ -217,6 +265,46 @@ pub mod tx_cmd;
 pub type TxLevel = crate::Reg<tx_level::TxLevelSpec>;
 #[doc = "USB_HOST.TX_LEVEL, 8 bits at +0x17"]
 pub mod tx_level;
+#[doc = "TR_CTRL (w) register accessor: USB_HOST.TR_CTRL, 4 bits at +0x18\n\nYou can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`tr_ctrl::W`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_ctrl`] module"]
+#[doc(alias = "TR_CTRL")]
+pub type TrCtrl = crate::Reg<tr_ctrl::TrCtrlSpec>;
+#[doc = "USB_HOST.TR_CTRL, 4 bits at +0x18"]
+pub mod tr_ctrl;
+#[doc = "TR_STATE (r) register accessor: USB_HOST.TR_STATE, 4 bits at +0x19\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_state::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_state`] module"]
+#[doc(alias = "TR_STATE")]
+pub type TrState = crate::Reg<tr_state::TrStateSpec>;
+#[doc = "USB_HOST.TR_STATE, 4 bits at +0x19"]
+pub mod tr_state;
+#[doc = "TR_CNT_LO (r) register accessor: USB_HOST.TR_CNT_LO, 8 bits at +0x1a\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_cnt_lo::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_cnt_lo`] module"]
+#[doc(alias = "TR_CNT_LO")]
+pub type TrCntLo = crate::Reg<tr_cnt_lo::TrCntLoSpec>;
+#[doc = "USB_HOST.TR_CNT_LO, 8 bits at +0x1a"]
+pub mod tr_cnt_lo;
+#[doc = "TR_CNT_HI (r) register accessor: USB_HOST.TR_CNT_HI, 8 bits at +0x1b\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_cnt_hi::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_cnt_hi`] module"]
+#[doc(alias = "TR_CNT_HI")]
+pub type TrCntHi = crate::Reg<tr_cnt_hi::TrCntHiSpec>;
+#[doc = "USB_HOST.TR_CNT_HI, 8 bits at +0x1b"]
+pub mod tr_cnt_hi;
+#[doc = "TR_IDX_LO (rw) register accessor: USB_HOST.TR_IDX_LO, 8 bits at +0x1c\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_idx_lo::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`tr_idx_lo::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_idx_lo`] module"]
+#[doc(alias = "TR_IDX_LO")]
+pub type TrIdxLo = crate::Reg<tr_idx_lo::TrIdxLoSpec>;
+#[doc = "USB_HOST.TR_IDX_LO, 8 bits at +0x1c"]
+pub mod tr_idx_lo;
+#[doc = "TR_IDX_HI (rw) register accessor: USB_HOST.TR_IDX_HI, 8 bits at +0x1d\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_idx_hi::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`tr_idx_hi::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_idx_hi`] module"]
+#[doc(alias = "TR_IDX_HI")]
+pub type TrIdxHi = crate::Reg<tr_idx_hi::TrIdxHiSpec>;
+#[doc = "USB_HOST.TR_IDX_HI, 8 bits at +0x1d"]
+pub mod tr_idx_hi;
+#[doc = "TR_SEL (rw) register accessor: USB_HOST.TR_SEL, 3 bits at +0x1e\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_sel::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`tr_sel::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_sel`] module"]
+#[doc(alias = "TR_SEL")]
+pub type TrSel = crate::Reg<tr_sel::TrSelSpec>;
+#[doc = "USB_HOST.TR_SEL, 3 bits at +0x1e"]
+pub mod tr_sel;
+#[doc = "TR_DATA (r) register accessor: USB_HOST.TR_DATA, 8 bits at +0x1f\n\nYou can [`read`](crate::Reg::read) this register and get [`tr_data::R`]. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@tr_data`] module"]
+#[doc(alias = "TR_DATA")]
+pub type TrData = crate::Reg<tr_data::TrDataSpec>;
+#[doc = "USB_HOST.TR_DATA, 8 bits at +0x1f"]
+pub mod tr_data;
 
 /// Byte offsets from this peripheral's generated base address.
 pub mod offset {
@@ -239,4 +327,12 @@ pub mod offset {
     pub const TX_LAST: usize = 0x15;
     pub const TX_CMD: usize = 0x16;
     pub const TX_LEVEL: usize = 0x17;
+    pub const TR_CTRL: usize = 0x18;
+    pub const TR_STATE: usize = 0x19;
+    pub const TR_CNT_LO: usize = 0x1a;
+    pub const TR_CNT_HI: usize = 0x1b;
+    pub const TR_IDX_LO: usize = 0x1c;
+    pub const TR_IDX_HI: usize = 0x1d;
+    pub const TR_SEL: usize = 0x1e;
+    pub const TR_DATA: usize = 0x1f;
 }

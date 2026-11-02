@@ -37,6 +37,8 @@ Every build fact the host has any use for:
     variant         the `variant.slug()` tag, so two variants never collide
     source_digest   `build_helpers.source_digest()` -- WHICH gateware
     gateware_digest `soc_run.gateware_digest()`'s cache key, when the caller has it
+    map_digest      `soc_generate_pac.map_digest()` of the map this gateware
+                    elaborates; firmware's `base::MAP_DIGEST` must match (#307)
     build_dir       relative to the workspace root
     device, speed   the platform's part and speed grade
     idcode          what that part must answer on JTAG (prjtrellis' own table)
@@ -107,6 +109,18 @@ def idcode_for(device, path=None):
     return None
 
 
+def pac_map_digest(root=ROOT):
+    """`base::MAP_DIGEST` of the PAC in the tree, as 8 hex digits, or None."""
+    import re
+    try:
+        text = (Path(root) / "firmware" / "cynthion-soc-pac" / "src"
+                / "base.rs").read_text()
+    except OSError:
+        return None
+    found = re.search(r"pub const MAP_DIGEST: u32 = 0x([0-9a-f]{8});", text)
+    return found.group(1) if found else None
+
+
 def git_head(root=ROOT):
     """(commit, dirty) for the working tree, or (None, None) outside git."""
     try:
@@ -122,7 +136,8 @@ def git_head(root=ROOT):
 
 def record_for_build(*, usercode, build_dir, variant_slug, source_digest,
                      device, speed, sync_hz, usb_hz, cache_sets, cache_ways,
-                     isa, gateware_digest=None, root=ROOT, devices_path=None):
+                     isa, gateware_digest=None, map_digest=None, root=ROOT,
+                     devices_path=None):
     """One row of the table. Pure apart from reading git and the device table."""
     commit, dirty = git_head(root)
     try:
@@ -137,6 +152,7 @@ def record_for_build(*, usercode, build_dir, variant_slug, source_digest,
         "variant": variant_slug,
         "source_digest": source_digest,
         "gateware_digest": gateware_digest,
+        "map_digest": map_digest,
         "build_dir": where,
         "device": device,
         "speed": str(speed),

@@ -163,14 +163,14 @@ impl core::fmt::Debug for Intc {
 }
 #[doc = "intc: 2 registers at 0xf0000c00"]
 pub mod intc;
-#[doc = "usb_host: 19 registers at 0xf0001000"]
+#[doc = "usb_host: 27 registers at 0xf0001000"]
 pub type UsbHost = crate::Periph<usb_host::RegisterBlock, 0xf000_1000>;
 impl core::fmt::Debug for UsbHost {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("UsbHost").finish()
     }
 }
-#[doc = "usb_host: 19 registers at 0xf0001000"]
+#[doc = "usb_host: 27 registers at 0xf0001000"]
 pub mod usb_host;
 #[doc = "clint: 5 registers at 0xf0800000"]
 pub type Clint = crate::Periph<clint::RegisterBlock, 0xf080_0000>;
