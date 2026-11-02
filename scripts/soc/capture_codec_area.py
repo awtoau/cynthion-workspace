@@ -42,6 +42,12 @@ def build_il(config, path):
     class Top(Elaboratable):
         def __init__(self):
             self.parts = []
+            if which == "framer":
+                from capture.framer import CaptureRing
+                self.parts.append(("f", CaptureRing()))
+            if which == "path":
+                from capture.path import CapturePath
+                self.parts.append(("p", CapturePath(window=window)))
             if which in ("compress", "both"):
                 self.parts.append(("c", LZ4Compressor(window=window)))
             if which in ("decompress", "both"):
@@ -89,6 +95,10 @@ def main():
             c = run((window, which))
             emit(f"  {which + ' w' + str(window):<22} {c.get('LUT4', 0):>6} {c.get('CCU2C', 0):>6} "
                  f"{c.get('TRELLIS_FF', 0):>6} {c.get('DP16KD', 0):>7} {c.get('TRELLIS_DPR16X4', 0):>16}")
+    for which in ("framer", "path"):
+        c = run((1024, which))
+        emit(f"  {which + ' w1024':<22} {c.get('LUT4', 0):>6} {c.get('CCU2C', 0):>6} "
+             f"{c.get('TRELLIS_FF', 0):>6} {c.get('DP16KD', 0):>7} {c.get('TRELLIS_DPR16X4', 0):>16}")
     return 0
 
 

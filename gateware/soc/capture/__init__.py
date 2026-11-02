@@ -4,3 +4,5 @@
 from . import codec            # noqa: F401
 from . import lz4_compress     # noqa: F401
 from . import lz4_decompress   # noqa: F401
+from . import framer           # noqa: F401
+from . import path             # noqa: F401

@@ -93,6 +93,7 @@ SIMS = [
     "usb_host_sie_sim",
     "usb_host_shim_sim",
     "capture_codec_sim",
+    "capture_framer_sim",
 ]
 
 # The tiers, and the axis they are split on.
