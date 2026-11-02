@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import private_path_check  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import submodule_pin_publish as publisher  # noqa: E402
 
 # Built from the checker's own root list rather than written out: a literal

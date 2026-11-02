@@ -142,7 +142,7 @@ pub struct Census {
 }
 
 impl core::fmt::Display for Census {
-    /// `scripts/bist_rows.py`'s `CENSUS` reads this; `tests/test_bist_row_
+    /// `scripts/hyperram/bist_rows.py`'s `CENSUS` reads this; `tests/test_bist_row_
     /// parsers.py` holds it. `none passed` carries no pass list ON PURPOSE, so a
     /// caller cannot read the pick as a phase that works.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -190,7 +190,7 @@ impl Tally {
 }
 
 impl core::fmt::Display for Tally {
-    /// `scripts/hyperram_matrix_diff.py` and `hyperram_register_path.py` parse
+    /// `scripts/hyperram/hyperram_matrix_diff.py` and `hyperram_register_path.py` parse
     /// this exact wording; `tests/test_bist_row_parsers.py` holds them to it.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} pass, {} fail, {} no result of {}",
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(std::format!("{tally}"), "2 pass, 1 fail, 1 no result of 4");
     }
 
-    /// The wording `scripts/hyperram_matrix_diff.py`'s `SUMMARY` regex reads.
+    /// The wording `scripts/hyperram/hyperram_matrix_diff.py`'s `SUMMARY` regex reads.
     /// A summary it cannot parse makes a finished 4096-cell run unsaveable.
     #[test]
     fn an_empty_tally_still_reports_all_four_numbers() {

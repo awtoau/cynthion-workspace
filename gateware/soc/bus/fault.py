@@ -60,7 +60,7 @@ pipe was added to cut. Behind it, the pipe registers it like any other response.
 ## What it costs
 
 One comparator over the same window patterns the decoder already compares, a
-counter, and a handful of flip-flops. `scripts/soc_bus_sim.py` runs both
+counter, and a handful of flip-flops. `scripts/soc/soc_bus_sim.py` runs both
 mechanisms against a decoder and reports the price of neither, because neither is
 on the path of an access that succeeds.
 """

@@ -33,6 +33,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import apollo_budget_check  # noqa: E402
 
 ROM_ORIGIN, ROM_LENGTH = 0x0800, 0x3800

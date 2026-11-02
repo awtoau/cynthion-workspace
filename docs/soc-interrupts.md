@@ -4,7 +4,7 @@ What can interrupt this CPU and what should. Seventeen sources, ten built. The
 controller is `amaranth_soc.csr.event.EventMonitor` — pending bits, enables, W1C,
 a trigger fixed per source at elaboration — wrapped by
 [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) for the numbering.
-`scripts/soc_intc_sim.py` checks this file's table against what is wired.
+`scripts/soc/soc_intc_sim.py` checks this file's table against what is wired.
 
 **Index:** [`README.md`](README.md) · siblings
 [`soc-clocking.md`](soc-clocking.md), [`soc-memory-bus.md`](soc-memory-bus.md)
@@ -89,7 +89,7 @@ So the rule is the peripheral's, not the pin's:
   until the hardware releases, so the only defence is a mask plus a poll to
   decide when to unmask — a handler and a poll instead of either.
 
-`scripts/soc_intc_sim.py` asserts each row of that table.
+`scripts/soc/soc_intc_sim.py` asserts each row of that table.
 
 ## The PAC1954 alert is not a level
 

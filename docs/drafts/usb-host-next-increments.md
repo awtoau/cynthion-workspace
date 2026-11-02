@@ -34,7 +34,7 @@ with the host engine instantiated on the same PHY, in simulation.
 
 ## Draft 2 — the in-situ area and fmax of the host engine
 
-`scripts/usb_host_area.py` measures the engine standalone: 2080 LUT, 434 FF, 0
+`scripts/soc/usb_host_area.py` measures the engine standalone: 2080 LUT, 434 FF, 0
 BRAM, 96 LUTRAM, 125.55 MHz against a 60 MHz target. That is at about 10%
 occupancy. `docs/usb-host-options.md` §12.3 records that this design's critical
 path is routing-dominated and that placement varies by roughly 9 MHz between
@@ -55,7 +55,7 @@ demands of whatever drives it, and the shim is where four of the five live:
    the PLIC, which has no edge detector;
 2. latch `response` at that edge — it holds only until the next `start`;
 3. count RX bytes drained from the FIFO; `rx_len` is 8 bits and wraps on a
-   512-byte high-speed packet (asserted in `scripts/usb_host_sie_sim.py`);
+   512-byte high-speed packet (asserted in `scripts/soc/usb_host_sie_sim.py`);
 4. raise a bit when `start` is issued while busy, because the engine ignores it
    silently;
 5. cross `sync`/`usb` with the idioms already in the tree — the four-phase
@@ -72,5 +72,5 @@ than an argument.
 
 Five control transfers, in Rust, over the shim: GET_DESCRIPTOR, SET_ADDRESS,
 GET_DESCRIPTOR at the new address, SET_CONFIGURATION, then a bulk IN. The
-sequence is already executed in `scripts/usb_host_sie_sim.py`'s testbench, so the
+sequence is already executed in `scripts/soc/usb_host_sie_sim.py`'s testbench, so the
 firmware has a reference that runs. Milestone: print a device descriptor.

@@ -3,7 +3,7 @@
 //! Both `src/bin/usb_rtic.rs` and `src/bin/usb_bare.rs` carry a
 //! `#[riscv_rt::core_interrupt]`, which makes them handler modules: they may not
 //! contain `write!`, `writeln!`, `fmt::Write` or the name `Uart`
-//! (`scripts/soc_irq_log_check.py`). That is the right rule and this is how the
+//! (`scripts/soc/soc_irq_log_check.py`). That is the right rule and this is how the
 //! shell obeys it too -- `src/irq.rs` records, `src/events.rs` formats. Every
 //! function here is called from normal context, never from a handler and never
 //! from an RTIC task.

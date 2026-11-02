@@ -433,7 +433,7 @@ Before the first complete cycle it says `NO SAMPLE YET` rather than printing
 rails; past 60 s it says `sampled OVER 60 s ago` rather than a number, because
 the 32-bit `time` CSR wraps at 71.6 s and a wrapped age is small and plausible.
 
-Checked in `scripts/soc_i2c_owner_sim.py`: a read driven into an open REFRESH
+Checked in `scripts/soc/soc_i2c_owner_sim.py`: a read driven into an open REFRESH
 window, two owners interleaving on one device, and a mux select that is
 remembered — each run against the real gateware and a model of this part, and
 each asserting that the old arrangement fails.

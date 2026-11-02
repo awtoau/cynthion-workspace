@@ -103,7 +103,7 @@
 //!   for `opt-level = "z"` -- per `Cargo.toml`'s STALE-marked opt-level note
 //!   (#167). Every instruction count here is real; every *cycle* count is
 //!   optimistic by ~3.3x, and cache behaviour is modelled separately by
-//!   `scripts/soc_icache_model.py` rather than measured.
+//!   `scripts/soc/soc_icache_model.py` rather than measured.
 
 use core::cell::UnsafeCell;
 use core::fmt::Write;
@@ -210,7 +210,7 @@ static ACTIVE: AtomicU32 = AtomicU32::new(0);
 /// Plain `[u8; N]` behind an `UnsafeCell` rather than `[AtomicU8; N]`: the whole
 /// point of these buffers is to be memset and memcpy'd at the rate the real ones
 /// are, and an atomic array compiles to a byte loop where a `[u8]` becomes a
-/// call to `memset`. And NOT `static mut`, which `scripts/soc_irq_log_check.py`
+/// call to `memset`. And NOT `static mut`, which `scripts/soc/soc_irq_log_check.py`
 /// rejects on sight -- rightly, since one of the three writers below runs in a
 /// task the dispatcher may enter from a handler.
 struct Buffers {
@@ -662,7 +662,7 @@ pub fn finish(uart: &mut Uart, started: (u32, u32)) {
 /// Not `#[cfg]`-ed away under `rticwl` even though that binary drives a run
 /// through [`begin`] and [`finish`] instead: cargo features are additive, and a
 /// build with `workload` and `rticwl` both on -- which is what
-/// `scripts/soc_feature_isolation_check.py` makes -- would then be a shell whose
+/// `scripts/soc/soc_feature_isolation_check.py` makes -- would then be a shell whose
 /// `usb` command had vanished. `src/bin/workload_rtic.rs` never calls it, so LTO
 /// drops it there; measured, the RTIC binary is the same size either way.
 pub fn command(uart: &mut Uart, rest: &[u8]) {

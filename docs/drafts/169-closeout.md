@@ -15,7 +15,7 @@ and the difference is called out.
 | `gateware` check is ~98% of lint wall time | **deleted**, with a ten-line comment at the end of `build_checks()` recording why. Question 3 is answered: deleted, not repointed — `socmap` covers the gateware this repo builds |
 | `.gitignore:17` unanchored `lib/` will untrack the next `lib/` | **fixed.** The block is now `/lib/` and `/lib64/`, anchored, with a comment naming the 34 + 2 files it cost. **This bullet of [#169](https://github.com/awtoau/cynthion-workspace/issues/169) is obsolete** |
 | — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | the `flutter` check is gone too, and the dashboard is at `debris/code/app-flutter-dashboard/` |
-| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | `scripts/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
+| — (not in [#169](https://github.com/awtoau/cynthion-workspace/issues/169)) | `scripts/tools/submodule_patch_audit.py` exists and reports all four submodules `safe -- every commit is on a remote` |
 
 **Overlap with [#190](https://github.com/awtoau/cynthion-workspace/issues/190) (closed).** `amaranth-soc` and `amaranth-stdio` are now
 declared in `machine_setup.py:AMARANTH_GIT`, and a new `amaranthsoc` check fails
@@ -40,8 +40,8 @@ Stated so the issue is not re-read as current.
   platform import at all.
 - **`gateware/soc/top.py:176, 181, 277, 312, 1642`** (stale
   comment citations) → now `177, 182, 278, 313, 1711`.
-- **`scripts/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
-  `scripts/fabric_build.py:72`, which does the same `sys.path.insert(0,
+- **`scripts/sideband/sideband_build.py:40`** → line **43**, and [#169](https://github.com/awtoau/cynthion-workspace/issues/169) missed
+  `scripts/fabric/fabric_build.py:72`, which does the same `sys.path.insert(0,
   "repos/apollo")`.
 - **`machine_setup.py:72-76`** → the `EDITABLE` list is now ~line 83 and holds
   one entry.
@@ -53,7 +53,7 @@ Stated so the issue is not re-read as current.
 | check | what it runs | what it would test if `repos/` were gone |
 |---|---|---|
 | `rust` | `cargo check` + `make clippy` with `cwd = repos/cynthion/firmware` (moondancer) | **nothing.** The subject is upstream's firmware. Deleting it deletes the check |
-| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
+| `apollo` | `tools/get_deps.py` in `repos/apollo/lib/tinyusb`, `make APOLLO_BOARD=cynthion` in `repos/apollo/firmware`, then `scripts/apollo/apollo_budget_check.py` (in-repo) | the budget check is ours and survives — but it reads `repos/apollo/firmware/_build/.../firmware.elf`, so with no submodule there is no ELF to measure. See [#199](https://github.com/awtoau/cynthion-workspace/issues/199) |
 | `python` | `import cynthion, apollo_fpga` (both editable, resolving into `repos/`), then pytest over `repos/cynthion/cynthion/python/tests/` **and** `tests/` | our `tests/` still run; the import assertion becomes a dependency probe rather than a subject; the submodule's 3 tests go |
 | `freethreading` | `sys._is_gil_enabled()` after `import cynthion, apollo_fpga` | the interpreter assertion survives; the import list would need replacing with whatever the heaviest real import is (amaranth, luna) |
 
@@ -78,8 +78,8 @@ Six sites import `cynthion.gateware.platform.cynthion_r1_4`:
 
 | site | what it does | risk |
 |---|---|---|
-| `scripts/soc_generate_pac.py:138` | elaborates the SoC to read its memory map — this **is** the `socmap` check | low; `--check` compares against the committed SVD, so a drift shows immediately |
-| `scripts/soc_diagram.py:171` | wraps `platform.request` to record what the SoC asked for | low |
+| `scripts/soc/soc_generate_pac.py:138` | elaborates the SoC to read its memory map — this **is** the `socmap` check | low; `--check` compares against the committed SVD, so a drift shows immediately |
+| `scripts/soc/soc_diagram.py:171` | wraps `platform.request` to record what the SoC asked for | low |
 | `scripts/bram_patch.py:255` | `elaborate_il()` re-elaborates and compares RTLIL against the build directory | **the one real risk.** If the vendored platform emits RTLIL that differs by so much as a module name, every existing build directory reads as stale. Must be validated against a fresh build, and `tests/test_bram_patch_freshness.py` is the test that will say so |
 | `gateware/probes/bram_probe/bram_probe.py:192` | `--build` only | low, and it is a bring-up probe |
 | `gateware/soc/top.py:1705` | the `--build` path for the SoC bitstream. Its comment says "the installed cynthion package, not the in-repo source tree", which is about `amaranth_boards`, not about `board` | low, **but sequence it last**: another agent is live in this file |
@@ -128,7 +128,7 @@ In-tree consumers: `gateware/soc/top.py:84`,
 `gateware/probes/sideband/sideband_gateware.py:32-37`,
 `gateware/probes/sideband/test_protocol.py:33`,
 `gateware/probes/hyperram/hyperram_dqs_top.py:134`,
-`scripts/qspi_burst_sim.py:111`.
+`scripts/hyperram/qspi_burst_sim.py:111`.
 
 Two findings that change the shape of this step:
 
@@ -153,7 +153,7 @@ lying around. Vendoring `qspi_flash.py` inherits it. Worth its own issue (below)
 
 - **Verification:** `dev.py lint`, `dev.py test`, `scripts/soc_sims.py`,
   `dev.py build`, plus an elaboration of each consumer above.
-  `scripts/sideband_link_sim.py` / `sideband_advertise_sim.py` are the closest
+  `scripts/sideband/sideband_link_sim.py` / `sideband_advertise_sim.py` are the closest
   thing to unit tests for `sideband.py`.
 - **Hardware:** none for the vendoring. Confirming the sideband and QSPI
   bitstreams still behave *does* need the board, and should be a separate,
@@ -180,7 +180,7 @@ Blocked by step B. Three separate jobs, and the first is a question, not work:
    `diamond/ladder.py:300`, and a printed hint in `soc_jtag_stage.py:405`. All
    become `-m apollo_fpga.commands.cli`. Mechanical, and verifiable without a
    board via `--help` / `info` returning "no device".
-   `scripts/sideband_build.py:43` and `scripts/fabric_build.py:72` drop their
+   `scripts/sideband/sideband_build.py:43` and `scripts/fabric/fabric_build.py:72` drop their
    `sys.path.insert(0, "repos/apollo")` in the same change.
 
 - **Verification:** `dev.py lint`, `dev.py test`, `scripts/soc_sims.py`, plus
@@ -197,7 +197,7 @@ firmware. The choice is the owner's:
 
 - keep both submodules purely so the gate keeps building upstream firmware, or
 - accept that this repo no longer gates upstream's firmware, delete both checks,
-  and let `scripts/upstream_ci.py` (which clones fresh and touches no `repos/*`)
+  and let `scripts/tools/upstream_ci.py` (which clones fresh and touches no `repos/*`)
   be the only thing that looks upstream.
 
 **Do not decide this as a side effect of A–C.** It is the actual content of

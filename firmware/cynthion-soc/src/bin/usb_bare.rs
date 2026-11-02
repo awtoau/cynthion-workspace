@@ -5,7 +5,7 @@
 //! This is the control for `src/bin/usb_rtic.rs`. Same ported state machine,
 //! same endpoint stand-in, same queue, same descriptor tables, same work done
 //! per event -- so the difference between the two `.text` figures is RTIC and
-//! nothing else. Built by `scripts/soc_usb_probe.py`.
+//! nothing else. Built by `scripts/soc/soc_usb_probe.py`.
 //!
 //! The original is `firmware/moondancer/src/bin/moondancer.rs`: `MachineExternal`
 //! calls `get_usb_interrupt_event`, `dispatch_event` enqueues, and `main_loop`

@@ -1,7 +1,7 @@
 //! `model_coop`, plus three periodic jobs multiplexed onto the ONE `mtimecmp`
 //! this SoC has.
 //!
-//! Built by `scripts/soc_model_probe.py`. Its pair is `model_coop_hwtimer`,
+//! Built by `scripts/soc/soc_model_probe.py`. Its pair is `model_coop_hwtimer`,
 //! which schedules the same three jobs on three hardware comparators. The
 //! difference between the two `.text` figures is what a software timer queue
 //! costs, and it is the measurement `docs/rtic.md` uses to
@@ -49,7 +49,7 @@ const PERIODS_MS: [u32; 3] = [50, 50, 1];
 /// insert still has to find the minimum.
 ///
 /// An `UnsafeCell` rather than a `static mut`, which
-/// `scripts/soc_irq_log_check.py` rejects, and rather than atomics, which
+/// `scripts/soc/soc_irq_log_check.py` rejects, and rather than atomics, which
 /// riscv32imac does not have at 64 bits. Zero-cost either way.
 struct Deadlines(core::cell::UnsafeCell<[u64; 3]>);
 

@@ -95,7 +95,7 @@ time TDO moves, nothing about the value is still crossing.
 **The cost is an edge count, not a ratio.** The handshake needs a few TCK edges
 between the command shift and the data shift. Apollo's `register_transaction`
 spends `run_test(32)` plus an 8-bit IR shift there -- some forty edges -- and
-`scripts/soc_jtag_registers_sim.py` measures the requirement rather than
+`scripts/soc/soc_jtag_registers_sim.py` measures the requirement rather than
 assuming it. A host that did not wait would read the PREVIOUS command's value:
 wrong, but deterministic and never torn.
 

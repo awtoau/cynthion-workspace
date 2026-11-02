@@ -24,8 +24,8 @@ question below is measured against.
 | Port request | [`gateware/probes/sideband/sideband_advertise.py`](../../gateware/probes/sideband/sideband_advertise.py) |
 | CPU's end | [`gateware/soc/peripherals/sideband_csr.py`](../../gateware/soc/peripherals/sideband_csr.py) |
 | Master | `repos/apollo/firmware/src/boards/cynthion_d11/fpga_adv.c` |
-| Host decode | [`scripts/sideband_decoder.py`](../../scripts/sideband_decoder.py), [`gateware/probes/sideband/test_protocol.py`](../../gateware/probes/sideband/test_protocol.py) |
-| Simulation | [`scripts/sideband_link_sim.py`](../../scripts/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband_advertise_sim.py`](../../scripts/sideband_advertise_sim.py) — the advertisement, frame-exact |
+| Host decode | [`scripts/sideband/sideband_decoder.py`](../../scripts/sideband/sideband_decoder.py), [`gateware/probes/sideband/test_protocol.py`](../../gateware/probes/sideband/test_protocol.py) |
+| Simulation | [`scripts/sideband/sideband_link_sim.py`](../../scripts/sideband/sideband_link_sim.py) — the responder at the pad; [`scripts/sideband/sideband_advertise_sim.py`](../../scripts/sideband/sideband_advertise_sim.py) — the advertisement, frame-exact |
 
 Open work is tracked from [#184](https://github.com/awtoau/cynthion-workspace/issues/184),
 which is the master and lists the children. Nothing in this file is a plan.
@@ -491,7 +491,7 @@ timeout later. `advertise` sits outside `own` because it is not something the li
 *reports* — it is something the FPGA *does* — so there is no `fabric_advertise`.
 
 **The provenance of everything in this section is simulation.**
-`scripts/sideband_advertise_sim.py` checks the frame bit-exactly against Apollo's
+`scripts/sideband/sideband_advertise_sim.py` checks the frame bit-exactly against Apollo's
 matcher; nothing here has been observed on a wire. The one time Apollo was put into
 UART mode from a host, the commands timed out for unrelated reasons —
 [#209](https://github.com/awtoau/cynthion-workspace/issues/209).

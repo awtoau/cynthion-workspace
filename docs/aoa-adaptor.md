@@ -19,7 +19,7 @@
 - Send all header strings (Android ≤10 can reboot on a version mismatch). AOA and MTP do not coexist. AOA 2.0 (HID, audio) not studied.
 
 ## What exists in this repo
-- Host SIE (GUH) vendored at [`gateware/probes/usb_host/guh/`](../gateware/probes/usb_host/guh); 21 simulated checks ([`usb_host_sie_sim.py`](../scripts/usb_host_sie_sim.py)): chirp, CRC, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, 512 B bulk IN.
+- Host SIE (GUH) vendored at [`gateware/probes/usb_host/guh/`](../gateware/probes/usb_host/guh); 21 simulated checks ([`usb_host_sie_sim.py`](../scripts/soc/usb_host_sie_sim.py)): chirp, CRC, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, 512 B bulk IN.
 - Cost: +2080 LUT, 0 BRAM (SIE); +2910 LUT with enumerator ([`usb-host-options.md`](usb-host-options.md) §12, §22).
 - **Not done:** no CSR/FIFO shim to the SoC; `target_phy` still owned by `UlpiRegisters` (#120, #125); no firmware; no VBUS drive for host mode (UNSURE: [`vbus_csr.py`](../gateware/soc/peripherals/vbus_csr.py) postdates the study); never run on hardware.
 - Known SIE traps: 8-bit `rx_len` wraps at 512 B; caller tracks data toggle; no completion strobe; NYET read as ACK; no split transactions.

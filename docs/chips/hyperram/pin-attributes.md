@@ -8,7 +8,7 @@ bitstream. Nothing else in the matrix is this cheap. What it is not is
 
 ## What the built bitstream actually says
 
-`./scripts/hyperram_pin_patch.py --show`, read out of `top.config` — the board
+`./scripts/hyperram/hyperram_pin_patch.py --show`, read out of `top.config` — the board
 file names none of it.
 
 | group | pins | DRIVE | PULLMODE | SLEWRATE | HYSTERESIS |
@@ -54,8 +54,8 @@ They are not independent fields, and the collision is invisible in the `.config`
 
 ## The workflow
 
-    ./scripts/hyperram_pin_axis.py --label base --repeat 8 --rung 0
-    ./scripts/hyperram_pin_axis.py --label hyst-off --against base \
+    ./scripts/hyperram/hyperram_pin_axis.py --label base --repeat 8 --rung 0
+    ./scripts/hyperram/hyperram_pin_axis.py --label hyst-off --against base \
         dq.HYSTERESIS=OFF rwds.HYSTERESIS=OFF
 
 Per point: patch the built bitstream, configure, **confirm the board answers**,

@@ -41,7 +41,7 @@ it to go, which is the point.
 
     ./gateware/probes/loader/bitstream_sink.py --build
     ./gateware/probes/loader/bitstream_sink.py --build --program
-    ./scripts/bitstream_load_time_probe.py --mode sink-test --bitstream <file.bit>
+    ./scripts/soc/bitstream_load_time_probe.py --mode sink-test --bitstream <file.bit>
 """
 
 import sys as _uid_sys

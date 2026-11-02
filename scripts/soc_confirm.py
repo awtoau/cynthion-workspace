@@ -594,6 +594,7 @@ def ask_identity(ev):
     against, and JTAG_START drives the pins the design's second UART sits on --
     so an unconditional read would disturb a healthy board to learn nothing.
     """
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from soc_usercode import read_identity
 
     try:

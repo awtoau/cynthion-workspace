@@ -90,6 +90,7 @@ from soc import variant  # noqa: E402
 # The same verify the open-flow ladder uses.  Importing rather than
 # reimplementing is deliberate: if the two ladders judged a frequency by
 # different standards, a Diamond "win" could be nothing but a looser check.
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from riscv_clock_ladder import verify
 
 

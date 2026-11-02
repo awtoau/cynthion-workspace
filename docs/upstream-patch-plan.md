@@ -292,7 +292,7 @@ exists it is named; where it does not, what it would need to do.
 
 | Patch | Test requirement | Exists? |
 |---|---|---|
-| **A1** LTO | Must catch the dead-binary failure mode, which does not announce itself. Assert the linked vector table resolves Reset, SysTick, USB, EIC, SERCOM1 and TC1 to real code rather than `Dummy_Handler` (`scripts/verify_vectors.py` does this and **is untracked in the apollo repo** — it would have to be contributed, or reimplemented, for upstream to have the guard). Then, because LTO rewrites every byte, exercise the paths where a miscompilation hides: the CDC console (TinyUSB FIFO code LTO reshapes via constprop), the EIC/TC1 ISR paths, and a JTAG scan. **A passing link proves nothing here.** | Partial — the guard script exists in the workspace, not in the repo |
+| **A1** LTO | Must catch the dead-binary failure mode, which does not announce itself. Assert the linked vector table resolves Reset, SysTick, USB, EIC, SERCOM1 and TC1 to real code rather than `Dummy_Handler` (`scripts/apollo/verify_vectors.py` does this and **is untracked in the apollo repo** — it would have to be contributed, or reimplemented, for upstream to have the guard). Then, because LTO rewrites every byte, exercise the paths where a miscompilation hides: the CDC console (TinyUSB FIFO code LTO reshapes via constprop), the EIC/TC1 ISR paths, and a JTAG scan. **A passing link proves nothing here.** | Partial — the guard script exists in the workspace, not in the repo |
 | **A2** vendor drv | Prove the removed driver was genuinely unused: enumerate, walk the config descriptor and assert no vendor interface, then confirm every vendor *request* still answers. The risk is not that it breaks loudly but that some request quietly depended on the class driver's presence | Incidental only — wants an explicit descriptor assertion |
 | **A3** WCID | `GET_MS_DESCRIPTOR` returns both descriptors byte-identically to before: 40 B compat ID and 142 B ext props, headers intact. A `const` move that corrupted an offset would still return *something* | `test_safe_commands_respond_correctly` touches it; needs the byte-exact comparison |
 | **A4** pin lock | Must prove the OS does **not** provide this exclusion: open JTAG via libusb and the CDC interface via `cdc_acm` *simultaneously* (they are independently openable), drive serial traffic during a JTAG session, and assert the session is uncorrupted and serial is refused — then assert serial recovers after `jtag_deinit()` | **Yes** — `JTAGUARTExclusionHILTest` (2 tests) + `test_apollo_mode.c` (16 checks) |
@@ -401,7 +401,7 @@ a readiness one**
   the next thing implemented — as a patch with a test that provokes the failure
   (trigger a reconfigure after `force-offline` and assert DONE) — not as a
   one-line drive-by.
-- `local scripts/verify_vectors.py` is untracked in the apollo repo but is the
+- `local scripts/apollo/verify_vectors.py` is untracked in the apollo repo but is the
   guard for A1. Either it goes upstream with A1 or A1 ships without its safety
   net. Recommend the former.
 

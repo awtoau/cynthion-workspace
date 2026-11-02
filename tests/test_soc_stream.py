@@ -6,7 +6,7 @@
 """The wire format is written down in three places and they must agree.
 
     docs/binary-protocol.md   the contract
-    scripts/soc_stream.py     the host decoder and the reference encoder
+    scripts/soc/soc_stream.py     the host decoder and the reference encoder
     firmware/cynthion-soc/    the producer -- not written yet
 
 Nothing here needs the board, and that is the point: the format's whole claim is
@@ -31,12 +31,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 import soc_stream as st  # noqa: E402
 
 SPEC = ROOT / "docs" / "binary-protocol.md"
 FIRMWARE_CRC = ROOT / "firmware" / "cynthion-soc" / "src" / "hyperram.rs"
 
-# Frozen. Regenerate deliberately with `./scripts/soc_stream.py --vectors`, and
+# Frozen. Regenerate deliberately with `./scripts/soc/soc_stream.py --vectors`, and
 # only when the format is being changed on purpose -- a diff here is a wire
 # format change, which is a version bump.
 GOLDEN = {
@@ -93,7 +94,7 @@ def test_the_firmware_still_uses_that_polynomial():
     text = FIRMWARE_CRC.read_text()
     assert "0xedb8_8320" in text, (
         "hyperram.rs no longer uses the reflected CRC-32 polynomial; "
-        "scripts/soc_stream.py calls zlib.crc32 on the assumption that it does")
+        "scripts/soc/soc_stream.py calls zlib.crc32 on the assumption that it does")
     assert re.search(r"pub fn finish\(&self\) -> u32 \{\s*!self\.0", text), (
         "hyperram.rs's Crc32::finish no longer inverts; zlib.crc32 does, so the "
         "two would disagree on every frame")
@@ -141,7 +142,7 @@ def test_the_golden_frames_have_not_moved():
     assert produced == GOLDEN, (
         "the encoder no longer produces the frozen frames. If the format changed "
         "on purpose, bump soc_stream.VERSION and regenerate with "
-        "`./scripts/soc_stream.py --vectors`; if it did not, this is a bug that "
+        "`./scripts/soc/soc_stream.py --vectors`; if it did not, this is a bug that "
         "would have shipped as a firmware/host mismatch")
 
 

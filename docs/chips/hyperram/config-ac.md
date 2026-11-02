@@ -54,7 +54,7 @@ reading of the datasheet's prose, and it carries a **250 MHz** column and a
   Measured 2026-08-10, Questa Lattice OEM 2024.2 `vlog -sv` on
   `W956A8MBYA.modelsim.vp`: `+define+T166` compiles clean, `+define+T104` and
   `+define+T85` each give **7 × `(vlog-2730) Undefined variable: '<protected>'`**.
-  `scripts/hyperram_vendor_model_sim.py` offered all seven grades; now five.
+  `scripts/hyperram/hyperram_vendor_model_sim.py` offered all seven grades; now five.
 
 ## AC parameters, 3.0 V, per grade
 
@@ -151,7 +151,7 @@ POR values, given as bit fields *and* hex in the file itself:
 - `A[22] → CA[35]` fixes the mapping as CA[44:16] = A[31:3], CA[15:3] = 0,
   CA[2:0] = A[2:0] — bit for bit what `ca.eq(Cat(...))` builds.
 - CR0 differs from ID0 by CA[24] alone → **word address 0x800**, CR1 `0x801`,
-  ID0 `0x0`, ID1 `0x1`. The addresses `scripts/hyperram_regfuzz.py` already uses.
+  ID0 `0x0`, ID1 `0x1`. The addresses `scripts/hyperram/hyperram_regfuzz.py` already uses.
 
 ### CR0 fields
 
@@ -236,7 +236,7 @@ column above, bolded. `T200` is the `5I` the schematic allows as a substitution;
   to 2, 18.07 ns to 12.05, against a 6 ns requirement. At sync 192 both round to 2
   and nothing moves.
   ([#341](https://github.com/awtoau/cynthion-workspace/issues/341),
-  [`scripts/hyperram_timing_levers_sim.py`](../../../scripts/hyperram_timing_levers_sim.py))
+  [`scripts/hyperram/hyperram_timing_levers_sim.py`](../../../scripts/hyperram/hyperram_timing_levers_sim.py))
 - **`tRWR` is 36 ns at T166 — now IMPLEMENTED.** It was nowhere: `RECOVERY` counts
   `tCSHI` only, and the constraint was covered by LC7 spending 7 CK — by the
   latency code, not by anything that knew why. Both controllers now carry a

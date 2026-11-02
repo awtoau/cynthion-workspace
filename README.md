@@ -38,6 +38,13 @@ cd cynthion-workspace
 Nothing else needs to be memorised, and `./dev.py audit` says what every other
 script in `scripts/` is and whether anything still reaches it.
 
+`scripts/` layout:
+- top level: entry points and shared libraries (`dev.py`, `check.py`, `soc_run.py`, `soc_test.py`, `tio_user.py`, `devlog.py`, ...)
+- subdirectories: `hyperram/` `soc/` `riscv/` `fabric/` `apollo/` `sideband/` `issues/` `board/` `tools/` `diamond/`
+- scripts import each other by bare module name; `import _paths` puts every subdirectory on `sys.path`
+- a script in a subdirectory first inserts `scripts/` (its `ROOT / "scripts"` line), then imports `_paths`
+- `dev.py` finds a script by bare name (`script("hyperram_verify.py")`); `_paths.find_script(name)` does the same
+
 No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See
 [Python strategy](#python-strategy).
@@ -132,7 +139,7 @@ Do not add workflow files back. If something needs automating, extend
 those tests walks the firmware's source and fails if a `#[cfg(test)]` module is
 not included, so coverage cannot be lost by deleting a line (#337).
 
-It then runs `scripts/soc_bin_matrix.py`, which builds every `[[bin]]` the crate
+It then runs `scripts/soc/soc_bin_matrix.py`, which builds every `[[bin]]` the crate
 declares in the features that binary declares. `required-features` makes cargo
 skip a target entirely when the feature is off, so a plain `cargo check` says
 nothing about eleven of the twelve — and both RTIC binaries and the workload
@@ -166,9 +173,9 @@ does `repos/cynthion/cynthion/python`.
 **One command, and the scrub is in it — never `gh issue` by hand.**
 
 ```bash
-./scripts/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
-./scripts/gh_post.py comment 498 --body-file tmp/x.md
-./scripts/gh_post.py close   498 --body-file tmp/x.md
+./scripts/issues/gh_post.py issue   --title "..." --body-file tmp/x.md --label p0
+./scripts/issues/gh_post.py comment 498 --body-file tmp/x.md
+./scripts/issues/gh_post.py close   498 --body-file tmp/x.md
 ```
 
 It refuses, before any network call, on a private path (the patterns come from

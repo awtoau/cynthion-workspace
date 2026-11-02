@@ -19,7 +19,7 @@ the gate wired. That makes §5 the recommendation and most of §1–§4 moot.
 **It is now built and it simulates clean**: 16/16 beats both directions, 32
 device words, one transaction per line, against the 8/16 and 48 words the board
 measures without it. `ClockStopPHY` in `gateware/soc/bootram.py`,
-checked by §11 of `scripts/soc_hyperram_sim.py`, and **off by default** — see
+checked by §11 of `scripts/soc/soc_hyperram_sim.py`, and **off by default** — see
 "The smallest experiment, run" below for what is settled and what the model
 cannot settle, which is the read path's round-trip latency.
 
@@ -33,7 +33,7 @@ Everything below is marked **measured** (a number this workspace produced),
 
 ## What is on the table
 
-**Measured**, `scripts/soc_hyperram_sim.py` §8, re-run 2026-08-05 on `016f4c6`,
+**Measured**, `scripts/soc/soc_hyperram_sim.py` §8, re-run 2026-08-05 on `016f4c6`,
 all checks pass, at device CK 60 MHz. CK is the second PLL's rung since [#432](https://github.com/awtoau/cynthion-workspace/issues/432) --
 `CYNTHION_HYPERRAM_CK_MHZ`, 80 by default on the non-DQS path -- and no longer a
 function of `SYNC_MHZ`:
@@ -480,7 +480,7 @@ correct, and correctness at 5.43 MB/s beats corruption at 20.70.
 
 ## The smallest experiment, run — and it passes
 
-**Measured**, `scripts/soc_hyperram_sim.py` §11, 2026-08-05. Coalescing on, CK
+**Measured**, `scripts/soc/soc_hyperram_sim.py` §11, 2026-08-05. Coalescing on, CK
 gated, the SoC's real bus path including `RegisteredResponse`:
 
 | | write | read |

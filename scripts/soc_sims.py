@@ -61,6 +61,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 
 # In the order a reader should meet them: the CPU's own peripherals first, then
@@ -127,14 +128,14 @@ def takes_soak(name):
     been told about it, and nothing would say so -- the count would not move and
     the run would still pass. The declaration lives in exactly one place.
     """
-    source = (ROOT / "scripts" / f"{name}.py").read_text()
+    source = _paths.find_script(f"{name}.py").read_text()
     return '"--soak"' in source
 
 
 def run_one(name, python, soak=False):
     """Run one simulation. Returns (name, ok, passed, failed, seconds, tail)."""
     started = time.monotonic()
-    command = [python, str(ROOT / "scripts" / f"{name}.py")]
+    command = [python, str(_paths.find_script(f"{name}.py"))]
     if soak and takes_soak(name):
         command.append("--soak")
     # Bounded by this sim's own history. Unbounded, a looping simulation wedges

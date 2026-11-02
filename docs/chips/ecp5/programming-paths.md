@@ -126,9 +126,9 @@ bootloader ignores.
 
 | front end | needs | transport |
 |---|---|---|
-| [`scripts/soc_jtag_stage.py`](../../../scripts/soc_jtag_stage.py) | a configured FPGA carrying this design (ER1 signature `0x4a53`); no console, no running CPU | one `shift_data` per image, CPU held in reset |
+| [`scripts/soc/soc_jtag_stage.py`](../../../scripts/soc/soc_jtag_stage.py) | a configured FPGA carrying this design (ER1 signature `0x4a53`); no console, no running CPU | one `shift_data` per image, CPU held in reset |
 | console `load <hex>` | a running, answering shell | serial, byte at a time |
-| [`scripts/soc_payload.py`](../../../scripts/soc_payload.py) | as above | the same console |
+| [`scripts/soc/soc_payload.py`](../../../scripts/soc/soc_payload.py) | as above | the same console |
 
 * The layout is [`firmware/cynthion-soc/src/hyperram.rs`](../../../firmware/cynthion-soc/src/hyperram.rs), compiled into the
   bootloader *and* the shell, so no front end can disagree with the reader.
@@ -140,7 +140,7 @@ bootloader ignores.
   flash already held while reporting success.
   [`firmware/cynthion-boot/src/main.rs`](../../../firmware/cynthion-boot/src/main.rs), [`firmware/cynthion-boot/memory.x`](../../../firmware/cynthion-boot/memory.x).
 * Staging throughput is **not measured** in this tree.
-  `scripts/soc_jtag_stage.py --benchmark` exists and times the streamed path
+  `scripts/soc/soc_jtag_stage.py --benchmark` exists and times the streamed path
   against the per-word register path in the same session; no run of it is
   recorded.
 * `--clear` removes the header. It does not put back an image already copied —
@@ -287,7 +287,7 @@ region before discovering the CRC was wrong.
 * The bootloader jumps to an **address**, not a symbol. `_image_start` in
   [`firmware/cynthion-boot/memory.x`](../../../firmware/cynthion-boot/memory.x) and `ORIGIN(FLASH)` in
   [`firmware/cynthion-soc/memory.x`](../../../firmware/cynthion-soc/memory.x) are held together by
-  `scripts/soc_generate_pac.py --check`.
+  `scripts/soc/soc_generate_pac.py --check`.
 
 ### What has not been measured
 
@@ -308,8 +308,8 @@ region before discovering the CRC was wrong.
 | `apollo flash-program` | anything | flash, any 256 B-aligned offset | **3.33 s** / 58,940 B = 17.3 KiB/s | **no — `ensure_unconfigured()` first** | Apollo on the port |
 | `apollo flash-program --fast` | anything | flash, **offset 0 only** | not measured here | no — overwritten by the bridge | cable in CONTROL, `1209:000f` udev rule, FPGA toolchain |
 | `apollo reconfigure` | nothing | — | — | no — and it never completes | a working `INITN`, which this board has not got |
-| [`scripts/soc_jtag_stage.py`](../../../scripts/soc_jtag_stage.py) | firmware image | HyperRAM staging area | not measured; one JTAG scan, no rebuild | **yes** — CPU held and released | a configured FPGA carrying this design |
-| console `load` / [`scripts/soc_payload.py`](../../../scripts/soc_payload.py) | firmware image | HyperRAM staging area | not measured; serial-bound | **yes** | a running, answering shell |
+| [`scripts/soc/soc_jtag_stage.py`](../../../scripts/soc/soc_jtag_stage.py) | firmware image | HyperRAM staging area | not measured; one JTAG scan, no rebuild | **yes** — CPU held and released | a configured FPGA carrying this design |
+| console `load` / [`scripts/soc/soc_payload.py`](../../../scripts/soc/soc_payload.py) | firmware image | HyperRAM staging area | not measured; serial-bound | **yes** | a running, answering shell |
 | `apollo spi` / `jtag-spi` / `spi-reg` | register values | the running design | per-transaction USB latency | **yes** — and it must be running | a design that answers |
 | [`scripts/bram_patch.py`](../../../scripts/bram_patch.py) | block RAM init | a built `.bit` on disk | 22 s (2 s with `--no-verify-source`) | n/a — then `apollo configure` | a matching build directory |
 | `cynthion flash --mcu-firmware` | Apollo firmware | SAMD11 program flash | not measured here | n/a — the FPGA is not involved | Saturn-V bootloader, `1d50:60e6` |

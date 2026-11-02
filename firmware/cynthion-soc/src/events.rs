@@ -89,7 +89,7 @@
 //!   `core::fmt::Write`, so `write!` there does not compile.
 //! - **Grep, for the rest.** Rust privacy is per-module-tree, so a private item in
 //!   the crate root is nameable from every child module.
-//!   `scripts/soc_irq_log_check.py` fails any module whose handler mentions
+//!   `scripts/soc/soc_irq_log_check.py` fails any module whose handler mentions
 //!   `write!`, `writeln!`, `fmt::Write` or `Uart` -- the `irqlog` check in
 //!   `scripts/check.py`.
 //! - A handler CAN log; it just cannot be what formats and transmits. A rule with

@@ -236,7 +236,7 @@ Two standing traps:
 
   Therefore: any run that touches build flags must decode the linked vector
   table and assert Reset, SysTick, USB, EIC, SERCOM1 and TC1 resolve to real code
-  rather than `Dummy_Handler`. `scripts/verify_vectors.py` does this. A size
+  rather than `Dummy_Handler`. `scripts/apollo/verify_vectors.py` does this. A size
   figure alone would score a pruned image as an excellent result — which is the
   precise reason this check is mandatory rather than advisory.
 

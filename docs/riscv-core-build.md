@@ -32,7 +32,7 @@ root. `generate(output=...)` copies it to the caller's path; `top.py` passes
 reads.
 
 `gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v` is a checked-in copy that
-`scripts/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
+`scripts/soc/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
 can be regenerated without sbt.
 
 ### Concurrency ([#306](https://github.com/awtoau/cynthion-workspace/issues/306))

@@ -104,10 +104,10 @@ fallback, not as a rival.
 ## Reproducing the numbers
 
 ```bash
-./scripts/soc_rtic_workload.py --events 2000
-./scripts/soc_rtic_monotonic.py
-./scripts/soc_rtic_workload.py --events 200 --trace
-./scripts/soc_icache_model.py tmp/logs/trace-rtic.log --elf <the rtic elf>
+./scripts/soc/soc_rtic_workload.py --events 2000
+./scripts/soc/soc_rtic_monotonic.py
+./scripts/soc/soc_rtic_workload.py --events 200 --trace
+./scripts/soc/soc_icache_model.py tmp/logs/trace-rtic.log --elf <the rtic elf>
 ```
 
 The figures above come from the `workload` feature — a synthetic stand-in built

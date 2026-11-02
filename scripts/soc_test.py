@@ -97,6 +97,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from sim_check_harness import Checks  # noqa: E402
 from devlog import emit  # noqa: E402
 
@@ -859,7 +860,7 @@ def main():
         #
         # A stand-in for the hardware, of the kind `target::flash_word` has,
         # would only confirm that a model agrees with the driver. What the
-        # drivers do is checked in `scripts/soc_board_sim.py` against the
+        # drivers do is checked in `scripts/soc/soc_board_sim.py` against the
         # gateware, and on the board.
         #
         # ON THE BOARD every one of these reaches real silicon, so the
@@ -1906,7 +1907,7 @@ def main():
             # build ever made and says nothing about this firmware. Printed
             # anyway because the check below needs it non-zero -- a zero is a
             # counter standing still, which IS worth catching -- but labelled so
-            # it is not read as a result. `scripts/soc_workload.py` runs QEMU
+            # it is not read as a result. `scripts/soc/soc_workload.py` runs QEMU
             # with `-icount shift=4` where a real figure is wanted.
             emit(f"        idle shell: busy {idle[1] / 100:.2f}% of "
                  f"{idle[0]} cycles, ipc {idle[2] / 1000:.3f} "

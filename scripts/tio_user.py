@@ -87,7 +87,7 @@ def client_writer(conn, state, lock):
     """Relay bytes FROM a socket client TO the device.
 
     Without this the socket is read-only, and a client that sends a command sees it
-    silently vanish -- `scripts/soc_payload.py` would issue `load` and report that the
+    silently vanish -- `scripts/soc/soc_payload.py` would issue `load` and report that the
     shell never acknowledged, which reads as a firmware fault rather than a missing
     relay.
 

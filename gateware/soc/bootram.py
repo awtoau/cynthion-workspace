@@ -66,7 +66,7 @@ from luna.gateware.interface.psram import HyperBusPHY
 HYPERRAM_SIZE = 8 * 1024 * 1024
 
 # Which DQSBUFM tap samples returning data. A property of the board and of CK,
-# not of the design -- `scripts/hyperram_readclksel_sweep.py` walks all eight
+# not of the design -- `scripts/hyperram/hyperram_readclksel_sweep.py` walks all eight
 # against BURSTDET, which is #148. `0b010` is upstream's untested default and is
 # the starting point, not an answer.
 HYPERRAM_READCLKSEL = 0b010
@@ -77,7 +77,7 @@ HYPERRAM_READCLKSEL = 0b010
 # fixed latency at 7 clocks, so the device takes 14 CK on every transaction, and
 # at 4:1 gearing that is 7 fabric beats. The controller waits this count plus a
 # zero beat, so it must be at least 6 to still be listening when the data
-# arrives. `scripts/hyperram_latency_probe.py` sweeps it against the model and
+# arrives. `scripts/hyperram/hyperram_latency_probe.py` sweeps it against the model and
 # reports 6, 7 and 8 completing while 1-5 do not.
 #
 # Anything below 6 samples before the device presents -- upstream's 5 included --

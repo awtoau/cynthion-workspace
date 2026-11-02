@@ -1,6 +1,6 @@
 # Running upstream CI locally, before submitting anything
 
-`scripts/upstream_ci.py` clones a GreatScottGadgets repo into `tmp/`, checks out
+`scripts/tools/upstream_ci.py` clones a GreatScottGadgets repo into `tmp/`, checks out
 whatever you name, and runs the exact commands that repo's own workflow files
 run. The clone is destroyed and re-made every run, so it cannot touch `repos/*`.
 
@@ -13,11 +13,11 @@ Related: `docs/upstream-patch-process.md` (the rules a patch must satisfy),
 
 ## Usage
 
-    ./scripts/upstream_ci.py luna                       # upstream main
-    ./scripts/upstream_ci.py luna --pr 301              # someone else's PR head
-    ./scripts/upstream_ci.py apollo --pick 0e9bfb1      # our commit on clean upstream
-    ./scripts/upstream_ci.py apollo --job host-tests    # one job
-    ./scripts/upstream_ci.py luna --list                # show jobs, run nothing
+    ./scripts/tools/upstream_ci.py luna                       # upstream main
+    ./scripts/tools/upstream_ci.py luna --pr 301              # someone else's PR head
+    ./scripts/tools/upstream_ci.py apollo --pick 0e9bfb1      # our commit on clean upstream
+    ./scripts/tools/upstream_ci.py apollo --job host-tests    # one job
+    ./scripts/tools/upstream_ci.py luna --list                # show jobs, run nothing
 
 `--pick` cherry-picks from `repos/<repo>` onto clean upstream. That is the
 operation a submission actually performs, so a conflict here is the conflict a

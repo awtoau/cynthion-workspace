@@ -156,8 +156,8 @@ pins 1 and 2 — balls `C9`/`B9` — to it and the target is a real SW-DP two in
 away. **Read DPIDR and stop**: that SAMD11 is Apollo, and halting it takes the
 board off USB.
 
-**Proved in simulation, not on hardware.** `scripts/swd_host_sim.py` (37 checks)
-drives a target model written from the specification; `scripts/sbu_port_sim.py`
+**Proved in simulation, not on hardware.** `scripts/soc/swd_host_sim.py` (37 checks)
+drives a target model written from the specification; `scripts/soc/sbu_port_sim.py`
 (29 checks) runs both clock domains through the CSR bus. Both carry negative
 controls that are *run* — a turnaround one clock late, an inverted parity bit, an
 undefined acknowledge, a contending target — each asserting the corruption is

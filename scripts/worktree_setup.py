@@ -61,7 +61,7 @@ from shared_paths import main_checkout, resolve_shared  # noqa: E402
 
 # One vendor file that is gitignored and that a simulation needs. Presence of
 # this stands in for `sources/**` as a whole -- it is the only entry any script
-# treats as required. `scripts/hyperram_vendor_model_sim.py` is the consumer.
+# treats as required. `scripts/hyperram/hyperram_vendor_model_sim.py` is the consumer.
 VENDOR_MODEL = Path("sources/models/W956X8MBY_verilog_p.zip")
 
 # Every git call here is local metadata against an existing object store, so the

@@ -19,7 +19,7 @@ the pair of numbers no generator sees:
     BURST_WORDS             ceiling engine    <-> bist.rs   BURST_WORDS
 
 The gateware constants themselves are checked against the elaborated memory map
-by `scripts/soc_generate_pac.py --check`, so the chain from Amaranth's own map to
+by `scripts/soc/soc_generate_pac.py --check`, so the chain from Amaranth's own map to
 the pointer the CPU dereferences is closed by the two together.
 """
 

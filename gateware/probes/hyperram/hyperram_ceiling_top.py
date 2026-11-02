@@ -6,7 +6,7 @@
 """
 Sustained write/read/verify against HyperRAM, at an arbitrary clock, either PHY.
 
-Driven by `scripts/hyperram_ceiling.py`. Building this file directly is for
+Driven by `scripts/hyperram/hyperram_ceiling.py`. Building this file directly is for
 checking that a frequency places at all:
 
     python3 gateware/probes/hyperram/hyperram_ceiling_top.py --build --sync-mhz 100 --dqs

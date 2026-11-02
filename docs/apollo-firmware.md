@@ -24,13 +24,13 @@
 ```bash
 make -C repos/apollo/firmware APOLLO_BOARD=cynthion clean
 make -C repos/apollo/firmware APOLLO_BOARD=cynthion -j8
-python3 scripts/verify_vectors.py        # LTO can link a 4-byte binary; this catches it
+python3 scripts/apollo/verify_vectors.py        # LTO can link a 4-byte binary; this catches it
 fwup-util --device 1d50:615c repos/apollo/firmware/_build/cynthion_d11/firmware.bin
 cynthion info --force-offline            # expect v1.1.1-<n>-g<sha>
 ```
 
 - Needs Apollo on the bus (`1d50:615c`). Replug first if the board shows `1d50:615b`.
-- Size on 2026-11-02 at `90c8b7b`: 13,688 B of 14,336 B. Budget check: [`scripts/apollo_budget_check.py`](../scripts/apollo_budget_check.py).
+- Size on 2026-11-02 at `90c8b7b`: 13,688 B of 14,336 B. Budget check: [`scripts/apollo/apollo_budget_check.py`](../scripts/apollo/apollo_budget_check.py).
 
 ## After `cynthion update`: the board boots the analyzer
 

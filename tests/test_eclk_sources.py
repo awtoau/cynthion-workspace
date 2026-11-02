@@ -204,6 +204,7 @@ def _build_dir(tmp_path, config, tim):
 
 def _audit(build_dir):
     sys.path.insert(0, str(ROOT / "scripts"))
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from soc_eclk_check import audit
     return audit(build_dir)
 
