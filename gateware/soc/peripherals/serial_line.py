@@ -288,7 +288,7 @@ class SerialLine(wiring.Component):
         # The period is one bit longer than the frame because AsyncSerialTX
         # holds the mark for a full bit period between accepting the byte and
         # emitting the start bit. Verified against the transmitter directly in
-        # scripts/soc_serial_sim.py, which fails if this constant drifts from
+        # scripts/soc/soc_serial_sim.py, which fails if this constant drifts from
         # what the PHY actually does.
         hold_bits = 1 + _frame_bits(self._data_bits)
         frame_cycles = Signal(bits_for(hold_bits << self._divisor_bits))

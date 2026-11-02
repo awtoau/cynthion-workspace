@@ -47,6 +47,7 @@ LOGDIR = ROOT / "tmp" / "logs"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import run_bounded  # noqa: E402
 
 DIAMOND = Path.home() / "lscc" / "diamond" / "3.14"

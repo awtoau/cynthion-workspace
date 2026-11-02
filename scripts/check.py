@@ -37,6 +37,7 @@ from typing import Callable, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from logging_utils import setup_logging
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import limit_for, run_bounded
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -175,7 +176,7 @@ def build_checks() -> List[Check]:
                 # Feature sets, not just binaries: `rticmono` and `rticwl` are
                 # the only consumers of the RTIC path, which is where #115, #247
                 # and #259 all land.
-                Step([PYTHON, "scripts/soc_bin_matrix.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_bin_matrix.py"], ROOT),
             ],
         ),
         Check(
@@ -199,7 +200,7 @@ def build_checks() -> List[Check]:
                 # reservation. Passed in rather than re-measured because
                 # measuring it needs the board, and this check has to work
                 # without hardware attached.
-                Step([PYTHON, "scripts/apollo_budget_check.py",
+                Step([PYTHON, "scripts/apollo/apollo_budget_check.py",
                       "--stack-measured", "344"], ROOT),
                 # The LTO guard, which until now ran in no check at all -- the
                 # same gap as #337 and #362. Docs call it the vector-table guard
@@ -207,7 +208,7 @@ def build_checks() -> List[Check]:
                 # binary that links cleanly and does nothing, because the plugin
                 # resolved a weak alias to Dummy_Handler. Needs only the ELF the
                 # step above already built.
-                Step([PYTHON, "scripts/verify_vectors.py"], ROOT),
+                Step([PYTHON, "scripts/apollo/verify_vectors.py"], ROOT),
             ],
         ),
         Check(
@@ -269,11 +270,11 @@ def build_checks() -> List[Check]:
                 # and a red check is not. See #190.
                 #
                 # Imports only; no board, no toolchain, well under a second.
-                Step([PYTHON, "scripts/amaranth_soc_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/amaranth_soc_check.py"], ROOT),
                 # An undriven output port elaborates, places and routes without
                 # a word, which is how `VbusControl`'s two input-enable ports
                 # drove no pad for as long as they existed (#305).
-                Step([PYTHON, "scripts/check_ports_connected.py"], ROOT),
+                Step([PYTHON, "scripts/tools/check_ports_connected.py"], ROOT),
             ],
         ),
         Check(
@@ -288,7 +289,7 @@ def build_checks() -> List[Check]:
                 #
                 # `slow`: ~10 shell builds. `--fast` skips it; the gate does
                 # not, because a check nothing runs goes red again unwatched.
-                Step([PYTHON, "scripts/soc_feature_isolation_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_feature_isolation_check.py"], ROOT),
             ],
         ),
         Check(
@@ -303,7 +304,7 @@ def build_checks() -> List[Check]:
                 # here instead of on the board.
                 #
                 # Elaboration only -- no synthesis, no board, a few seconds.
-                Step([PYTHON, "scripts/soc_generate_pac.py", "--check"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_generate_pac.py", "--check"], ROOT),
             ],
         ),
         Check(
@@ -319,8 +320,8 @@ def build_checks() -> List[Check]:
                 #
                 # No build and no board: comparisons over recorded readings, and
                 # the map enumerator's synthetic control. A few seconds.
-                Step([PYTHON, "scripts/soc_review.py", "--self-test"], ROOT),
-                Step([PYTHON, "scripts/soc_map_audit.py", "--control-only"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_review.py", "--self-test"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_map_audit.py", "--control-only"], ROOT),
             ],
         ),
         Check(
@@ -336,7 +337,7 @@ def build_checks() -> List[Check]:
                 #
                 # `slow`: two separate interpreters, ~8 s each -- both causes
                 # were constant within one process, so a loop would have passed.
-                Step([PYTHON, "scripts/soc_repro_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_repro_check.py"], ROOT),
             ],
         ),
         Check(
@@ -351,7 +352,7 @@ def build_checks() -> List[Check]:
                 # stop a sibling module naming `Uart`, so the rest is a grep.
                 #
                 # Source only; no board, no toolchain, well under a second.
-                Step([PYTHON, "scripts/soc_irq_log_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_irq_log_check.py"], ROOT),
             ],
         ),
         Check(
@@ -379,7 +380,7 @@ def build_checks() -> List[Check]:
                 #
                 # Source only; no board, no toolchain, well under a second.
                 Step([PYTHON, "scripts/check_doc_links.py"], ROOT),
-                Step([PYTHON, "scripts/link_issue_refs.py", "--check"], ROOT),
+                Step([PYTHON, "scripts/issues/link_issue_refs.py", "--check"], ROOT),
             ],
         ),
         # There is no `gateware` check. It elaborated

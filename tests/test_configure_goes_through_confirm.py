@@ -17,10 +17,14 @@ no run can demonstrate that all the OTHER call sites are gated.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+import _paths  # noqa: E402
 
 # The one path. Everything else asks it.
 OWNER = "soc_confirm.py"
@@ -37,7 +41,7 @@ EXEMPT = {"bitstream_load_time_probe.py", "board_arbiter.py", "board.py"}
 def callers():
     """Scripts whose source hands `configure` to the Apollo CLI."""
     found = {}
-    for path in sorted(SCRIPTS.glob("*.py")):
+    for path in _paths.script_files():
         if path.name in EXEMPT:
             continue
         text = path.read_text()
@@ -70,7 +74,7 @@ def test_every_configure_caller_states_which_confirmation_it_expects():
     bitstream.
     """
     calls = 0
-    for path in sorted(SCRIPTS.glob("*.py")):
+    for path in _paths.script_files():
         for line in re.findall(r"configure_and_confirm\((?!bitstream,\s*\*)[^)]*\)",
                                path.read_text()):
             calls += 1

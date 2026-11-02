@@ -14,7 +14,7 @@ use crate::{hyperram, irq, reboot};
 ///
 /// The bytes arrive over the USB bulk OUT endpoint -- the same transport `apollo
 /// flash-write` uses, and about four orders of magnitude faster than a JTAG register
-/// interface, which `scripts/soc_jtag_stage.py --benchmark` measures at 28 ms per 16-bit
+/// interface, which `scripts/soc/soc_jtag_stage.py --benchmark` measures at 28 ms per 16-bit
 /// word. That is a property of poking a control-plane register per word, not of JTAG:
 /// the streaming sink in `gateware/soc/bus/jtag_stage.py` moves 32 KiB over the same wire
 /// in 85 ms, and unlike this path it needs no running CPU.

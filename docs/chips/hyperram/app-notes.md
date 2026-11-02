@@ -135,7 +135,7 @@ carries both, so neither alone is the complete set of rules for stopping the clo
 Where we stand against each:
 
 - **Park CK low — satisfied, and now CHECKED.**
-  [`scripts/hyperram_ck_park_check.py`](../../../scripts/hyperram_ck_park_check.py)
+  [`scripts/hyperram/hyperram_ck_park_check.py`](../../../scripts/hyperram/hyperram_ck_park_check.py)
   finds each PHY's CK gearing by probing every ODDR with `clk_en` all-ones, then
   requires all phases zero with `clk_en = 0`. Both PHYs pass; `--mutate` parks
   phase 0 High and both then fail, which is what says the check can fail at all.

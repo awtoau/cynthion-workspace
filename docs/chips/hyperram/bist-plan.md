@@ -96,7 +96,7 @@ Gates, both in seconds — the point is knowing in seconds whether the rig works
 
 | | | |
 |---|---|---|
-| `scripts/soc_bist_transport_sim.py` | 1.7 s | can the CPU read an engine-driven register across the domain boundary |
+| `scripts/soc/soc_bist_transport_sim.py` | 1.7 s | can the CPU read an engine-driven register across the domain boundary |
 | `tests/test_bist_constants.py` | 0.01 s | gateware/firmware agree on base, window, burst, register numbers |
 | `bist smoke` | seconds, on the board | four cells: can the rig both pass **and** detect a fault |
 
@@ -264,7 +264,7 @@ phase argument; `hyperram_ceiling_top.py` passes the register to the PHY inside
 by nothing, so the 4096-cell matrix is **512 configurations run 8 times**
 ([#343](https://github.com/awtoau/cynthion-workspace/issues/343)).
 
-- `./scripts/hyperram_axis_wiring.py` decides this from the elaborated design,
+- `./scripts/hyperram/hyperram_axis_wiring.py` decides this from the elaborated design,
   needs no board, and is the only thing that can: `READCLKSEL` reaches the FPGA,
   not the part, so there is no read-back for `hyperram_axis_liveness.py` to use.
 - `drive` (CR0[14:12]) and `clk` (CR1[6]) are wired on both builds — they reach

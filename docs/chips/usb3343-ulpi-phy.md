@@ -254,7 +254,7 @@ A PHY that is genuinely absent does **not** read as zeros. It never releases
 from the PHY` for each register — a different message from "answered, wrongly".
 Without that timeout one read of a missing PHY would leave the window busy for
 the rest of the session and every later read would report "busy" instead of
-"absent"; the recovery is covered in `scripts/soc_board_sim.py`.
+"absent"; the recovery is covered in `scripts/soc/soc_board_sim.py`.
 
 `debug` (`0x15`) is read rather than `0x14`, the Interrupt Latch, which is
 **clear-on-read**: a diagnostic must not consume the event it reports on. See

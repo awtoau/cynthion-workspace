@@ -7,7 +7,7 @@
 //! The flow:
 //!
 //!   1. an image arrives here, over USB bulk (`load`) or over JTAG with the CPU held in
-//!      reset (`scripts/soc_jtag_stage.py`), and a CRC32 is computed as it goes in
+//!      reset (`scripts/soc/soc_jtag_stage.py`), and a CRC32 is computed as it goes in
 //!   2. a header follows it -- length, CRC, then the magic last
 //!   3. the board reboots into `firmware/cynthion-boot`
 //!   4. the bootloader finds the magic, re-reads the image, checks the CRC, copies it
@@ -53,7 +53,7 @@ pub const IMAGE_WORD: u32 = 16;
 /// 63 KiB -- all of block RAM but the kilobyte the bootloader keeps. A const rather
 /// than a linker symbol because the QEMU backend below sizes an array from it, and
 /// because `staged()` bounds against it in a crate whose linker script does not name
-/// the region. `scripts/soc_generate_pac.py --check` is what holds it to the five other
+/// the region. `scripts/soc/soc_generate_pac.py --check` is what holds it to the five other
 /// places that state the same split.
 pub const MAX_IMAGE: u32 = 31 * 1024;
 
@@ -621,7 +621,7 @@ pub mod backend {
     // HyperRAM today, "nothing does yet" is not a property the type system can
     // hold on to. Atomics need no `unsafe`, no `critical-section` dependency and
     // no reasoning about who might arrive later; on this target they compile to
-    // the same loads and stores. `scripts/soc_irq_log_check.py` is what found
+    // the same loads and stores. `scripts/soc/soc_irq_log_check.py` is what found
     // this, which is most of the argument for having it.
     static STORE: [AtomicU16; WORDS] = [const { AtomicU16::new(0) }; WORDS];
     static CURSOR: AtomicUsize = AtomicUsize::new(0);

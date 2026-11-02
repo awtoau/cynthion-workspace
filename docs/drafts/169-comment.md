@@ -14,7 +14,7 @@
 - **The `.gitignore` `lib/` trap is fixed.** The block is `/lib/` and `/lib64/`,
   anchored, with a comment naming the 36 files it cost. **That bullet above is
   obsolete.**
-- `scripts/submodule_patch_audit.py` exists; all four submodules report
+- `scripts/tools/submodule_patch_audit.py` exists; all four submodules report
   `safe -- every commit is on a remote`.
 - [#190](https://github.com/awtoau/cynthion-workspace/issues/190) landed: `amaranth-soc` / `amaranth-stdio` are declared, and the new
   `amaranthsoc` check fails if the import resolves inside luna-soc's vendored
@@ -27,7 +27,7 @@
 
 - **"four platform imports"** → **six** sites import
   `cynthion.gateware.platform.cynthion_r1_4`:
-  `scripts/soc_generate_pac.py:138`, `scripts/soc_diagram.py:171`,
+  `scripts/soc/soc_generate_pac.py:138`, `scripts/soc/soc_diagram.py:171`,
   `scripts/bram_patch.py:255`, `gateware/probes/bram_probe/bram_probe.py:192`,
   `gateware/soc/top.py:1705`, and `scripts/phy_probe.py:15` —
   the last of which is not a platform import at all, but
@@ -35,7 +35,7 @@
   useful. It is a separate decision, not a conversion.
 - **Still eight checks, still four touching `repos/`, but a different four:**
   `rust`, `apollo`, `python`, `freethreading`.
-- `scripts/sideband_build.py:40` → **43**, and `scripts/fabric_build.py:72` does
+- `scripts/sideband/sideband_build.py:40` → **43**, and `scripts/fabric/fabric_build.py:72` does
   the same `sys.path.insert(0, "repos/apollo")` and was missed.
 - Stale comment citations in `top.py`: `176, 181, 277, 312, 1642` →
   `177, 182, 278, 313, 1711`. Line **84** — the `variable_clock` import — is

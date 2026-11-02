@@ -89,7 +89,7 @@ recording so it is not re-investigated:
   `riscv32imac-unknown-none-elf`; there are no `zc*` features to enable.
 
 `--with-rvZcbm` is still worth knowing about for an unrelated reason: it provides
-`cbo.inval`, which `scripts/riscv_firmware.py` names as the proper replacement
+`cbo.inval`, which `scripts/riscv/riscv_firmware.py` names as the proper replacement
 for its read-the-whole-cache flush hack.
 
 So the remaining code-size levers are not ISA ones. They are `core::fmt` (whose

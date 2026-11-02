@@ -110,11 +110,11 @@ re-synced 2025-01-07 and is missing four upstream fixes, including the Python
 Both are declared in `scripts/machine_setup.py`, pinned to the commits above, so
 a fresh environment gets them rather than the vendored fallback. Until [#190](https://github.com/awtoau/cynthion-workspace/issues/190)
 nothing declared either, and a clean install silently used the 2025 vendored
-tree. `scripts/amaranth_soc_check.py` — the `amaranthsoc` check in
+tree. `scripts/soc/amaranth_soc_check.py` — the `amaranthsoc` check in
 `scripts/check.py` — asserts neither name resolves inside
 `luna_soc/gateware/vendor`, because a declaration is invisible if it is dropped:
 
-    ./scripts/amaranth_soc_check.py --simulate-vendored   # proves it still fails
+    ./scripts/soc/amaranth_soc_check.py --simulate-vendored   # proves it still fails
 
 **Version tags on the fork must use the PEP 440 local form.** `0.3.2+awto.1`
 works; `0.3.2-awto.1` breaks the wheel build outright, because
@@ -208,7 +208,7 @@ failure looks exactly like a dead CPU.
 | `qemu-system-riscv32` | 10.2.2 |
 
 `riscv64-linux-gnu-gcc` targets Linux but produces fine bare-metal objects; see
-the header of `scripts/riscv_firmware.py`.
+the header of `scripts/riscv/riscv_firmware.py`.
 
 QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
 NS16550A at `0x10000000` and a PLIC at `0x0c000000` (which `src/intc.rs` drives),
@@ -234,7 +234,7 @@ finds its own bundled `ld` regardless of PATH — but any script that shells out
 a binutil by bare name gets the 2023 build, reading an ELF produced by a compiler
 ten major versions newer.
 
-The three guards do not shell out by bare name. `scripts/arm_binutils_resolve.py` resolves them beside the
+The three guards do not shell out by bare name. `scripts/apollo/arm_binutils_resolve.py` resolves them beside the
 compiler — `arm-none-eabi-gcc -print-prog-name=nm` → 2.45 — and `verify_vectors.py`
 (`nm`), `apollo_budget_check.py` (`size`) and `apollo_memory_report.py`
 (`size`, `nm`) each print which binary they used and warn that PATH would have
@@ -255,7 +255,7 @@ constraint on moving it.
 
 ## Submodules
 
-`repos/` pins four. `scripts/submodule_patch_audit.py` refuses to let one be
+`repos/` pins four. `scripts/tools/submodule_patch_audit.py` refuses to let one be
 removed while it holds work that is on no remote.
 
 | submodule | pinned | fork | upstream default branch | drift |

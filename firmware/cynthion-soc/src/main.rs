@@ -101,7 +101,7 @@ mod clock;
 // The concurrency measurement for #115: a synthetic USB device-emulation load
 // and a preemptive dispatcher for it to run under. Both off by default, and
 // nothing below reaches either without the feature, so the shipping image is
-// byte-identical either way -- `scripts/soc_workload.py --sizes` checks it.
+// byte-identical either way -- `scripts/soc/soc_workload.py --sizes` checks it.
 #[cfg(feature = "preempt")]
 mod dispatch;
 mod events;

@@ -47,7 +47,7 @@ variable latency, which is a change to make deliberately and measure.
 **And it samples RWDS when the device has answered.** Upstream reads it in
 SHIFT_COMMAND1/2; through `HyperRAMPHY` those are pin cycles 2 and 3 against a
 CS# that falls at 4, so the branch decided on an undriven bus and an idle-line
-level chose the latency. Measured in `scripts/hyperram_phy_rwds_sim.py`, where a
+level chose the latency. Measured in `scripts/hyperram/hyperram_phy_rwds_sim.py`, where a
 weak pull on RWDS while CS# is High moved every variable-latency election. The
 sample now follows `phy_round_trip_cycles`; `fixed_latency` is untouched by any
 of it. (#338)
@@ -134,7 +134,7 @@ T_CSM_MARGIN = 0.9
 # Sync cycles between this FSM emitting something and its consequence arriving back:
 # upstream's `HyperRAMPHY` is 3 out (`FFSynchronizer(stages=3)` on CS#/OE,
 # `ODDRX1F` on CK/DQ/RWDS) and 1 back (`IDDRX1F`). Both measured by
-# `scripts/hyperram_phy_rwds_sim.py`. The RWDS sample instant is derived from this,
+# `scripts/hyperram/hyperram_phy_rwds_sim.py`. The RWDS sample instant is derived from this,
 # so a harness with a different PHY -- or none -- must say so. (#338)
 PHY_ROUND_TRIP_CYCLES = 4
 

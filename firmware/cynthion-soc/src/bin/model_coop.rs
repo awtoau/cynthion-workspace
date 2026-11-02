@@ -1,7 +1,7 @@
 //! A cooperative run-to-completion scheduler, in as few bytes as it can be
 //! written: a ready bitmap, a table of handlers, and a dispatch loop.
 //!
-//! Built by `scripts/soc_model_probe.py`. Same visible work as the other
+//! Built by `scripts/soc/soc_model_probe.py`. Same visible work as the other
 //! skeletons -- an interrupt front end, two sources, one counter -- so the
 //! difference from `model_bare` is this scheduler and nothing else.
 //!

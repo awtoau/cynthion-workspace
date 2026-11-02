@@ -13,7 +13,7 @@ as #334 and #335.
 
 The check is structural because nothing else can be: `READCLKSEL` goes to the
 FPGA, not to the part, so it has no device read-back and no board test can reach
-it. `scripts/hyperram_axis_wiring.py` elaborates both builds and reports which
+it. `scripts/hyperram/hyperram_axis_wiring.py` elaborates both builds and reports which
 parameters anything reads; this pins its answers so the wiring cannot change
 without a test saying so.
 

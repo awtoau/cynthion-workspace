@@ -16,7 +16,7 @@ Amaranth's simulator and no board test can reach a signal that never leaves the
 FPGA. What CAN be settled here is whether the report's driver is the engine's own
 state or a constant -- and that is the whole of both defects.
 
-The end-to-end behaviour lives in `scripts/hyperram_dqs_model_sim.py --stage
+The end-to-end behaviour lives in `scripts/hyperram/hyperram_dqs_model_sim.py --stage
 config`, which runs the real controller against the device model.
 """
 

@@ -67,7 +67,7 @@ short of a pipelined (Wishbone B4) initiator, and VexiiRiscv's Wishbone bridge
 is not one.
 
 Measured against `luna_soc`'s block RAM, in cycles from the strobe to the
-acknowledgement (`scripts/soc_bus_sim.py`, which reports these rather than
+acknowledgement (`scripts/soc/soc_bus_sim.py`, which reports these rather than
 asserting them):
 
     single transfer    1 cycle  -> 2

@@ -1,6 +1,6 @@
 //! The floor: what this machine costs with no concurrency runtime at all.
 //!
-//! Built by `scripts/soc_model_probe.py` as the zero of the comparison in
+//! Built by `scripts/soc/soc_model_probe.py` as the zero of the comparison in
 //! `docs/rtic.md`. Every other skeleton does the same visible
 //! work -- an interrupt front end, two sources, one counter, an idle loop --
 //! so the difference between its `.text` and this one is the runtime.

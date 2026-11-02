@@ -34,7 +34,7 @@ Configures the FPGA over JTAG. **SRAM only** -- nothing is written to flash, so 
 cycle restores whatever was there. Two RISC-V images are baked into the bitstream as
 block RAM init: the resident bootloader at 0x0 and the shell at 0x400. That is why a
 change to either needs the gateware rebuilt, about a minute -- and why a change to the
-shell alone does not have to: `scripts/soc_jtag_stage.py` stages one over the other in
+shell alone does not have to: `scripts/soc/soc_jtag_stage.py` stages one over the other in
 seconds, and the bootloader runs it on the way back up.
 
 ## Why the console read is at the end
@@ -128,6 +128,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
+import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E402
                                              run_bounded)
 
@@ -322,7 +323,7 @@ def gateware_digest():
     **HEAD is NOT in here, and that is a measured claim.** The only thing HEAD
     reaches is the ECP5's USERCODE, which `ecppack --usercode` writes into the
     configuration stream -- not a cell.
-    `scripts/soc_head_independence.py` is the instrument: two builds at two
+    `scripts/soc/soc_head_independence.py` is the instrument: two builds at two
     commits with no source change give one netlist digest and two different
     bitstreams, each carrying its own stamp.
 
@@ -630,7 +631,7 @@ def main():
     parser.add_argument("--no-build", action="store_true",
                         help="skip cargo and gateware; load what exists")
     parser.add_argument("--c-firmware", action="store_true",
-                        help="use scripts/riscv_firmware.py instead of the Rust crate")
+                        help="use scripts/riscv/riscv_firmware.py instead of the Rust crate")
     parser.add_argument("--write-tests", action="store_true",
                         help="C firmware only: compile in the flash erase/program tests")
     parser.add_argument("--force-flash", action="store_true",
@@ -736,7 +737,7 @@ def main():
     variant_rs = BUILD / "variant.rs"
     if not args.c_firmware:
         result = run([sys.executable,
-                      str(ROOT / "scripts" / "soc_generate_pac.py"),
+                      str(ROOT / "scripts" / "soc" / "soc_generate_pac.py"),
                       "--variant-only", str(variant_rs)])
         if result.returncode != 0:
             emit("VARIANT CONSTANTS FAILED:")
@@ -812,7 +813,7 @@ def main():
             before = generated.read_bytes()
 
         result = run([sys.executable,
-                      str(ROOT / "scripts" / "soc_generate_pac.py")])
+                      str(ROOT / "scripts" / "soc" / "soc_generate_pac.py")])
         if result.returncode != 0:
             emit("PERIPHERAL MAP GENERATION FAILED:")
             emit((result.stdout or result.stderr).strip()[-700:])
@@ -832,7 +833,7 @@ def main():
         if args.c_firmware:
             if not args.no_build:
                 cmd = [sys.executable,
-                       str(ROOT / "scripts" / "riscv_firmware.py")]
+                       str(ROOT / "scripts" / "riscv" / "riscv_firmware.py")]
                 if args.write_tests:
                     cmd.append("--write-tests")
                 result = run(cmd)

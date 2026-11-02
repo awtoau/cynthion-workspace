@@ -72,8 +72,8 @@ Rebuild cost: **~90 s synthesis per bitstream**
 | **5** | `hr cross` prints `ck-stalled {} cycles` where the number **can only be 0** | `clock_stop=False` → `want_stall` is `C(0)` → `probe_stall` is 0 → the `stalls` counter cannot increment | [`bootram.py:773-775`](../gateware/soc/bootram.py), [`:962`](../gateware/soc/bootram.py), [`hyperram_probe.py:130`](../gateware/soc/peripherals/hyperram_probe.py), [`bench.rs:499`](../firmware/cynthion-soc/src/bench.rs) |
 | **6** | The Apollo console's baud is **elaboration-frozen through a port built to be a register** | `SerialLine.divisor` is an `In` port with `init=divisor`; `top.py` drives only the streams | [`serial_line.py:171-177`](../gateware/soc/peripherals/serial_line.py) vs [`top.py:1632-1634`](../gateware/soc/top.py) |
 | **7** | The 16550's DLL/DLM are **"written, read back, and connected to nothing"** — its own words | the register that would carry item 6 already exists, in the peripheral the console already talks to | [`uart16550.py:315-320`](../gateware/soc/peripherals/uart16550.py), writes `:358-366`, reads `:355`/`:363` |
-| **8** | **A benchmark cannot name the bitstream that produced it** — and the escape hatch does not close it either | `FLASH_MODE`, `FLASH_DIVISOR`, `HYPERRAM_LATENCY_CLOCKS`, `HYPERRAM_DQS`, CK and the cache geometry reach **no** CSR and **no** PAC constant. USERCODE is `git rev-parse --short=7 HEAD` masked to 31 bits ([`build_helpers.py:69-85`](../gateware/build_helpers.py)) — **a function of the commit alone**, so `ck80-dqs0-sync60` and `ck160-dqs1-sync50` from one clean commit are stamped identically, and [`usercode_map.py:167`](../gateware/usercode_map.py) keys its index on that number, so the second build silently overwrites the first's row | [`top.py:582`](../gateware/soc/top.py), `:609`, `:735`, `:748`, `:824-825`; absent from [`soc_generate_pac.py`](../scripts/soc_generate_pac.py) |
-| **9** | `FlashPinProbe`'s five counters are **live gateware feeding a readout nothing reads** | `cs_fell`, `sck_edges`, `dq_driven`, `grants`, `oe_edges` reach `FLASH_PROBE = 0xf0000200`; no file under `firmware/cynthion-soc/src/` names it | [`flash.py:735-758`](../gateware/soc/peripherals/flash.py); [`soc_dead_peripherals.py:11`](../scripts/soc_dead_peripherals.py) already records it |
+| **8** | **A benchmark cannot name the bitstream that produced it** — and the escape hatch does not close it either | `FLASH_MODE`, `FLASH_DIVISOR`, `HYPERRAM_LATENCY_CLOCKS`, `HYPERRAM_DQS`, CK and the cache geometry reach **no** CSR and **no** PAC constant. USERCODE is `git rev-parse --short=7 HEAD` masked to 31 bits ([`build_helpers.py:69-85`](../gateware/build_helpers.py)) — **a function of the commit alone**, so `ck80-dqs0-sync60` and `ck160-dqs1-sync50` from one clean commit are stamped identically, and [`usercode_map.py:167`](../gateware/usercode_map.py) keys its index on that number, so the second build silently overwrites the first's row | [`top.py:582`](../gateware/soc/top.py), `:609`, `:735`, `:748`, `:824-825`; absent from [`soc_generate_pac.py`](../scripts/soc/soc_generate_pac.py) |
+| **9** | `FlashPinProbe`'s five counters are **live gateware feeding a readout nothing reads** | `cs_fell`, `sck_edges`, `dq_driven`, `grants`, `oe_edges` reach `FLASH_PROBE = 0xf0000200`; no file under `firmware/cynthion-soc/src/` names it | [`flash.py:735-758`](../gateware/soc/peripherals/flash.py); [`soc_dead_peripherals.py:11`](../scripts/soc/soc_dead_peripherals.py) already records it |
 | **10** | Nine signals commented **"Exposed for instrumentation"** are read by nothing | the ILA that consumed them was deleted in `620901b`; three of the nine never had a matching port on it even then | [`flash.py:402-414`](../gateware/soc/peripherals/flash.py), driven `:536-549` |
 
 Items 1-3 are one afternoon of wiring and remove the largest bitstream axis
@@ -98,7 +98,7 @@ shape: a number that cannot move, presented as a measurement.
 | …`FITTED_GRADE`, `T_CSM_NS`, `T_CSM_MARGIN`, `PHY_ROUND_TRIP_CYCLES` | datasheet AC figures | **param** | `:103-139`. `PHY_ROUND_TRIP_CYCLES = 1` on the DQS twin is documented as the *simulation's* number, not the hardware's ([`hyperram_dqs_controller.py:77-80`](../gateware/soc/peripherals/hyperram_dqs_controller.py)) |
 | …`state`, `timed_out`, `extra_latency`, `latency_below_trwr`, `register_active` | — | **yes, read-only** | driven, and `HyperRAMPort.STATUS` is only `(idle, read_ready, write_ready, read_data)` (`hyperram_share.py:70`), so a watchdog-terminated transaction is invisible to firmware |
 | …`register_space` | tied to 0 on the staging path | **yes** | [`bootram.py:930`](../gateware/soc/bootram.py). **Not "driven by nothing"** — the BIST engine drives it live (`hyperram_ceiling_top.py:820`), so register access exists in BIST mode and not from the CPU's memory window |
-| …`single_page` | tied to 0 by **every** synthesizable caller | no, but say so | `bootram.py:922`, `hyperram_share.py:384`, and four probes. CA[45] folds to a constant; only [`soc_hyperram_sim.py:786`](../scripts/soc_hyperram_sim.py) ever sets it |
+| …`single_page` | tied to 0 by **every** synthesizable caller | no, but say so | `bootram.py:922`, `hyperram_share.py:384`, and four probes. CA[45] folds to a constant; only [`soc_hyperram_sim.py:786`](../scripts/soc/soc_hyperram_sim.py) ever sets it |
 | [`hyperram_dqs_phy.py`](../gateware/soc/peripherals/hyperram_dqs_phy.py) 4:1 gearing | ODDRX2DQA / IDDRX2DQA / TSHX2DQA | no | **R1** — no clock enable on any of them; 32 bits move per `sync` cycle unconditionally |
 | …DDRDLL settle FSM `:277-300` | 5 states, three 8-cycle holds | no | **R2** — must complete before any transaction. But `with m.If(lock)` at `:280` has **no timeout and no retry**, so a DLL that never locks hangs `dll_ready` for the life of the bitstream |
 | …`ReadClkSelWindow` `:162-193` | PAUSE 4T either side of a tap change | no | **R1** — a CSR write is asynchronous to `hr` and cannot bracket itself; `tap.idle` is a HyperBus-cycle-accurate condition. The tap *value* is already a CSR |
@@ -139,7 +139,7 @@ shape: a number that cannot move, presented as a measurement.
 | peripheral | decided at elaboration | CPU's? | reason / what it needs |
 |---|---|---|---|
 | [`i2c_master.py`](../gateware/soc/peripherals/i2c_master.py) bit engine | 200 ns slots, 5 per bit | no | **R1/R4** — a CSR peripheral answers in 5 cycles *before* the LSU and uncached `iobus` round trip ([`bus/fault.py:88`](../gateware/soc/bus/fault.py)), two pins need two stores, and an SDA edge while SCL is high is a START to every device on the segment |
-| …**PRER** | nothing — a plain RW register | — | **the model.** `prescale_for()` is exported from the gateware (`:192-200`), called by [`soc_generate_pac.py:649-661`](../scripts/soc_generate_pac.py) with the *solved* clock, and re-derived at run time from `clock::measured()` ([`bus.rs:186-190`](../firmware/cynthion-soc/src/bus.rs)). [`i2c_rate_sweep.py`](../scripts/i2c_rate_sweep.py) walks the whole ladder from **one bitstream** |
+| …**PRER** | nothing — a plain RW register | — | **the model.** `prescale_for()` is exported from the gateware (`:192-200`), called by [`soc_generate_pac.py:649-661`](../scripts/soc/soc_generate_pac.py) with the *solved* clock, and re-derived at run time from `clock::measured()` ([`bus.rs:186-190`](../firmware/cynthion-soc/src/bus.rs)). [`i2c_rate_sweep.py`](../scripts/soc/i2c_rate_sweep.py) walks the whole ladder from **one bitstream** |
 | …`SLOTS_BIT`, `SLOTS_COND` | t_LOW:t_HIGH split | **param** | `:178-181`. A driver can compute f_SCL and cannot learn the split |
 | [`i2c_mux.py`](../gateware/soc/peripherals/i2c_mux.py) select hold | move only at `idle` | no | **R1** — the window is opened by a CSR write firmware has *already issued*: the write completes in ~5 cycles, the transfer it must not disturb is 540 |
 | …`applied` `:205-208` | — | **yes, read-only** | driven and read, but `_select` is `csr.action.RW`, so firmware reads its own request back, never the pins. Both FUSB302Bs answer 0x22 with the same identity byte, which is exactly where a wrong-bus read looks plausible |
@@ -152,7 +152,7 @@ shape: a number that cannot move, presented as a measurement.
 | [`serial_line.py`](../gateware/soc/peripherals/serial_line.py) bit engine | 8.68 µs per bit | no | **R1** — `tx_oe` is *counted*, not inferred: at divisor 8 `phy.tx.rdy` rises at cycle 80 while the stop bit occupies 80..87, so the line is undriven for the whole stop bit (`:56-62`) |
 | …idle qualifier `:212-228` | 12 bit periods | no | **R1** — it gates `phy.rx.i` every `sync` cycle so the PHY's FSM cannot leave IDLE. Filtering *bytes* instead leaves the receiver resynchronising its bit phase to noise |
 | …`divisor` port | reset value only | **yes — already a port** | rank 6 |
-| …`armed`, `frame_errors` `:183-184` | — | **yes, read-only** | both documented "Diagnostic:", both driven, and the only reader in the repository is [`soc_serial_sim.py`](../scripts/soc_serial_sim.py). So the failure the module documents as its known trade — the receiver disarms and a back-to-back sender never gives it 12 idle bits — is not observable by any means the product has |
+| …`armed`, `frame_errors` `:183-184` | — | **yes, read-only** | both documented "Diagnostic:", both driven, and the only reader in the repository is [`soc_serial_sim.py`](../scripts/soc/soc_serial_sim.py). So the failure the module documents as its known trade — the receiver disarms and a back-to-back sender never gives it 12 idle bits — is not observable by any means the product has |
 | [`stream_buffer.py`](../gateware/soc/peripherals/stream_buffer.py) flush `:148-158` | — | no | **R2** — the host types during PLL lock and the flush must fire while `sync` is still in reset. Note `ResetSignal(..., allow_reset_less=True)` at `:150` returns `Const(0)` if the write domain is ever declared `reset_less`, which deletes the fix with no error and no test |
 | …`depth` 16/16/64/16 | LUT RAM vs BRAM | **param** | `top.py:322-336`. Zero CSRs: no occupancy, no high-water mark, no evidence of a drop — on the one path where loss is possible, because [`ns16550a-console-uart.md:198`](chips/ns16550a-console-uart.md) records that `SerialLine` does not honour `ready` |
 | [`clock_monitor.py`](../gateware/soc/peripherals/clock_monitor.py) | `WINDOW_CYCLES = 60_000` = 1 ms | no | **R7.** The gate is correctly baked: the latched count *is* kHz only because the window is exactly 1 ms, so a register here would redefine what the other register means. Three limits below |
@@ -187,7 +187,7 @@ fourth copy of `clocks.USB_PHY_MHZ` rather than an import, against the rule
 |---|---|---|---|
 | [`cpu/intc.py`](../gateware/soc/cpu/intc.py) trigger per source | level vs edge | no | **R3** — `trigger=` is a constructor argument to `amaranth_soc.event.Source`; it decides which flops exist. There is no mux and no register. The table and its per-device justification: [`soc-interrupts.md`](soc-interrupts.md) |
 | …8 of 18 lines | tied low | by design | source number = bit position, so wiring one up renumbers nothing. Each still costs a pending/enable pair |
-| [`cpu/cpu.py`](../gateware/soc/cpu/cpu.py) cache geometry | `CACHE_SETS`, `CACHE_WAYS` | no | genuinely per-bitstream — SpinalHDL generation, then synthesis. [`soc_cache_sweep.py`](../scripts/soc_cache_sweep.py) is the right shape for it |
+| [`cpu/cpu.py`](../gateware/soc/cpu/cpu.py) cache geometry | `CACHE_SETS`, `CACHE_WAYS` | no | genuinely per-bitstream — SpinalHDL generation, then synthesis. [`soc_cache_sweep.py`](../scripts/soc/soc_cache_sweep.py) is the right shape for it |
 | …performance counters | count only | note | the plugin arrives with `--with-rdtime` regardless, so dropping the flag generates a **byte-identical** core; the count is the only free variable |
 | …two unconnected core outputs | `ndmreset`, `debug_stoptime` | **bug** | an openocd `ndmreset` reaches nothing, and `mtime` keeps advancing while the hart is halted, so `mtimecmp` deadlines pile up across a breakpoint and the tick storms on resume |
 | [`cpu/clint.py`](../gateware/soc/cpu/clint.py) | `mtime` compare | no | RISC-V standard; nothing dead |
@@ -230,7 +230,7 @@ reported as "the wrong bitstream", and the one bit that distinguishes them is
 invisible. `usb3343_init` is on that path.
 
 `own` also shows why the checker that was supposed to catch this class does not:
-[`check_ports_connected.py:63-75`](../scripts/check_ports_connected.py) searches
+[`check_ports_connected.py:63-75`](../scripts/tools/check_ports_connected.py) searches
 a haystack that includes the declaring file, so `self.own.eq(own)` inside the
 peripheral's own `elaborate` satisfies it. **Any output driven inside its own
 module passes.** The two checkers disagree and the weaker one is the one on the
@@ -270,7 +270,7 @@ other row above.
 |---|---|---|
 | [`flash_cdc.py`](../gateware/soc/peripherals/flash_cdc.py) | `FLASH_PHY_FAST = False`, not env-overridable | `top.py:676-703`: at `sync` 60 the only integer ratios are 60 (no change) and 120 (does not close at 111.26 MHz). ODDR first, then this |
 | [`flash_sck_full.py`](../gateware/soc/peripherals/flash_sck_full.py) | `FLASH_FULL_SCK = False` | `top.py:705-710`. Also `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
-| `FlashILA` | removed from the SoC in `620901b` | still assumed built by [`soc-size-review.md:136-147`](soc-size-review.md) and [`soc_instrumentation_cost.py:96-106`](../scripts/soc_instrumentation_cost.py), so the peripheral-area figures there are an over-estimate |
+| `FlashILA` | removed from the SoC in `620901b` | still assumed built by [`soc-size-review.md:136-147`](soc-size-review.md) and [`soc_instrumentation_cost.py:96-106`](../scripts/soc/soc_instrumentation_cost.py), so the peripheral-area figures there are an over-estimate |
 
 ## Merged, in no layer yet
 
@@ -278,7 +278,7 @@ A different question from the table, and not answerable by moving anything: this
 is code with no caller. Listed so it is not mistaken for a misplaced decision.
 
 * **`ClockStopPHY`** ([`bootram.py:157-202`](../gateware/soc/bootram.py)) —
-  instantiated nowhere in `gateware/`, only in [`soc_hyperram_sim.py`](../scripts/soc_hyperram_sim.py).
+  instantiated nowhere in `gateware/`, only in [`soc_hyperram_sim.py`](../scripts/soc/soc_hyperram_sim.py).
   It is the Active Clock Stop path, i.e. the only legal way to stall a HyperBus
   transaction, so its absence is why `sustained=False`
 * **`solve_dcsc_rungs`** ([`hyperram_clocks.py:185-235`](../gateware/soc/hyperram_clocks.py)) —
@@ -286,13 +286,13 @@ is code with no caller. Listed so it is not mistaken for a misplaced decision.
   `HyperRAMDomains`, and its `outputs=4` default is unreachable now that
   `MAX_RUNGS = 2`
 * **`PulseCross`** ([`bist_csr.py:55-80`](../gateware/soc/peripherals/bist_csr.py)) —
-  exported, never instantiated; [`soc_bist_cdc_sim.py:73`](../scripts/soc_bist_cdc_sim.py)
+  exported, never instantiated; [`soc_bist_cdc_sim.py:73`](../scripts/soc/soc_bist_cdc_sim.py)
   defines its own copy
 * **`BUS_RESOURCES`** ([`i2c_mux.py:75-79`](../gateware/soc/peripherals/i2c_mux.py)) —
   in `__all__`, imported by nothing; `top.py:2017-2019` and `:2041-2043` restate
   the same mapping twice more
 * **`HyperRAMBist.transport`**, **`StreamBuffer.depth`**, **`BlockRAM.size`** and
-  its `init` setter — properties with no reader. [`soc_stream_buffer_sim.py:77`](../scripts/soc_stream_buffer_sim.py)
+  its `init` setter — properties with no reader. [`soc_stream_buffer_sim.py:77`](../scripts/soc/soc_stream_buffer_sim.py)
   re-declares its own `DEPTH` rather than reading the one that exists
 
 SBU and SWD are the largest instance of this and are **out of scope here** —

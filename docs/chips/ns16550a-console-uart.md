@@ -13,7 +13,7 @@ part — which reads change state, and what they change.
 | Driver | `firmware/cynthion-soc/src/uart.rs`, one type for both instances and for QEMU |
 | Instances | index 0, USB CDC-ACM on AUX; index 1, async serial on R14/T14 to Apollo |
 | Base addresses | `cynthion_soc_pac::base`, generated from the SoC's own memory map — **not written down here** |
-| Simulation | `scripts/uart16550_sim.py` (35 assertions) |
+| Simulation | `scripts/soc/uart16550_sim.py` (35 assertions) |
 | Reference | QEMU's `-M virt` `ns16550a`, which the same driver is tested against |
 
 The offsets below are the NS16550A's own, fixed by the part being copied rather

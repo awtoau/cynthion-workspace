@@ -270,7 +270,7 @@ impl Bist {
     /// `readclksel` reaches the PHY only on a DQS build; on a non-DQS one the
     /// register is written and read by nothing, so eight consecutive cells are
     /// one configuration measured eight times (#343). Proven from the elaborated
-    /// design by `scripts/hyperram_axis_wiring.py`, not from a flat result set.
+    /// design by `scripts/hyperram/hyperram_axis_wiring.py`, not from a flat result set.
     pub fn distinct(&self, cells: u32) -> (u32, u32) {
         if self.dqs() { (cells, 1) } else { (cells / SEL_VALUES, SEL_VALUES) }
     }

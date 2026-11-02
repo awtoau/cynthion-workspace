@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import _paths  # noqa: E402
 import audit_scripts  # noqa: E402
 
 
@@ -38,8 +39,7 @@ def reachable():
     Cached: it parses every script in `scripts/`, and the parametrised test
     below asks thirty times.
     """
-    scripts = sorted(p for p in SCRIPTS.iterdir()
-                     if p.is_file() and p.suffix in (".py", ".sh"))
+    scripts = _paths.script_files()
     names = {p.name for p in scripts} | {audit_scripts.ENTRY}
     reaches = {p.name: audit_scripts.references_from(p, names) for p in scripts}
     shim = ROOT / audit_scripts.ENTRY
@@ -67,7 +67,7 @@ def known_to_run():
 
 @pytest.mark.parametrize("name", sorted(known_to_run()))
 def test_script_known_to_run_is_reachable(name):
-    assert (SCRIPTS / name).exists(), f"{name} is named but absent"
+    assert name in {p.name for p in _paths.script_files()}, f"{name} is named but absent"
     assert name in reachable(), (
         f"{name} runs in the gate but the audit calls it unreachable; "
         "it would be reported as a retirement candidate")

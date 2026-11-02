@@ -54,7 +54,7 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 - What the controller does decide is **when a source can be acknowledged**:
   level and edge differ there and nowhere else.
   [`soc-interrupts.md`](soc-interrupts.md) has the table, and
-  `scripts/soc_intc_sim.py` asserts each row of it.
+  `scripts/soc/soc_intc_sim.py` asserts each row of it.
 
 ## Peripherals
 
@@ -81,7 +81,7 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 | at `0x0` | **the bootloader** — `firmware/cynthion-boot`, 492 bytes | written | [`hardware.md`](hardware.md), [#138](https://github.com/awtoau/cynthion-workspace/issues/138) |
 | the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads | written | too large to be resident |
 | firmware load | JTAG stream, and USB bulk | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
-| memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
+| memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
 
 ## Dependencies and verification
 

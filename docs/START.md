@@ -40,10 +40,10 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 | Thing | Command | Output | Log |
 |---|---|---|---|
 | Apollo d11 | `cd repos/apollo/firmware && make APOLLO_BOARD=cynthion` | `_build/cynthion_d11/firmware.elf` | `tmp/logs/check-apollo.log` (via check) |
-| Apollo guards | `python3 scripts/apollo_budget_check.py --stack-measured 344`, `python3 scripts/verify_vectors.py` | pass/fail | `tmp/logs/dev.log` |
+| Apollo guards | `python3 scripts/apollo/apollo_budget_check.py --stack-measured 344`, `python3 scripts/apollo/verify_vectors.py` | pass/fail | `tmp/logs/dev.log` |
 | SoC fw + boot + gateware | `./dev.py build` (= `soc_run.py --build-only`, no board) | `tmp/awto_soc/build/<variant-slug>/` (`rust_fw.bin`, `rust_boot.bin`, `top.bit`) | `tmp/logs/synthesis-<slug>.log`, `dev.log` |
-| SoC fw only | `cd firmware/cynthion-soc && cargo check --release`; `python3 scripts/soc_bin_matrix.py` (all `[[bin]]`) | `firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/` | check logs |
-| Many variants | `./dev.py build-many` ([`soc_build_fanout.py`](../scripts/soc_build_fanout.py)) | one dir per variant | `dev.log` |
+| SoC fw only | `cd firmware/cynthion-soc && cargo check --release`; `python3 scripts/soc/soc_bin_matrix.py` (all `[[bin]]`) | `firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/` | check logs |
+| Many variants | `./dev.py build-many` ([`soc_build_fanout.py`](../scripts/soc/soc_build_fanout.py)) | one dir per variant | `dev.log` |
 | PAC / SVD | `./dev.py pac` | `firmware/cynthion-soc-pac` | `dev.log` |
 | VexiiRiscv netlist | automatic inside the gateware build; `generate()` in `cpu.py` runs `sbt --batch --no-server "runMain vexiiriscv.Generate ..."` | `repos/vexiiriscv/VexiiRiscv.v`, copied to `tmp/awto_soc/build/<slug>/VexiiRiscv.v` | `dev.log` |
 
@@ -64,7 +64,7 @@ Submodules (4): apollo, cynthion, cynthion-hardware, vexiiriscv ([`.gitmodules`]
 ## 5. Run on the board
 - `./dev.py run` = [`soc_run.py`](../scripts/soc_run.py): QEMU gate -> build -> configure over JTAG (SRAM only) -> read console.
   - `--skip-tests` no QEMU gate; `--no-build` load what exists; `--build-only` no hardware; `--firmware-only` (= `./dev.py fw`) rebuild + flash `.text`, no synthesis; `--force-flash`, `--no-flash`, `--no-read`, `--features`, `--seed`, `--no-parallel-refine`.
-- Multiple agents: submit via `./dev.py board run|shell|confirm|configure|status` (HTTP 127.0.0.1:9100, [`board.py`](../scripts/board.py)); do not call `soc_run.py` concurrently.
+- Multiple agents: submit via `./dev.py board run|shell|confirm|configure|status` (HTTP 127.0.0.1:9100, [`board.py`](../scripts/board/board.py)); do not call `soc_run.py` concurrently.
 - Console: `./scripts/tio_user.py` once, leave running; serves TCP 9000 (`--no-serve` = exclusive). `soc_run.py`/`soc_shell.py` read through 9000. Two readers on the tty garble output.
 - Board state traps:
   - Replug / power cycle drops the SoC (SRAM config): re-run `./dev.py run --no-build` or `board configure`.

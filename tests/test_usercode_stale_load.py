@@ -256,6 +256,7 @@ class FakeDebugger:
 
 
 def test_the_read_path_returns_what_the_programmer_reports():
+    import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
     from soc_usercode import read_identity
 
     assert read_identity(FakeDebugger(ECP5_IDCODE, 0xDEAD_BEEF)) == (

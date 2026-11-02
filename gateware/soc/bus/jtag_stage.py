@@ -80,7 +80,7 @@ and a jitter buffer rather than a store, and 32 entries is generous. A JTAG shif
 cannot be stalled, so `overflow` records the case where that margin is wrong
 instead of losing words silently.
 
-Measured end to end by `scripts/soc_jtag_stage.py`: 32 KiB in 85 ms, 377 KiB/s. For
+Measured end to end by `scripts/soc/soc_jtag_stage.py`: 32 KiB in 85 ms, 377 KiB/s. For
 comparison, on the same board in the same session a register interface moves a 16-bit
 word in 28 ms and `apollo configure` moves a bitstream at 294 KiB/s.
 """
@@ -363,7 +363,7 @@ class JTAGStager(Elaboratable):
         # gain. Two data words are collected here and issued as one request.
         #
         # A `write` frame therefore wants an EVEN start address and an even
-        # number of data words. `scripts/soc_jtag_stage.py` pads the image, since
+        # number of data words. `scripts/soc/soc_jtag_stage.py` pads the image, since
         # a firmware image is a byte stream and its length is the host's to round.
         second = Signal()
 

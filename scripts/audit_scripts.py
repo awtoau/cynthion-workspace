@@ -74,6 +74,7 @@ SCRIPTS = ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
 
+import _paths  # noqa: E402
 from devlog import emit  # noqa: E402
 
 # The root of reachability. Everything live is live because this names it, or
@@ -305,8 +306,7 @@ def main():
     if rest:
         parser.error(f"unrecognised arguments: {' '.join(rest)}")
 
-    scripts = sorted(p for p in SCRIPTS.iterdir()
-                     if p.is_file() and p.suffix in (".py", ".sh"))
+    scripts = _paths.script_files()
     names = {p.name for p in scripts}
     # dev.py at the root is the entry point and is not itself in scripts/ twice;
     # the shim there and the real one under scripts/ share a name, which is

@@ -5,7 +5,7 @@ a host.** The text shell is one front end over the drivers; this is the other
 ([#303](https://github.com/awtoau/cynthion-workspace/issues/303),
 [#250](https://github.com/awtoau/cynthion-workspace/issues/250)).
 
-Host side: [`../scripts/soc_stream.py`](../scripts/soc_stream.py) — decoder,
+Host side: [`../scripts/soc/soc_stream.py`](../scripts/soc/soc_stream.py) — decoder,
 reference encoder, and the golden frames the firmware is checked against.
 Frozen byte-for-byte in [`../tests/test_soc_stream.py`](../tests/test_soc_stream.py).
 

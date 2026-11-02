@@ -91,7 +91,7 @@ use crate::uart::Uart;
 /// is where the larger miss rate is measured, at four times the cache.
 ///
 /// `AtomicU32` rather than a `static mut`, which is banned crate-wide -- see
-/// `scripts/soc_irq_log_check.py`. Nothing here uses the atomic operations; the
+/// `scripts/soc/soc_irq_log_check.py`. Nothing here uses the atomic operations; the
 /// type is here because it is the one way to get a writable static with a
 /// pointer that may legally be written through. All zeroes, so it costs `.bss`
 /// and not a byte of the image.

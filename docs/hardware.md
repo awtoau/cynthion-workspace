@@ -57,7 +57,7 @@ replace it.
 
 **SoC peripheral registers come from the SoC's own memory map, not from prose.**
 
-Run `./scripts/soc_generate_pac.py`. It elaborates the SoC far enough to read its
+Run `./scripts/soc/soc_generate_pac.py`. It elaborates the SoC far enough to read its
 memory map — no synthesis, no place-and-route, no board touched — and emits
 `firmware/cynthion-soc-pac/soc.svd` (CMSIS-SVD: 12 peripherals, 55 registers, 96
 fields) and the `cynthion-soc-pac` crate from it, via `svd2rust` and `form`. Add
@@ -730,7 +730,7 @@ question, because the identity is the ECP5's USERCODE and only JTAG reads it:
   the source digest, the part, the declared clocks and the cache and ISA the core
   was generated with. One record beside each bitstream, one index across all.
 * `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names
-  `stale-bitstream`, `wrong-part` or `declared-clock`. `scripts/soc_probe.py`
+  `stale-bitstream`, `wrong-part` or `declared-clock`. `scripts/soc/soc_probe.py`
   asserts the same two.
 
 The `fabric` line of `info` is what only the CPU can see: the die's temperature
@@ -889,7 +889,7 @@ and drop counting are exercised — including under QEMU, where
 
 Printing from a handler is a **compile error**, not a convention:
 `firmware/cynthion-soc/src/irq.rs` holds a `UartRx`, which has no transmit
-method and no `core::fmt::Write`. `scripts/soc_irq_log_check.py` (the `irqlog`
+method and no `core::fmt::Write`. `scripts/soc/soc_irq_log_check.py` (the `irqlog`
 check in `scripts/check.py`) covers what the compiler cannot — Rust's privacy
 cannot stop a sibling module naming `Uart`.
 

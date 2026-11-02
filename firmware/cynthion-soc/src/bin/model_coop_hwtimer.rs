@@ -1,6 +1,6 @@
 //! `model_coop`, plus three periodic jobs on three HARDWARE comparators.
 //!
-//! Built by `scripts/soc_model_probe.py`. Its pair is `model_coop_swqueue`,
+//! Built by `scripts/soc/soc_model_probe.py`. Its pair is `model_coop_swqueue`,
 //! which schedules the same three jobs on the one `mtimecmp`
 //! `gateware/soc/cpu/clint.py` provides today. The difference between the
 //! two `.text` figures is what the software timer queue costs.

@@ -3,7 +3,7 @@
 //! Same ported state machine, same endpoint stand-in, same queue, same
 //! descriptor tables, same work per event. What differs is who dispatches: a
 //! superloop there, an `#[rtic::app]` hardware task here. Built by
-//! `scripts/soc_usb_probe.py`; see `src/usb.rs` for what is real and what is a
+//! `scripts/soc/soc_usb_probe.py`; see `src/usb.rs` for what is real and what is a
 //! stand-in, and `docs/rtic.md` for the backend.
 //!
 //! ## What RTIC did not take over, and why

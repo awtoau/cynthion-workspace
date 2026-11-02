@@ -22,7 +22,7 @@ Where each build fact lives instead:
                        by `gateware/usercode_map.py` and checked over JTAG by
                        `scripts/soc_confirm.py`
     declared clocks    the build record, and `target::TIME_HZ` for the firmware's
-                       own expectation -- `scripts/soc_generate_pac.py` generates
+                       own expectation -- `scripts/soc/soc_generate_pac.py` generates
                        it from `SYNC_MHZ`
     cache and ISA      the build record, and `target::CPU_HAS_*`
     presence           `die` bit 8, set unconditionally in every platform build

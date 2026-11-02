@@ -53,7 +53,7 @@ Four checks, all of which refuse rather than warn:
 ## The source check is exact
 
 One elaboration, compared byte for byte, nothing normalised away. The design elaborates
-identically every time; `scripts/soc_repro_check.py` is the gate on that staying true.
+identically every time; `scripts/soc/soc_repro_check.py` is the gate on that staying true.
 
 ## What it does not check
 

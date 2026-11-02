@@ -18,7 +18,7 @@
 //! ## The clock line is a check, not a report
 //!
 //! `sync` is COUNTED against the 60 MHz oscillator by `clock_monitor.py` and
-//! printed beside `target::TIME_HZ`, which `scripts/soc_generate_pac.py`
+//! printed beside `target::TIME_HZ`, which `scripts/soc/soc_generate_pac.py`
 //! generates from the gateware's `SYNC_MHZ`. A PLL with its feedback
 //! unconnected reported 30 MHz from a constant while `sync` was not oscillating
 //! at all; only a counted clock catches that, and only the CPU can count it.
@@ -287,7 +287,7 @@ pub fn command(uart: &mut Uart) {
         build::BUILT
     );
     // `-O{}` beside the profile, because `release` is a name and not a setting:
-    // `scripts/opt_level_sweep.py` builds every level under it.
+    // `scripts/soc/opt_level_sweep.py` builds every level under it.
     let _ = writeln!(
         uart,
         "tools    {}  {} {} -O{}",
@@ -551,7 +551,7 @@ pub fn within_one_percent(measured_khz: u32, declared_khz: u32) -> bool {
 
 /// The `misa` extension bits the core was GENERATED with.
 ///
-/// `target::CPU_HAS_*`, which `scripts/soc_generate_pac.py` writes from
+/// `target::CPU_HAS_*`, which `scripts/soc/soc_generate_pac.py` writes from
 /// `cpu/cpu.py`'s own flag list.
 ///
 /// `'a' as u32 - 'a' as u32` is zero and clippy's `eq_op` says so, correctly.

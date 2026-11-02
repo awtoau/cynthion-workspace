@@ -29,8 +29,8 @@ install or for a board with no working bootloader.
 any point — the FPGA is held unconfigured for most of it.
 
 We already build Apollo firmware from source rather than shipping a prebuilt binary
-(`repos/apollo`, with `scripts/apollo_budget_check.py` and
-`scripts/apollo_memory_report.py` guarding the flash budget, and
+(`repos/apollo`, with `scripts/apollo/apollo_budget_check.py` and
+`scripts/apollo/apollo_memory_report.py` guarding the flash budget, and
 `docs/apollo_samd11_mcu/` documenting it). That is strictly more than upstream's user-facing
 path offers, which ships a blob.
 

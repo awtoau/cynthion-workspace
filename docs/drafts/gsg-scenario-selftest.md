@@ -39,7 +39,7 @@ Structurally this is the closest match to work we have already done, because the
   the PHY tests need.
 - **The HyperRAM test** reads the identification registers. We have a HyperRAM controller,
   a probe peripheral (`peripherals/hyperram_probe.py`) and an identify script
-  (`scripts/hyperram_identify.py`). This is already covered by our own tooling, differently.
+  (`scripts/hyperram/hyperram_identify.py`). This is already covered by our own tooling, differently.
 - **The debug-connection test** is an Apollo JTAG check that does not involve the FPGA
   design at all.
 - **The transport is the real difference.** Upstream reaches the registers over a
