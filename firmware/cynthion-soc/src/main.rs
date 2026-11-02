@@ -202,7 +202,7 @@ pub struct Devices {
     type_c: typec::Controllers,
     /// The one host engine (TARGET_PHY); `None` base on a target without it.
     usb_host: usb_host::Host,
-    /// The data path on that engine (#574); `None` base until it is in `top.py` (#578).
+    /// The data path on that engine (#580); `None` base until it is in `top.py` (#578).
     datapath: datapath::DataPath,
 }
 

@@ -11,7 +11,7 @@
   bytes to/from the RV (`ctl_rx` / `ctl_tx`). All four streams carry `last`:
   OUT `last` = final byte of a short packet; IN `last` ends the transfer (ZLP if full).
 - Streams are in the `usb` domain; `docs/data-path.md#wiring` has the crossings.
-- Why not `USBSerialDevice`: it builds its descriptors and `USBDevice` internally (#574).
+- Why not `USBSerialDevice`: it builds its descriptors and `USBDevice` internally (#580).
 """
 
 from amaranth                                 import Module

@@ -176,7 +176,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("usb <port> rx", "raw/host: drain the RX FIFO (c: = RXCMD)"),
     ("usb <port> addr [n]", "device address the transfers use"),
     ("usb <port> aoa", "enumerate, 51/52/53, re-attach, bulk pair"),
-    ("usb <port> dp", "data path: queue, busy, NAK limit (#574)"),
+    ("usb <port> dp", "data path: queue, busy, NAK limit (#580)"),
     ("usb <port> dp serve [n]", "serve PC blocks until 5 s idle"),
     ("usb <port> dp nak <n>", "NAKs in a row before a block returns"),
     ("usb3343", "the USB PHYs"),

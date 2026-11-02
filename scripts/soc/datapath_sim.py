@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Stage 1 of the data path (#574): blocks out to a phone and back, payload never via the CPU.
+Stage 1 of the data path (#580): blocks out to a phone and back, payload never via the CPU.
 
     ./scripts/soc/datapath_sim.py            # every group
     ./scripts/soc/datapath_sim.py out nak    # some groups
