@@ -45,25 +45,29 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS  # noqa: E402
+import _paths  # noqa: E402,F401  (scripts/ subdirectories on sys.path)
+from build_log_audit import router_progress  # noqa: E402
 
 UTIL_RE = re.compile(r"^Info:\s+(\w+):\s+(\d+)/\s*(\d+)\s+\d+%")
-FMAX_RE = re.compile(r"^Info: Max frequency for clock\s+'([^']+)':\s+([\d.]+) MHz")
+# Post-route line is `Warning:` for a FAILing clock, `Info:` otherwise; matching
+# only `Info:` kept the pre-route estimate for exactly the clocks that fail.
+FMAX_RE = re.compile(r"^(?:Info|Warning): Max frequency for clock\s+'([^']+)':"
+                     r"\s+([\d.]+) MHz \((PASS|FAIL) at ([\d.]+) MHz\)")
 
 
 def parse_report(text):
-    """Pull utilisation and per-clock Fmax out of a nextpnr log."""
-    util, fmax = {}, {}
+    """Pull utilisation, per-clock Fmax and per-clock PASS/FAIL out of a nextpnr log."""
+    util, fmax, verdict = {}, {}, {}
     for line in text.splitlines():
         m = UTIL_RE.match(line)
         if m:
             util[m.group(1)] = int(m.group(2))
         m = FMAX_RE.match(line)
         if m:
-            # A clock can be reported more than once (before and after
-            # routing). The last value is the post-route one, which is the
-            # only one that describes the actual bitstream.
+            # Reported before and after routing; the last one is post-route.
             fmax[m.group(1)] = float(m.group(2))
-    return util, fmax
+            verdict[m.group(1)] = m.group(3)
+    return util, fmax, verdict
 
 
 def run_once(nextpnr, json_path, lpf, outdir, seed, freq, opts=(), label=None):
@@ -89,12 +93,14 @@ def run_once(nextpnr, json_path, lpf, outdir, seed, freq, opts=(), label=None):
     # That is exactly the case a binary search needs to read, so a failing
     # exit code is only fatal if no report was produced.
     text = tim.read_text() if tim.exists() else (proc.stdout + proc.stderr)
-    util, fmax = parse_report(text)
+    util, fmax, verdict = parse_report(text)
     if not util:
         emit(f"  seed {seed}: no utilisation parsed (rc={proc.returncode})")
         emit(proc.stderr[-2000:])
         return None
-    return util, fmax, elapsed
+    route = router_progress(tim) or {}
+    route["finished"] = "Program finished normally." in text
+    return util, fmax, verdict, route, elapsed
 
 
 def main():
@@ -138,12 +144,16 @@ def main():
                                        key=lambda row: row[0]):
             if got is None:
                 continue
-            util, fmax, elapsed = got
+            util, fmax, verdict, route, elapsed = got
             results.append({"run": index, "seed": seed, "util": util, "fmax": fmax,
+                            "verdict": verdict, "route": route,
                             "seconds": round(elapsed, 1)})
             emit(f"  run {index} seed={seed}: "
                  f"COMB={util.get('TRELLIS_COMB')} FF={util.get('TRELLIS_FF')} "
-                 f"BRAM={util.get('DP16KD')} fmax={fmax} {elapsed:.1f}s")
+                 f"BRAM={util.get('DP16KD')} verdict={verdict} "
+                 f"route iters={route.get('iterations')} "
+                 f"converged={route.get('converged')} "
+                 f"diverging={route.get('diverging')} {elapsed:.1f}s")
 
     # The summary is the point: spread, not individual runs.
     emit("\n=== spread across runs ===")
@@ -155,11 +165,17 @@ def main():
     clocks = {c for r in results for c in r["fmax"]}
     for clock in sorted(clocks):
         vals = [r["fmax"][clock] for r in results if clock in r["fmax"]]
+        passes = sum(r["verdict"].get(clock) == "PASS" for r in results)
         if vals:
             spread = max(vals) - min(vals)
             pct = 100.0 * spread / min(vals) if min(vals) else 0.0
             emit(f"fmax {clock:28s} min={min(vals):.2f} max={max(vals):.2f} "
-                f"spread={spread:.2f} MHz ({pct:.1f}%)")
+                f"spread={spread:.2f} MHz ({pct:.1f}%)  PASS {passes}/{len(results)}")
+    routed = sum(bool(r["route"].get("converged")) for r in results)
+    iters = [r["route"]["iterations"] for r in results if "iterations" in r["route"]]
+    if iters:
+        emit(f"router   converged {routed}/{len(results)}  "
+             f"iterations min={min(iters)} max={max(iters)}")
     times = [r["seconds"] for r in results]
     if times:
         emit(f"runtime  min={min(times):.1f}s max={max(times):.1f}s")
