@@ -3779,3 +3779,920 @@ The capture path is bounded by the slower of USB and HyperRAM:
 
 4.5× headroom. USB is the constraint.
 
+
+---
+
+## docs/drafts/gsg-scenarios-master.md and the eleven gsg-scenario-*.md children as first written (merged into the master)
+
+### Source: docs/drafts/gsg-scenarios-master.md
+
+# Master: port Great Scott Gadgets' Cynthion scenarios to our SoC
+
+Upstream ships three bitstreams and documents about a dozen distinct things a Cynthion
+can do. We have replaced luna-soc with our own VexiiRiscv SoC. This issue is the survey
+of what upstream actually does, and the index of one child issue per scenario.
+
+The reference half — what each scenario is and what implements it upstream, with the
+wire contracts — is in [`docs/gsg-scenarios.md`] (https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md).
+This issue holds the part that is not durable: what porting each one costs and how it
+would be tested.
+
+## The one fact that shapes every child
+
+**This SoC has no USB device controller and no USB packet path of any kind on the
+TARGET port.**
+
+The peripherals are: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`,
+`i2c_mux`, `vbus`, `fabric_status`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
+`gateware/soc/peripherals/ulpi_window.py` reads and writes a USB3343's PHY registers over
+`target_phy` and cannot send or receive a single packet. Moondancer's firmware expects
+three sets of `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none of
+them exist here.
+
+So for every scenario, "what would porting it require" begins at the same place: build
+or adopt a USB packet path. The children differ in how much they need on top of that.
+
+## What we do have, and it is more than it sounds
+
+| Asset | Where | Why it matters |
+|---|---|---|
+| Our own board platform | `gateware/board/cynthion_r1_4.py` | `control_phy`, `aux_phy`, `target_phy` resources and `apollo_port_sharing` already declared |
+| A working luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, instantiated in the SoC at `gateware/soc/top.py` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
+| CONTROL port handover | `gateware/probes/sideband/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
+| VBUS switch control | `gateware/soc/peripherals/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
+| HyperRAM | `gateware/soc/peripherals/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
+| PAC generated from the SoC's own map | `./dev.py pac` | A new peripheral gets Rust accessors without hand-transcription |
+| `smolusb::control::Control` | upstream, trait-based over `D: UsbDriver` | The control-transfer state machine is hardware-independent and ports verbatim. It is the one part that is portable today |
+
+## The testing constraint, which is the real one
+
+Our three test tiers do not overlap the way the scenarios need.
+
+* **`./dev.py test` runs `qemu-system-riscv32 -M virt`.** That machine has a 16550, a
+  PLIC and a CLINT and *nothing else of ours* — no ULPI, no USB, no HyperRAM, no
+  `fabric_status`. QEMU can test firmware logic that does not touch a PHY: protocol
+  parsers, command dispatch, descriptor construction, the `smolusb` control state
+  machine driven by a mock. It cannot test a single USB peripheral.
+* **`./dev.py sim` runs 15 Amaranth pysim simulations** (`scripts/soc_sims.py`), 9 of
+  them sub-second and in the pre-commit gate. There is currently **no USB simulation and
+  no ULPI simulation**. Adding one is the highest-leverage thing on this whole list,
+  because it is the only tier that can test a packet path without a board.
+* **`./dev.py test-board`** runs the shell suite on real hardware. `run`, `console` and
+  `flash` are declared `needs_hardware` and are deliberately excluded from `gate` and
+  `ci`.
+
+A scenario whose only test is "plug it in and look" is a scenario that will silently rot.
+Each child states its test tier explicitly, and where the answer is "hardware only", say
+so rather than pretending.
+
+## The children
+
+| # | Scenario | Bitstream / firmware upstream | Verdict |
+|---|---|---|---|
+| 1 | [USB protocol analyzer] (gsg-scenario-analyzer.md) | `analyzer.bit`, no firmware | Hard — biggest gateware build, but no firmware and a fully specified wire contract |
+| 2 | [Analyzer built-in test device] (gsg-scenario-analyzer-test-device.md) | inside `analyzer.bit`, AUX PHY | Portable — closest to what already runs on AUX |
+| 3 | [Facedancer device emulation] (gsg-scenario-facedancer.md) | `facedancer.bit` + `moondancer.bin` | Hard — needs the USB peripheral set *and* the libgreat command surface |
+| 4 | [USB proxy / MITM] (gsg-scenario-usb-proxy.md) | same as 3 | Free once 3 lands — it is host-side only |
+| 5 | [USER I/O from Facedancer] (gsg-scenario-user-io.md) | same as 3 | Portable — our `gpio` and LED peripherals already exist |
+| 6 | [Self-test] (gsg-scenario-selftest.md) | `selftest.bit`, no firmware | Portable — JTAG register reads, and we already have ULPI register access |
+| 7 | [Bitstream configuration and flashing] (gsg-scenario-flashing.md) | Apollo MCU + `flash_bridge.py` | Already done, differently — worth an audit, not a port |
+| 8 | [MCU firmware update and recovery] (gsg-scenario-mcu-firmware.md) | Apollo + Saturn-V, DFU | Already done — no SoC involvement at all |
+| 9 | [Bulk throughput test] (gsg-scenario-speed-test.md) | `luna/gateware/applets/speed_test.py` | Portable — we have measured 195.4 Mbps on AUX already |
+| 10 | [Custom gateware tutorials] (gsg-scenario-custom-gateware.md) | tutorial sources, luna `USBDevice` | Portable — a platform-compatibility question, not a SoC one |
+| 11 | [Factory hardware validation] (gsg-scenario-factory-hil.md) | `cynthion-test` + Tycho | Needs hardware we lack — Tycho, Sasserides, GreatFET One, Black Magic Probe |
+
+## Shared prerequisites
+
+Three pieces of work are prerequisites for several children at once. They are called out
+here so they are not re-argued in each.
+
+**P1. A ULPI packet path on `target_phy`.** Today `target_phy` reaches only
+`ulpi_window.UlpiRegisters`. Scenarios 1, 3 and 4 all need `luna.gateware.interface.ulpi`'s
+full PHY plus a UTMI-level consumer. The `USBSerialDevice` on `aux_phy` proves the layer
+works on this platform; the work is instantiating it on the right PHY without disturbing
+the register window that the board tests depend on.
+
+**P2. A ULPI simulation.** Neither QEMU nor the current sim set can see a USB packet.
+Until a bus-functional ULPI model exists in `scripts/`, every USB scenario is
+hardware-only, which makes all of them untestable in `gate` and `ci`. This should
+probably be done before scenario 1, not during it.
+
+**P3. A host-side board layer.** Upstream's `cynthion` Python package speaks to a board
+identified by VID:PID `1d50:615b` with interface subclass `0x10` (analyzer) or `0x20`
+(moondancer). Anything we build either matches those descriptors — and then Packetry and
+Facedancer work unmodified — or does not, and needs its own host tooling. **Match them.**
+The descriptors are the cheapest part of any of this and they are what buys us upstream's
+entire host stack for free.
+
+## Website versus code
+
+Six discrepancies found between what greatscottgadgets.com documents and what the
+repositories contain, plus one upstream defect. They are recorded in
+[`docs/gsg-scenarios.md`] (https://github.com/awtoau/cynthion-workspace/blob/main/docs/gsg-scenarios.md#website-versus-code) rather
+than here, because they stay true. The defect —
+`cynthion build facedancer` raising `NameError` — is worth reporting upstream.
+
+## Scope
+
+This issue does not commit us to porting anything. It exists so that the decision about
+each scenario is made against what upstream actually does rather than against a memory of
+it.
+
+### Source: docs/drafts/gsg-scenario-analyzer.md
+
+# Scenario 1: USB protocol analyzer (Packetry)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §1.
+
+## What it is
+
+Capture Low-, Full- and High-Speed USB 2.0 traffic passing through the TARGET port pair
+and stream it to Packetry on the host. This is Cynthion's headline capability and the
+factory-default bitstream.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/analyzer/top.py::USBAnalyzerApplet`
+  — capture engine `analyzer/analyzer.py`, HyperRAM FIFO `analyzer/fifo.py` (2^22 × 16-bit),
+  `analyzer/speed_detection.py`, `analyzer/event_detection.py`.
+- Firmware: **none**. Pure gateware, no CPU.
+- Host: `packetry: src/backend/cynthion.rs`.
+
+## Hardware it needs
+
+TARGET-C or TARGET-A carrying the traffic under observation, CONTROL carrying the capture
+stream to the host. Two cables. A device and a host to watch — or scenario 2's built-in
+test device instead.
+
+## What porting it would require
+
+The absence of a CPU is the good news: nothing here needs firmware, a PAC, or the libgreat
+protocol. It is entirely a gateware problem.
+
+Needed, and not present:
+
+1. **P1, the ULPI packet path on `target_phy`.** Today that PHY reaches only
+   `ulpi_window.UlpiRegisters`. The analyzer needs the full `luna.gateware.interface.ulpi`
+   PHY and a UTMI-level receive path. The `USBSerialDevice` already running on `aux_phy`
+   proves the layer works on our platform.
+2. **The capture engine itself.** `USBAnalyzer` is ~400 lines of Amaranth with no luna-soc
+   dependency. It should port more or less as-is; the question is whether we take it or
+   write our own.
+3. **A HyperRAM stream port.** Upstream's `HyperRAMPacketFIFO` instantiates luna's
+   `HyperRAMInterface`/`HyperRAMPHY` directly. We have our own DQS PHY
+   (`gateware/soc/peripherals/hyperram_dqs_phy.py`) behind a Wishbone map at `0x2000_0000`, tuned
+   and measured. Reusing ours means writing a streaming front end for it; using luna's
+   means two HyperRAM controllers in one repo. **This is the one real design decision in
+   this scenario** and it should be settled before any code is written.
+4. **A bulk IN endpoint on CONTROL**, plus the vendor request handler for the five
+   control requests, plus the descriptors.
+5. **The port request.** Already solved — `gateware/probes/sideband/sideband_advertise.py`.
+6. **VBUS switching.** `gateware/soc/peripherals/vbus_csr.py` exists but is CPU-driven; the
+   analyzer has no CPU, so the switch control must be driven from gateware state instead.
+
+Match the wire contract exactly and Packetry works unmodified:
+
+| Item | Value |
+|---|---|
+| VID:PID | `1d50:615b` |
+| Interface | class `0xff`, subclass `0x10`, protocol `0x01` |
+| Capture stream | bulk IN `0x81`, 16 KiB reads, 4 transfers in flight |
+| Vendor requests | `0` get state, `1` set state, `2` get speeds, `3` set test-device config, `4` get protocol minor version |
+
+State byte: capture-enable bit plus a 2-bit speed selector.
+
+## How it would be tested
+
+- **QEMU: no.** No firmware exists to run, and `-M virt` has no ULPI.
+- **Simulation: yes, and this is where the coverage has to live.** A bus-functional ULPI
+  model driving known packet sequences into the capture engine, asserting the byte stream
+  that comes out the other end, is a pure-`pysim` test that would sit in
+  `scripts/soc_sims.py`. It needs P2 built first. The HyperRAM FIFO can be simulated
+  against the existing HyperRAM model separately.
+- **Hardware: required for the end-to-end claim.** Packetry connecting, negotiating speed,
+  and decoding a real enumeration is not simulatable. That test belongs in
+  `./dev.py test-board`, gated on hardware, not in `gate`.
+
+The split: the capture engine and the FIFO can be covered in `gate`. Speed detection
+against a real chirp, and Packetry interop, cannot.
+
+## Verdict
+
+**Hard.** The largest gateware build of any child, and it carries the repo's only genuine
+architectural decision (whose HyperRAM controller). But it needs no firmware, no PAC and
+no host tooling, and its wire contract is completely specified by Packetry's source.
+
+### Source: docs/drafts/gsg-scenario-analyzer-test-device.md
+
+# Scenario 2: Analyzer built-in test device
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §2.
+
+## What it is
+
+A second USB device instantiated on the **AUX** PHY inside the analyzer bitstream, on board
+revisions ≥ r0.6. It presents an interrupt endpoint at Low, Full or High speed under host
+control, giving the analyzer a known traffic source to be validated against without needing
+a separate device plugged in. VID:PID `1209:000a`.
+
+Not documented on the website at all. Found only in the code.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/analyzer/top.py::AnalyzerTestDevice`.
+- Host control: analyzer vendor request `3` (set test config), and
+  `packetry: src/backend/cynthion.rs::configure_test_device`.
+- Firmware: none.
+
+## Hardware it needs
+
+A loopback cable from AUX to TARGET, and nothing else. That is the entire point of it.
+
+## What porting it would require
+
+This is the smallest port on the list and the one closest to what already runs.
+
+- `USBSerialDevice` on `aux_phy` in `top.py` is already a luna `USBDevice` on
+  the same PHY, enumerating at high speed. Swapping a CDC-ACM function for an
+  interrupt-endpoint function is a descriptor and endpoint-handler change, not new
+  infrastructure.
+- The three-speed switching (Low/Full/High selected at runtime) is the only genuinely new
+  part; upstream builds separate descriptor sets per speed and adds a standard request
+  handler for each.
+- No CPU involvement, no HyperRAM, no libgreat.
+
+## How it would be tested
+
+- **QEMU: no.** No firmware.
+- **Simulation: yes.** A luna `USBDevice` responding to a driven host model is exactly the
+  kind of thing pysim handles, and upstream luna has test infrastructure for it. This
+  could land as a sub-second sim in the fast tier.
+- **Hardware: yes, and cheaply.** AUX enumerating on the host as `1209:000a` is a
+  one-cable check. `./dev.py test-board` territory.
+
+## Why it might be worth doing first
+
+It is the only scenario that produces a **test fixture** rather than a feature: once this
+exists, scenario 1 has a traffic source that does not depend on borrowing a real USB device,
+and the analyzer can be validated on a bench with one loopback cable. Building the thing
+that tests the hard scenario before building the hard scenario is the right order.
+
+Against that: it tests the analyzer, and we have no analyzer yet. On its own it proves only
+that we can put a chosen device on AUX — which `USBSerialDevice` already proves.
+
+## Verdict
+
+**Portable.** Nearest neighbour to code we already run. Small, and its value is almost
+entirely as scaffolding for scenario 1.
+
+### Source: docs/drafts/gsg-scenario-facedancer.md
+
+# Scenario 3: Facedancer device emulation (Moondancer)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §3.
+
+## What it is
+
+Emulate a real USB device on the TARGET port, with the device's behaviour written in Python
+on the host. The FPGA runs a RISC-V SoC whose firmware ("Moondancer") gives the host
+fine-grained control of the target USB port over the libgreat command protocol.
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/gateware/facedancer/top.py` — a luna-soc SoC
+  with a VexRiscv CPU, 64 KiB block RAM at `0x0`, SPI flash at `0x1000_0000`, HyperRAM at
+  `0x2000_0000`, CSRs at `0xf000_0000` (`leds`, `gpio0/1`, `uart0/1`, `timer0/1`, `spi0`,
+  `usb0/1/2` each with `ep_control`/`ep_in`/`ep_out`, `advertiser`, `info`).
+- Firmware: `cynthion: firmware/moondancer/src/bin/moondancer.rs`, plus `moondancer-pac`,
+  `lunasoc-hal`, `smolusb`, `libgreat`.
+- Host: the `facedancer` package's Moondancer backend via
+  `cynthion: cynthion/python/src/boards/cynthion_moondancer.py` (board ID `0x10`).
+
+## Hardware it needs
+
+CONTROL to the control host, TARGET-C/A to the host being fooled. Two cables, two hosts
+(or one host and two ports).
+
+## What porting it would require
+
+This is the deepest port, and it has two independent halves.
+
+### Half one: the USB peripherals (gateware)
+
+Moondancer's firmware addresses **three** USB device peripherals, each split into four CSR
+blocks: `usb{0,1,2}` plus `ep_control`, `ep_in`, `ep_out`. We have **none** of them.
+`target_ulpi` gives register access to the PHY and cannot move a packet.
+
+So this needs P1 (the ULPI packet path) *and* a CPU-attached endpoint peripheral set on top
+of it — a control-endpoint block, an IN block and an OUT block, each with a CSR interface,
+each raising a PLIC interrupt. That is a genuine peripheral design, not an adaptation.
+
+Note that the three USB peripherals correspond to the three PHYs, and only one of them
+(`usb0`, TARGET) is needed for basic emulation. Building one set rather than three is a
+legitimate reduction in scope, and it should be stated explicitly rather than discovered.
+
+### Half two: the command surface (firmware)
+
+The Moondancer firmware registers six libgreat/GCP classes — `core`, `firmware`,
+`selftest`, `gpio`, `leds`, `moondancer`. The `moondancer` class is the USB device control
+surface: `connect`, `disconnect`, `bus_reset`, `read_control`, `set_address`,
+`configure_endpoints`, `stall_endpoint_in`, `stall_endpoint_out`,
+`clear_feature_endpoint_halt`, `read_endpoint`, `ep_out_prime_receive`,
+`write_control_endpoint`, `write_endpoint`, `get_interrupt_events`, `get_nak_status`,
+`ep_out_interface_enable`.
+
+We have no GCP dispatch in `firmware/cynthion-soc`. The verb table, the class registry and
+the transport (vendor request `0x65`, bulk IN `0x81`, bulk OUT `0x02` — `cynthion:
+shared/libgreat.toml`) all have to exist before any verb does anything.
+
+**`smolusb::control::Control` is the exception, and it is a real one.** It is trait-based —
+`dispatch_event` takes `&D where D: UsbDriver` — so the control-transfer state machine is
+hardware-independent and ports verbatim against whatever driver we write. That is the one
+part of this scenario that is portable today, and it is not a small part.
+
+### Half three, implicitly: the host
+
+Present the same descriptors upstream does — VID:PID `1d50:615b`, interface subclass
+`0x20`, protocol `0x00` — and the unmodified `facedancer` package drives it. Deviating
+means writing and maintaining a backend.
+
+## How it would be tested
+
+- **QEMU: partially, and more than it first appears.** `-M virt` has no USB, but the GCP
+  dispatch layer, the verb table, descriptor construction, and `smolusb`'s control state
+  machine driven against a mock `UsbDriver` are all pure firmware logic. That is a real
+  fraction of half two and it belongs in `./dev.py test`.
+- **Simulation: yes for the peripheral.** A CSR-driven endpoint block against a ULPI model
+  is a pysim test. Needs P2.
+- **Hardware: required for anything end-to-end.** "A host enumerates our emulated keyboard"
+  cannot be simulated. Upstream's own answer is the same: their firmware unit tests
+  (`cd firmware/moondancer/ && python -m unittest`) require CONTROL **and** AUX both cabled
+  to the host. That test suite is worth reading as a specification of expected behaviour
+  even before we can run it.
+
+## Verdict
+
+**Hard.** Two large pieces of new work — an endpoint peripheral family and a command
+protocol — with only the control state machine coming for free. It is also the scenario
+with the largest payoff, because scenarios 4 and 5 fall out of it at nearly zero extra
+cost.
+
+### Source: docs/drafts/gsg-scenario-usb-proxy.md
+
+# Scenario 4: USB proxy / MITM
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §4.
+
+## What it is
+
+Forward USB transactions between a target host and a real device attached to the control
+computer, with Python filters able to observe or rewrite them in flight. GSG documents it
+as a distinct Cynthion scenario with its own page.
+
+## What implements it upstream
+
+**Nothing on the device.** The bitstream and firmware are byte-identical to scenario 3 —
+`facedancer.bit` + `moondancer.bin`. The proxy is entirely host-side:
+
+- `facedancer: facedancer/proxy.py::USBProxyDevice`
+- `facedancer: facedancer/filters/` — `USBProxySetupFilters`, `USBProxyPrettyPrintFilter`
+- Example: `cynthion: cynthion/python/examples/facedancer-usbproxy.py`
+
+`USBProxyDevice` substitutes for an emulated device class; every verb it uses is a verb
+scenario 3 already provides.
+
+## Hardware it needs
+
+CONTROL to the control computer, TARGET to the host being proxied, and the **real device**
+plugged into a port of the control computer. Three connections and two hosts. On macOS it
+needs root, to claim the proxied device away from the OS.
+
+## What porting it would require
+
+**Nothing, beyond scenario 3.** If our SoC presents the moondancer descriptor set and
+implements the `moondancer` GCP class faithfully, `USBProxyDevice` works without a line
+changed on either side.
+
+The one thing worth checking rather than assuming: proxying is more latency-sensitive than
+emulation, because a real device is waiting at the other end and the host's timeouts are
+not adjustable. Upstream hits this too — it is why the proxy documentation warns about
+enumeration failures. Any per-verb overhead we add relative to Moondancer shows up here
+first, so this scenario doubles as the performance regression test for scenario 3.
+
+## How it would be tested
+
+- **QEMU: no.** Nothing device-side is specific to this scenario, so there is nothing new
+  to test in QEMU that scenario 3 does not already cover.
+- **Simulation: no.** Same reason.
+- **Hardware: the only tier, and it needs the most of it** — two hosts and a third real
+  device. Of every scenario here, this has the worst test story, and that is inherent
+  rather than something we could fix with better tooling.
+
+Practically: this should be a manual acceptance check after scenario 3, with a named
+reference device, not an automated test anyone pretends to keep green.
+
+## Verdict
+
+**Free once scenario 3 lands** — but effectively untestable in CI. Track it as an
+acceptance criterion for scenario 3 rather than as work in its own right.
+
+### Source: docs/drafts/gsg-scenario-user-io.md
+
+# Scenario 5: USER I/O from Facedancer
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §5.
+
+## What it is
+
+Reach the six USER LEDs, the USER button and USER Pmod A pins from Python while a
+Facedancer emulation is running — so an emulation can flash an LED on each bus reset, or
+wait for a button press before typing. Pmod B is unavailable: it carries the SoC UART and
+JTAG.
+
+## What implements it upstream
+
+- Gateware: the Facedancer bitstream's `leds` and `gpio0`/`gpio1` CSR peripherals.
+- Firmware: `cynthion: firmware/moondancer/src/gcp/leds.rs` and `gcp/gpio.rs` — two GCP
+  classes.
+- Host: `cynthion: cynthion/python/src/interfaces/led.py` and `interfaces/gpio.py`,
+  reached through `cynthion.Cynthion()`. Pin map in
+  `boards/cynthion_moondancer.py::GPIO_MAPPINGS` — PMOD A1–A10 plus `USER`.
+
+## Hardware it needs
+
+Two USB cables (CONTROL and TARGET) and, for the Pmod example, a breadboard with a switch
+and an LED. Nothing exotic.
+
+## What porting it would require
+
+This is the least USB-dependent scenario in the whole set, and most of it already exists.
+
+- **LEDs:** `top.py` drives the six USER LEDs from an `amaranth_soc.gpio`
+  block at `GPIO_BASE`. Present.
+- **USER button and Pmod A:** the platform declares them; the GPIO peripheral is upstream
+  `amaranth_soc.gpio`, unmodified, with per-pin direction control — which is what the Pmod
+  example needs.
+- **What is missing is the path from the host to those registers.** Upstream reaches them
+  over libgreat/GCP, which means this scenario inherits scenario 3's transport even though
+  it needs none of scenario 3's USB peripherals.
+
+That inheritance is the interesting part. **This scenario could be delivered over our
+existing console instead** — the CDC-ACM `USBSerialDevice` on AUX already gives the host a
+tty to the firmware, and the firmware already has a shell that `./dev.py test` drives. A
+`leds` and `gpio` command pair on that shell would give a Python user the same capability
+without a single USB peripheral existing.
+
+That would not be compatible with `cynthion.Cynthion()`, and the tradeoff should be named:
+compatibility with upstream's host API versus being able to ship it now. If the GCP
+transport is built for scenario 3 anyway, this becomes near-free at that point.
+
+## How it would be tested
+
+- **QEMU: yes, for the command layer.** The shell already runs under `-M virt` and
+  `./dev.py test` already asserts on its output. Register writes to a GPIO block that
+  QEMU does not have will not work, but the parse-and-dispatch half will.
+- **Simulation: yes.** `soc_board_sim` already exists in the fast tier and covers the board
+  peripheral block. Extending it to assert LED and GPIO register behaviour is incremental.
+- **Hardware: for the final claim only** — an LED visibly lighting, a button read. Cheap,
+  and already the kind of thing `./dev.py test-board` does.
+
+The best test coverage of any scenario here, because none of it needs a packet.
+
+## Verdict
+
+**Portable.** The peripherals exist; only the host-facing transport is in question. Worth
+doing early if we decide the console shell is an acceptable interface, and near-free later
+if we do not.
+
+### Source: docs/drafts/gsg-scenario-selftest.md
+
+# Scenario 6: Self-test
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §6.
+
+## What it is
+
+Validate a board's own hardware — the debug connection, all three ULPI PHYs, and the
+HyperRAM. Documented as the final step of bringing up a self-built Cynthion, and the only
+scenario whose purpose is to answer "is this board good".
+
+## What implements it upstream
+
+- Gateware: `cynthion: cynthion/python/src/selftest/gateware.py::SelftestDevice`, built by
+  `cynthion/python/src/gateware/selftest/top.py`. It exposes a **JTAG** register interface —
+  applet ID `0x54455354` ("TEST"), a 6-bit LED register, ULPI register windows for
+  `target_phy`, `aux_phy` and `control_phy`, and a HyperRAM register read path. Map in
+  `cynthion/python/src/selftest/registers.py`.
+- Firmware: **none** for the hardware tests. (The Moondancer firmware separately has a
+  `selftest` GCP class with one verb, `0x10 test_error_return_code` — that is protocol
+  plumbing, not a hardware test. Do not confuse them; the name collision is upstream's.)
+- Host: `cynthion: cynthion/python/src/selftest/host.py::StandaloneTester` — cases
+  `test_debug_connection`, `test_host_phy`, `test_target_phy`, `test_sideband_phy`,
+  `test_hyperram`.
+
+## Hardware it needs
+
+CONTROL only. One cable, no second device, no target traffic. The cheapest hardware
+requirement of anything in this set.
+
+## What porting it would require
+
+Structurally this is the closest match to work we have already done, because the tests are
+**register reads over a debug transport**, not USB traffic.
+
+- **The three PHY tests** read a USB3343's vendor/product ID registers over ULPI. Our
+  `gateware/soc/peripherals/ulpi_window.py` already does exactly this for `target_phy`, with a
+  documented four-phase clock-domain handshake and a bounded wait. Extending it to
+  `aux_phy` and `control_phy` is a resource-request change, and it is the only new gateware
+  the PHY tests need.
+- **The HyperRAM test** reads the identification registers. We have a HyperRAM controller,
+  a probe peripheral (`peripherals/hyperram_probe.py`) and an identify script
+  (`scripts/hyperram_identify.py`). This is already covered by our own tooling, differently.
+- **The debug-connection test** is an Apollo JTAG check that does not involve the FPGA
+  design at all.
+- **The transport is the real difference.** Upstream reaches the registers over a
+  JTAG-tunnelled debug interface; we reach ours over the CPU's CSR bus, and we have a third
+  option — the sideband link — that upstream does not use for this. We have
+  `gateware/soc/bus/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
+  either.
+
+The question this scenario really asks is not "can we port it" but **"do we want upstream's
+self-test, or is our board test suite already it?"** We have `soc_hyperram_sim`,
+`soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim` and `./dev.py test-board`. Upstream's
+five cases may already be a subset of what we check. That comparison should be done before
+any porting, because the likely outcome is "we already have this, under different names".
+
+Taking `control_phy` off Apollo to test it requires the port request —
+`gateware/probes/sideband/sideband_advertise.py` — which is already built.
+
+## How it would be tested
+
+Self-test *is* a test, so the question is how we test the tester. A new diagnostic's first
+run is the control, not the experiment: it must be run against a board already believed
+good before its verdict on any other board means anything.
+
+- **QEMU: no.** No firmware in upstream's version, and no PHYs in `-M virt`.
+- **Simulation: yes for the register paths.** `ulpi_window`'s handshake is exactly the kind
+  of thing that should have a pysim test and currently does not. That gap is worth closing
+  regardless of whether this scenario is ever ported.
+- **Hardware: yes, and it is the point.** A self-test that passes in simulation and has
+  never been run against a known-bad board has proved nothing. The useful validation is
+  running it against a board we already believe is good and confirming it says so.
+
+## Verdict
+
+**Portable**, and possibly redundant. Do the comparison against our existing board tests
+first; the port may reduce to "add `aux_phy` and `control_phy` to the ULPI window".
+
+### Source: docs/drafts/gsg-scenario-flashing.md
+
+# Scenario 7: Bitstream configuration and flashing
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §7.
+
+## What it is
+
+Getting a bitstream onto the FPGA — volatile over JTAG, or persistently into the SPI
+configuration flash — plus the flash inspection primitives around it.
+
+## What implements it upstream
+
+- Firmware: the Apollo SAMD11 debug controller (`apollo` repo).
+- Gateware: `apollo: apollo_fpga/gateware/flash_bridge.py` — a bitstream loaded into the
+  FPGA *purely so the FPGA can bridge the host to the SPI flash at speed*. This is what
+  `apollo flash-fast` uses; plain `flash-program` goes through the MCU and is slower.
+- Host: the `apollo` CLI — `configure`, `reconfigure`, `flash-program`, `flash-fast`,
+  `flash-erase`, `flash-read`, `flash-info`, `svf`, `jtag-scan`, `force-offline`, the
+  `spi`/`jtag-spi` register primitives, and `leds`.
+- Wrapped by `cynthion run <name>` (volatile SRAM) and `cynthion flash <name>`
+  (configuration flash). For `facedancer`, both first place `moondancer.bin` at
+  `0x000b_0000`.
+
+## Hardware it needs
+
+CONTROL only.
+
+## What porting it would require
+
+**Nothing. We already do this, and in places we do it differently on purpose.**
+
+- `./dev.py run` builds and configures the board; `./dev.py fw` writes flash and
+  reconfigures without re-synthesising; `./dev.py stage` stages firmware over JTAG without
+  rebuilding the bitstream; `./dev.py flash` reads and verifies the SPI flash.
+- We have our own fast-loading path (`scripts/fast_loader.py`) and our own flash tooling
+  (`gateware/soc/peripherals/flash.py`, `scripts/flash_backup.py`).
+- Our SoC maps SPI flash at `0x1000_0000`, matching upstream's choice, with a modal
+  memory-map controller and a `spiflash` CSR block.
+
+So this is **not a port**. What it is worth is an **audit**: three specific questions.
+
+1. Does `apollo flash-fast`'s bridge bitstream do anything our `fast_loader.py` does not?
+   Upstream's approach — load a bitstream whose only job is to be a fast SPI bridge — is a
+   different design from ours and may be faster or slower. This is measurable.
+2. Our firmware image lives where our linker puts it; upstream's Moondancer lives at
+   `0x000b_0000`. If we ever want `cynthion flash --soc-firmware` to work against our
+   bitstream, that offset is the contract.
+3. `cynthion run <name>` and `cynthion flash <name>` are the commands a Cynthion user
+   already knows. Whether our bitstreams should be reachable through them, or only through
+   `./dev.py`, is a question about who the audience is — and it has not been asked.
+
+## How it would be tested
+
+- **QEMU: partially.** Flash *contents* handling — image layout, staging offsets, the
+  bootloader's read path — is firmware logic. `./dev.py test` already boots the firmware
+  under `-M virt`.
+- **Simulation: yes, and already done.** `qspi_burst_sim` covers the QSPI burst path and
+  `soc_bus_sim` the fabric. Both are in `./dev.py sim` today.
+- **Hardware: yes, and already done.** `./dev.py flash` reads and verifies real flash;
+  `run`, `console` and `flash` are all declared `needs_hardware`. Flash erase and program
+  are authorised operations here — the board recovers over JTAG through Apollo.
+
+This scenario has the best test coverage of any on the list, because it is the one we
+have actually been living in.
+
+## Verdict
+
+**Already done, differently.** Convert this child into a short audit rather than a port:
+measure `flash-fast` against `fast_loader.py`, and decide whether the `cynthion` CLI should
+reach our bitstreams.
+
+### Source: docs/drafts/gsg-scenario-mcu-firmware.md
+
+# Scenario 8: MCU firmware update and recovery
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §8.
+
+## What it is
+
+Updating the Apollo debug controller's firmware, and recovering a board whose Apollo
+firmware is broken.
+
+- `cynthion update --mcu-firmware` flashes `apollo.bin` over DFU. Unlike the bitstreams,
+  `apollo.bin` is **committed prebuilt** at
+  `cynthion: cynthion/python/assets/apollo.bin` — it is not built from source by the
+  Cynthion toolchain.
+- Holding PROGRAM at power-on invokes the Saturn-V bootloader
+  (`greatscottgadgets/saturn-v`, a separate repo) on the CONTROL port. DFU device
+  `1d50:615c`, alt 0 `Flash`, alt 1 `SRAM`. This is the unbrick path.
+- Installing Saturn-V in the first place needs an **SWD programmer** on the `uC` header —
+  Black Magic Probe, J-Link, or an OpenOCD-compatible adapter — plus an
+  `arm-none-eabi` toolchain. That is the first step of self-built-board bringup.
+
+## Hardware it needs
+
+CONTROL only for DFU. An SWD programmer and a 10-pin cable for the initial bootloader
+install or for a board with no working bootloader.
+
+## What porting it would require
+
+**Nothing.** This is entirely the SAMD11 and its host tooling. Our SoC is not involved at
+any point — the FPGA is held unconfigured for most of it.
+
+We already build Apollo firmware from source rather than shipping a prebuilt binary
+(`repos/apollo`, with `scripts/apollo_budget_check.py` and
+`scripts/apollo_memory_report.py` guarding the flash budget, and
+`docs/apollo_samd11_mcu/` documenting it). That is strictly more than upstream's user-facing
+path offers, which ships a blob.
+
+Two things worth recording rather than porting:
+
+1. **The prebuilt-blob discrepancy.** A user running `cynthion update --mcu-firmware` gets
+   a binary they cannot reproduce from the repo they cloned. We build ours. If we ever ship
+   to anyone else, that difference is a feature and should be stated.
+2. **The DFU contract is fixed** — `1d50:615c`, alt 0/1 — and any Apollo build of ours must
+   keep it, or `dfu-util` and `cynthion update` stop working against our boards.
+
+## How it would be tested
+
+- **QEMU: no.** Wrong architecture, wrong chip; this is Cortex-M0 firmware.
+- **Simulation: no.**
+- **Hardware: the only tier.** Flashing Apollo and confirming the board re-enumerates is
+  inherently a hardware operation. It is also low-risk here: Apollo is recoverable over
+  SWD, and the bootloader region can be locked.
+
+Our existing guards — the flash-budget check and the vector-table verification — are
+static analysis, not runtime tests, and they catch the specific failure that matters
+(an image that links but does not boot).
+
+## Verdict
+
+**Already done, and better than upstream's user path.** No SoC work. Keep this child open
+only to record the DFU contract and the prebuilt-blob difference; close it after that.
+
+### Source: docs/drafts/gsg-scenario-speed-test.md
+
+# Scenario 9: Bulk throughput test
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §9.
+
+## What it is
+
+A bulk IN/OUT speed test used to characterise the USB data path. Not a user-facing feature
+— it is how upstream finds out whether the data path is as fast as it should be, and it is
+in the factory test set.
+
+## What implements it upstream
+
+- Gateware: `luna: luna/gateware/applets/speed_test.py`. Also shipped prebuilt as
+  `speedtest.bit` in the `cynthion-test` factory repo.
+- Firmware alternative: `cynthion: firmware/moondancer/examples/bulk_speed_test.rs`, driven
+  by `firmware/moondancer/scripts/bulk_speed_test.py`.
+- Descriptor strings: manufacturer "Luna Project", product "Bulk Speed Test"
+  (`cynthion: shared/usb.toml`).
+
+Note there are two of these — a pure-gateware applet and a SoC firmware example. They
+measure different things: the applet measures the USB path, the firmware example measures
+the USB path *plus* the CPU's ability to feed it.
+
+## Hardware it needs
+
+CONTROL, or CONTROL plus AUX depending on the variant. One or two cables.
+
+## What porting it would require
+
+Very little, and part of it is already done.
+
+**We have already measured 195.4 Mbps CDC-ACM loopback** through `USBSerialDevice` on
+`aux_phy` (`gateware/probes/usb_serial/usb_serial.py`, instantiated in `top.py`).
+That is a throughput measurement on this platform's USB path, taken with a design that is
+in the tree today.
+
+What upstream's applet adds over that is a bulk endpoint with no CDC framing and a
+host-side script that reports a number reproducibly. Both are small.
+
+The design note in `usb_serial.py` is worth carrying over: `max_packet_size` defaults to
+64 (the full-speed bulk limit), and leaving it there enumerates at high speed while moving
+data at roughly an eighth of the achievable rate. That is the precise failure mode a speed
+test exists to catch, and we have already been bitten by the class of it.
+
+The pure-gateware applet variant needs no CPU and no libgreat. The firmware variant needs
+scenario 3's peripherals and is not worth doing separately.
+
+## How it would be tested
+
+- **QEMU: no.** No USB in `-M virt`.
+- **Simulation: partly, and misleadingly.** A simulation can prove the endpoint moves bytes
+  but cannot produce a throughput number that means anything — sim time is not wall time.
+  Do not build a "speed test" in `sim` and report its figure; that is exactly the mistake
+  of quoting a host TSC as a device measurement.
+- **Hardware: the only tier that can produce the number**, and the number is the whole
+  point.
+
+The right shape is a hardware measurement, recorded with its conditions, in `docs/`. A
+throughput figure without the packet size, the speed negotiated and the host it was
+measured against is not a result.
+
+## Verdict
+
+**Portable**, and largely already achieved. Its value is as a regression detector for the
+USB path once scenario 1 or 3 exists — a number that moves is the earliest warning that
+something in the data path got slower.
+
+### Source: docs/drafts/gsg-scenario-custom-gateware.md
+
+# Scenario 10: Custom gateware (the tutorial series)
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §10.
+
+## What it is
+
+GSG documents Cynthion as an FPGA development platform, not only as an instrument, and the
+tutorial series is what backs that claim: `Gateware Blinky` (Amaranth plus toolchain), then
+`USB Gateware` parts 1–4 building a USB device from luna's `USBDevice` — enumeration, WCID
+descriptors, control transfers, bulk transfers.
+
+This is a scenario in the sense that matters: it is a documented promise about what a user
+can do with the board, and it is the one that says our platform must stay compatible.
+
+## What implements it upstream
+
+- Sources: `cynthion: cynthion/python/examples/tutorials/`, each with a matching
+  `test-gateware-usb-device-0N.py` host script.
+- Platform files: `cynthion: cynthion/python/src/gateware/board/cynthion_r{0_1..0_7,1_0..1_4}.py`
+  — 13 board revisions, selected by the `LUNA_PLATFORM` environment variable.
+- Entry point: `luna.top_level_cli(Top)`, which synthesises and uploads in one step.
+- Toolchain: the tutorials recommend YoWASP (`yowasp-yosys`, `yowasp-nextpnr-ecp5`) rather
+  than OSS CAD Suite, for portability.
+
+## Hardware it needs
+
+CONTROL for the blinky tutorial. CONTROL plus TARGET for the USB device tutorials — the
+device under construction appears on TARGET.
+
+## What porting it would require
+
+Nothing needs porting. What needs *checking* is compatibility, and there is a real question
+here.
+
+**We have our own platform file**, `gateware/board/cynthion_r1_4.py`, not
+luna's. Any tutorial example a user runs against our repo resolves `platform.request("led", n)`,
+`platform.request("target_phy")` and `apollo_port_sharing` through ours. So the concrete
+question is: **does our platform present the same resource names, at the same indices, with
+the same semantics, as upstream's `cynthion_r1_4.py`?** If it does, every tutorial works
+unchanged. If it silently differs — an LED index, a Pmod pin order, an attribute name — a
+tutorial fails in a way that reads as the user's mistake.
+
+That comparison is mechanical and has not been done. It is the entire content of this
+child.
+
+Two known-good signs: `gateware/board/core.py` already reports
+`control_phy: advertising` through `port_sharing()`, matching luna's interface, and
+`usb_serial.py` already builds a luna `USBDevice` against our platform successfully — which
+is tutorial parts 1–4's exact dependency.
+
+Also worth noting: LED indices on this board are colour-ordered
+(0 red, 1 orange, 2 yellow, 3 green, 4 blue, 5 violet). A tutorial that says "LED 3" and
+our platform that says "LED 3" must mean the same lamp.
+
+## How it would be tested
+
+This is the scenario with the **cleanest** test story of any here, because a tutorial has
+a defined pass condition and upstream ships the checker.
+
+- **QEMU: no.** Gateware, not firmware.
+- **Simulation: yes, for the elaboration half.** Every tutorial example can be *elaborated*
+  against our platform in pysim without a board — that alone catches every resource-name
+  mismatch, which is the failure this child exists to prevent. It is fast enough for the
+  `gate` tier and needs no ULPI model.
+- **Hardware: for the USB tutorials' final check**, using upstream's own
+  `test-gateware-usb-device-0N.py` scripts as the oracle. That is a ready-made acceptance
+  suite we did not have to write.
+
+An "elaborate every upstream tutorial against our platform" sim would be a genuinely cheap,
+genuinely useful addition to `scripts/soc_sims.py`.
+
+## Verdict
+
+**Portable** — and mostly a compatibility audit rather than a port. Small, cheap, testable
+without hardware, and it protects a promise upstream has made publicly.
+
+### Source: docs/drafts/gsg-scenario-factory-hil.md
+
+# Scenario 11: Factory hardware validation
+
+Child of the GSG scenarios master. Reference: `docs/gsg-scenarios.md` §11.
+
+## What it is
+
+Not a user scenario — it is where upstream's real hardware-in-the-loop coverage lives. The
+`greatscottgadgets/cynthion-test` repository, driven from the `cynthion` repo's
+`Jenkinsfile`, tests a board against a purpose-built fixture before it ships.
+
+It is in this survey because it answers a question the other ten children keep raising:
+*how does upstream actually test any of this on hardware?* The answer is "with a rig", and
+that is worth knowing before we assume they have a trick we are missing.
+
+## What implements it upstream
+
+`greatscottgadgets/cynthion-test` — `cynthion-test.py`, `selftest.py`, `speedtest.py`,
+`calibrate.py`, `check.py`, `ranges.py`, `eut.py`, plus prebuilt `analyzer.bit`,
+`selftest.bit`, `speedtest.bit` and `flashbridge.bit` committed into the repo, and firmware
+images for the supporting instruments.
+
+## Hardware it needs — and this is the point
+
+- 1 × Cynthion r1.4.0 as the unit under test
+- 1 × **Tycho r2.0.0** test fixture
+- 1 × **Sasserides r1.0.0** (A and B boards, assembled as a stack with test pins)
+- 1 × GreatFET One
+- 1 × Black Magic Probe
+- 1 × 24 V supply (Mean Well GST25B24-P1J or equivalent)
+- 3 × ADT-Link UT6A-UT6B-NC cables with U1 pins 1 and 8 connected
+- 10-pin ARM debug cable, 34-pin ribbon cable, PASS and FAIL buttons, a switched hub, and
+  mechanical arrangements to hold the board against the pin bed
+
+We have none of the fixture hardware. Tycho and Sasserides are GSG's own designs and are
+not off-the-shelf.
+
+## What porting it would require
+
+Not portable, and it should not be treated as a goal. But three things in it are worth
+taking without the rig:
+
+1. **`ranges.py` is a specification.** It encodes the expected voltage and current ranges
+   for a good board. Those numbers are useful to us as documented expectations even with no
+   way to measure them automatically — they say what "good" means.
+2. **`selftest.py` and `speedtest.py` are the harness around scenarios 6 and 9.** Reading
+   how upstream sequences and interprets those tests is free specification for those
+   children.
+3. **The Jenkinsfile shows what upstream runs per commit** versus what it runs per board.
+   We have no CI running on GitHub, so our equivalent of the per-commit half is
+   `./dev.py ci` and it is worth checking whether anything upstream gates on is missing
+   from ours.
+
+## How it would be tested
+
+Not applicable — it *is* the test. The relevant observation is about our own coverage:
+
+Upstream's hardware confidence comes from a fixture we do not have. Ours has to come from
+somewhere else, and the two available answers are the Amaranth simulations
+(`./dev.py sim`, 15 of them, 9 in the pre-commit gate) and `./dev.py test-board` on the one
+board we have. That is the argument for **P2 in the master issue** — a ULPI simulation —
+being a prerequisite rather than a nice-to-have. We cannot buy hardware coverage the way
+upstream does, so we have to simulate what they instrument.
+
+## Verdict
+
+**Needs hardware we lack.** Do not port. Mine `ranges.py`, `selftest.py` and the
+`Jenkinsfile` for specification, and close it.
+
