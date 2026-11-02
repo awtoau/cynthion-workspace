@@ -27,7 +27,7 @@
 
 - **"four platform imports"** → **six** sites import
   `cynthion.gateware.platform.cynthion_r1_4`:
-  `scripts/soc_generate_pac.py:138`, `scripts/soc_diagram.py:171`,
+  `scripts/soc/soc_generate_pac.py:138`, `scripts/soc/soc_diagram.py:171`,
   `scripts/bram_patch.py:255`, `gateware/probes/bram_probe/bram_probe.py:192`,
   `gateware/soc/top.py:1705`, and `scripts/phy_probe.py:15` —
   the last of which is not a platform import at all, but

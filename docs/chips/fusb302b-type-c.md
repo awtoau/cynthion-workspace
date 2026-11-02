@@ -281,11 +281,11 @@ is that a state change can be looked into when it happens instead of polled.
 | liveness gateware | `gateware/probes/pins/fusb302_id.py` — JTAG applet `0x46555342` "FUSB" |
 | bus scanner | `gateware/probes/pins/i2c_scan.py` — applet `0x49324353` "I2CS" |
 | multiplexed master — superseded, and **it was never on silicon** | `gateware/probes/i2c/multiplexed.py`, `test_multiplexed.py` |
-| the mux that *is* on silicon | `gateware/soc/peripherals/i2c_mux.py`, checked in `scripts/soc_board_sim.py` |
+| the mux that *is* on silicon | `gateware/soc/peripherals/i2c_mux.py`, checked in `scripts/soc/soc_board_sim.py` |
 | firmware | `firmware/cynthion-soc/src/bus.rs` (owns the controller and the select), `fusb302.rs`, `typec.rs` |
-| bus and device ownership | `scripts/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
-| orientation and interrupt decode | `scripts/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
-| the cable-reversal experiment | `scripts/typec_watch.py` — the only thing that can validate orientation |
+| bus and device ownership | `scripts/soc/soc_i2c_owner_sim.py` — a stale select is *answered* by the other port, not refused |
+| orientation and interrupt decode | `scripts/soc/soc_typec_sim.py` — both bands from one comparator, and the read-to-clear registers |
+| the cable-reversal experiment | `scripts/soc/typec_watch.py` — the only thing that can validate orientation |
 | `DEVICE_ID` decode helper | `scripts/sideband/sideband_decoder.py` |
 
 **There is no host-side script for either applet.** The values above were read ad
@@ -386,10 +386,10 @@ pin that was not measured reports as absent rather than as zero: `board` and
 `typec` show `cc ?` with bands `-/-`, which is a different statement from `none`.
 
 **None of this has been validated on hardware.** It is checked by
-`scripts/soc_typec_sim.py` against a model whose `STATUS0` really does answer
+`scripts/soc/soc_typec_sim.py` against a model whose `STATUS0` really does answer
 about whichever pin the select reaches, and it is checked structurally against the
 Rust — but the only test that can distinguish a correct reading from a plausible
-one is a cable inserted one way and then the other. `scripts/typec_watch.py` is
+one is a cable inserted one way and then the other. `scripts/soc/typec_watch.py` is
 the tool for that experiment and its `cc` column is what to watch. Until it has
 been run, treat `cc1`/`cc2` as "the comparator saw a band on that pin".
 

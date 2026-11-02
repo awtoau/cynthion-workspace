@@ -16,7 +16,7 @@ riscv = { version = "0.16", features = ["critical-section-single-hart"] }
 riscv-rt = "0.18"
 
 # Where every hardware peripheral is, generated from the SoC's own memory map by
-# `scripts/soc_generate_pac.py`. Only `src/target.rs` refers to it, and only in
+# `scripts/soc/soc_generate_pac.py`. Only `src/target.rs` refers to it, and only in
 # its `not(feature = "qemu")` branch -- see the module comment there for why the
 # register accessors it also contains are not used.
 #
@@ -70,7 +70,7 @@ qemu = []
 # The concurrency-model skeletons that produced the table in
 # `docs/rtic.md`. They are measurement artefacts, not code the
 # shell uses, and they are kept because a size comparison nobody can rebuild is
-# an assertion rather than a measurement. `scripts/soc_model_probe.py` builds
+# an assertion rather than a measurement. `scripts/soc/soc_model_probe.py` builds
 # them.
 models = []
 
@@ -79,7 +79,7 @@ models = []
 # (`src/workload.rs`) and the `usb` shell command that runs it. Off, and every
 # hook into `src/main.rs` and `src/irq.rs` is `#[cfg]`-gated rather than
 # runtime-gated, so the default build does not compile a byte of it.
-# `scripts/soc_workload.py` drives it.
+# `scripts/soc/soc_workload.py` drives it.
 workload = []
 
 # Preemption alone: the ~200-line priority dispatcher in `src/dispatch.rs`, with
@@ -183,7 +183,7 @@ rticmono = ["riscv/critical-section-single-hart",
 # The #245 spike, kept as a second binary -- for a changed reason: no longer
 # the only way to have RTIC here, but the smallest one. Two tasks that count
 # and a PLIC front end, so its `.text` is the RTIC runtime plus almost nothing,
-# which is what makes `scripts/rtic_probe.py`'s size figure mean something;
+# which is what makes `scripts/soc/rtic_probe.py`'s size figure mean something;
 # `src/rtic_app.rs` runs the whole shell and can't answer that question. Also
 # the standing answer to "does RTIC accept this machine at all" and where a
 # bring-up problem gets isolated.
@@ -205,7 +205,7 @@ required-features = ["rticspike"]
 
 # The USB port, both halves. Same source in `src/usb.rs` and `src/usb_report.rs`,
 # two dispatchers, so the size difference between them is RTIC and nothing else.
-# `scripts/soc_usb_probe.py` builds them and `scripts/soc_usb_test.py` runs them
+# `scripts/soc/soc_usb_probe.py` builds them and `scripts/soc/soc_usb_test.py` runs them
 # under QEMU.
 [[bin]]
 name = "usb-rtic"

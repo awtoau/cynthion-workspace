@@ -498,7 +498,7 @@ impl fmt::Display for Interrupts {
 /// What one controller currently says about its port, both CC pins included.
 ///
 /// **The orientation this produces is unvalidated on hardware.** The sweep below
-/// is written, reviewed and simulated (`scripts/soc_typec_sim.py`); what it has
+/// is written, reviewed and simulated (`scripts/soc/soc_typec_sim.py`); what it has
 /// never had is a cable inserted one way and then the other on a board. That is
 /// the only test that can distinguish a correct reading from a plausible one, and
 /// until it has been run `State::orientation` is a claim rather than a fact.

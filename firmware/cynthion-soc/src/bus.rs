@@ -68,7 +68,7 @@ mod mux;
 ///
 /// **Here rather than in `irq.rs`, because one owner of the bus is enforced by
 /// these modules being private to `bus` and not by everyone remembering.**
-/// `scripts/soc_i2c_owner_sim.py` asserts that nothing outside this file
+/// `scripts/soc/soc_i2c_owner_sim.py` asserts that nothing outside this file
 /// constructs an `I2c`, and it caught the first version of this, which did.
 ///
 /// It does NOT take a `&mut Bus`, and that is the point. Source 3 is a level:

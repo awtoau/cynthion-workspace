@@ -73,7 +73,7 @@ whether the reason was a defect, a limit, or a standard we preferred to adopt.
 | Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream offers 60/120/240 MHz only, which blocked the HyperRAM ceiling and the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` lands on exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#core) |
 | SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/peripherals/flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer `scripts/riscv_flash_crossbar_sim.py` | [architecture](architecture.md#peripherals) |
 | SPI controller | `HoldableSPIController` (same file) | **upstream defect.** The CS field is `csr.action.W` — a one-cycle pulse — used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
-| UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
+| UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, same shape as the last: a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
 | Console peripheral | `Uart16550` (`gateware/soc/peripherals/uart16550.py`) | **standard adopted.** A published register map that QEMU also models, so one driver serves the board and the test gate | [architecture](architecture.md#peripherals) |
 | Interrupt controller | `amaranth_soc.csr.event.EventMonitor`, wrapped by [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) for the source numbering | **upstream, adopted.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; VexiiRiscv's is Tilelink-only | [architecture](architecture.md#interrupts-and-time) |
 | I2C master | `I2CMaster` (`gateware/soc/peripherals/i2c_master.py`) | **nothing upstream.** `amaranth-soc` has no I2C peripheral; `amaranth-stdio` is `serial.py` and nothing else. Register map is the OpenCores I2C-Master Core rev 0.9 | [architecture](architecture.md#peripherals) |
@@ -174,7 +174,7 @@ measurement a comparison of two different instruments ([#215](https://github.com
   the controller as well (`:740`, gated at `:999` and `:1048`), deliberately, so that
   harness pays tCSHI twice. Whether the gap clears tCSHI is judged by
   `hyperram_model.v` in `controller_model_tb.sv`, with `+cs_hold_ns=25` as the defect
-  run that proves the monitor fires ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)). `scripts/soc_hyperram_sim.py` §4 and §4b
+  run that proves the monitor fires ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)). `scripts/soc/soc_hyperram_sim.py` §4 and §4b
   keep the caller-side half: the gap ours leaves against upstream's, measured.
 - `with m.If(extra_latency | 1)` makes the low-latency branch dead, which [#90](https://github.com/awtoau/cynthion-workspace/issues/90) reports as
   costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
@@ -215,7 +215,7 @@ time — `docs/usb-host-options.md` §16), `engines/*`, `periph/*`.
 
 The vendored files stay byte-identical so a pin bump is a diff. What we need and
 they do not do goes beside the package: `gateware/probes/usb_host/model.py` is ours,
-and `scripts/usb_host_sie_sim.py` asserts the engine's behaviour against LUNA's
+and `scripts/soc/usb_host_sie_sim.py` asserts the engine's behaviour against LUNA's
 own device stack — including the three interface traps a CPU-facing shim has to
 handle, so a pin bump that changes any of them fails a test rather than the shim.
 
@@ -235,7 +235,7 @@ throughout.
 |---|---|---|
 | SPI crossbar starvation | `scripts/riscv_flash_crossbar_sim.py` | needs flash memory-mapped **and** arbitrary commands; upstream grants at cycle 0 when the map is idle and never in 600 cycles when it holds `cs` |
 | CS hold as a one-cycle `csr.action.W` | ILA capture; CS fragmented into four 8-bit windows during a JEDEC read | moondancer's `read_flash_uuid` writes all 13 command bytes into the 16-deep FIFO before reading, so `r_rdy` never drops |
-| `oe = ~tx.rdy` releasing the stop bit | `scripts/soc_serial_sim.py` | the released line RC-charges through a pull-up and usually arrives in time; it presents as intermittent corruption, not a dead link |
+| `oe = ~tx.rdy` releasing the stop bit | `scripts/soc/soc_serial_sim.py` | the released line RC-charges through a pull-up and usually arrives in time; it presents as intermittent corruption, not a dead link |
 
 The first two are reachable only by memory-mapping flash *and* using arbitrary commands.
 Cynthion's own SoC instantiates exactly that combination

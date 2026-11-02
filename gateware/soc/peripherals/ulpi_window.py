@@ -152,7 +152,7 @@ class UlpiRegisters(wiring.Component):
                  prep_cycles=PHY_PREP_CYCLES):
         # The two PHY-reset durations, overridable ONLY so that a simulation can
         # exercise the sequence without running 72128 usb cycles of it. The
-        # hardware never passes these; `scripts/soc_board_sim.py` checks the
+        # hardware never passes these; `scripts/soc/soc_board_sim.py` checks the
         # defaults against the datasheet arithmetic separately, so a shortened
         # simulation cannot make a wrong constant pass.
         self._pad_reset_cycles = pad_reset_cycles

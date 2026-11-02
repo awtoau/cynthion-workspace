@@ -75,7 +75,7 @@
 //!
 //! - [`tick`] is an interrupt handler, so the rule in `src/events.rs` applies:
 //!   no `Uart`, no `write!`, no `core::fmt`. Reports through counters this
-//!   module exposes, read by normal context. `scripts/soc_irq_log_check.py`
+//!   module exposes, read by normal context. `scripts/soc/soc_irq_log_check.py`
 //!   checks this file cannot reach a console -- why timestamp formatting lives
 //!   in `src/log.rs`, not here.
 

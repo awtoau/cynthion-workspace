@@ -91,7 +91,7 @@ EDITABLE = [
 # and no version string, so the build does not fail, it produces different
 # gateware from a tree last re-synced 2025-01-07. Our own designs import both
 # names directly (`gateware/soc/peripherals/serial_line.py`, every `csr`/`wishbone` user).
-# See #190; `scripts/amaranth_soc_check.py` is what stops it regressing.
+# See #190; `scripts/soc/amaranth_soc_check.py` is what stops it regressing.
 #
 # Git, not the index: both PyPI names are placeholders at version `0` with no
 # modules, so `pip install amaranth-soc` installs something that cannot be

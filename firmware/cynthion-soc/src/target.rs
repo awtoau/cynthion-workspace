@@ -9,7 +9,7 @@
 //!
 //! ## Where the addresses come from
 //!
-//!   * **Hardware:** `cynthion_soc_pac::base`, which `scripts/soc_generate_pac.py`
+//!   * **Hardware:** `cynthion_soc_pac::base`, which `scripts/soc/soc_generate_pac.py`
 //!     writes out of `AwtoSoc.decoder.bus.memory_map` -- the SoC's own
 //!     description of itself. Move a peripheral in the gateware and the constant
 //!     follows; rename one and this file stops compiling. Nothing here is
@@ -180,7 +180,7 @@ pub const CPU_HAS_C: bool = true;
 ///
 /// A block RAM address rather than a peripheral, so it is not in the generated map and
 /// cannot come from `cynthion_soc_pac::base`. It is `ORIGIN(BOOT) + LENGTH(BOOT) - 4`
-/// in `firmware/cynthion-boot/memory.x` and nowhere else; `scripts/soc_generate_pac.py
+/// in `firmware/cynthion-boot/memory.x` and nowhere else; `scripts/soc/soc_generate_pac.py
 /// --check` compares the two.
 ///
 /// `None` under QEMU, and that is the truth rather than a stub: `-M virt` jumps straight
@@ -267,7 +267,7 @@ pub const NEVER_SPEAKS_FIRST: () = ();
 /// absent -- which means `scripts/soc_test.py` still checks that they are
 /// registered, spelled correctly and reachable, and does not pretend to check
 /// anything else. What the drivers themselves do is checked in
-/// `scripts/soc_board_sim.py`, against the gateware, and on the board.
+/// `scripts/soc/soc_board_sim.py`, against the gateware, and on the board.
 pub struct Board {
     /// `amaranth_soc.gpio.Peripheral`: six LEDs, the power monitor's PWRDN, and
     /// the USER button.

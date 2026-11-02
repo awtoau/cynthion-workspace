@@ -110,11 +110,11 @@ re-synced 2025-01-07 and is missing four upstream fixes, including the Python
 Both are declared in `scripts/machine_setup.py`, pinned to the commits above, so
 a fresh environment gets them rather than the vendored fallback. Until [#190](https://github.com/awtoau/cynthion-workspace/issues/190)
 nothing declared either, and a clean install silently used the 2025 vendored
-tree. `scripts/amaranth_soc_check.py` — the `amaranthsoc` check in
+tree. `scripts/soc/amaranth_soc_check.py` — the `amaranthsoc` check in
 `scripts/check.py` — asserts neither name resolves inside
 `luna_soc/gateware/vendor`, because a declaration is invisible if it is dropped:
 
-    ./scripts/amaranth_soc_check.py --simulate-vendored   # proves it still fails
+    ./scripts/soc/amaranth_soc_check.py --simulate-vendored   # proves it still fails
 
 **Version tags on the fork must use the PEP 440 local form.** `0.3.2+awto.1`
 works; `0.3.2-awto.1` breaks the wheel build outright, because

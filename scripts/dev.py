@@ -17,7 +17,7 @@ different order each time, with the flags remembered or forgotten. Three separat
 stale-image incidents came out of that.
 
 So this file owns NO build logic. It is a door, and `scripts/soc_run.py`,
-`scripts/soc_test.py`, `scripts/check.py` and `scripts/soc_generate_pac.py` are
+`scripts/soc_test.py`, `scripts/check.py` and `scripts/soc/soc_generate_pac.py` are
 the rooms. `STEPS` below is the whole map. If a step needs a new flag, the flag
 belongs on the script that owns the work, not here -- `--build-only` was added to
 `soc_run.py` for exactly that reason rather than reimplementing cargo here.

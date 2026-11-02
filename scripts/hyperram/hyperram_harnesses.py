@@ -47,7 +47,7 @@ That is not a criticism of them -- they measure the part, correctly, which is wh
 they report 198-314 MB/s against the SoC's 5.43. It is the reason the fault
 survived: the only harness on the affected path is `measure`, which drives the
 shipping SoC over its console and has no gateware of its own, and the only
-regression cover is `scripts/soc_hyperram_sim.py`, which now runs the
+regression cover is `scripts/soc/soc_hyperram_sim.py`, which now runs the
 `sustained=True` and `sustained=False` cases against each other.
 
 Eleven HyperRAM test programs in one directory, and the write path the CPU uses

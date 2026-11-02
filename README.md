@@ -124,7 +124,7 @@ Do not add workflow files back. If something needs automating, extend
 those tests walks the firmware's source and fails if a `#[cfg(test)]` module is
 not included, so coverage cannot be lost by deleting a line (#337).
 
-It then runs `scripts/soc_bin_matrix.py`, which builds every `[[bin]]` the crate
+It then runs `scripts/soc/soc_bin_matrix.py`, which builds every `[[bin]]` the crate
 declares in the features that binary declares. `required-features` makes cargo
 skip a target entirely when the feature is off, so a plain `cargo check` says
 nothing about eleven of the twelve — and both RTIC binaries and the workload

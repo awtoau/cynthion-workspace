@@ -131,7 +131,7 @@ pub extern "C" fn payload_main() -> ! {
     let _ = writeln!(
         console,
         "payload done; \
-                              `./scripts/soc_jtag_stage.py --clear` for the shell"
+                              `./scripts/soc/soc_jtag_stage.py --clear` for the shell"
     );
 
     // No return: the bootloader jumped here, and there is no shell left underneath to

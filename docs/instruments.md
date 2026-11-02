@@ -19,8 +19,8 @@ more than the bug would have, because it also removed the suspicion.
 ## The rules that follow
 
 **A check must be shown to fail.** Corrupt the parity, delay the turnaround,
-drop the acknowledge — and watch it go red. `scripts/swd_host_sim.py` and
-`scripts/sbu_port_sim.py` run their negative controls on every invocation, which
+drop the acknowledge — and watch it go red. `scripts/soc/swd_host_sim.py` and
+`scripts/soc/sbu_port_sim.py` run their negative controls on every invocation, which
 is why their passes mean something.
 
 **Do not build a control for the mechanism you replaced.** Proving the old way

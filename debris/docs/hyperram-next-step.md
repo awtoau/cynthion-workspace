@@ -32,7 +32,7 @@ The whole SoC is amaranth-soc Wishbone: one flat 30-bit decoder at
 masters (`ibus`/`dbus`/`iobus`, `vexii_cpu.py:240-265`) arbitrated at `:940-946`.
 There is no second bus standard in the design.
 
-`scripts/soc_hyperram_sim.py` measures the result against a master that supplies
+`scripts/soc/soc_hyperram_sim.py` measures the result against a master that supplies
 a beat every two cycles: a 64-byte cache-line refill is **1 HyperBus transaction
 / 49 CK**, against the classic arrangement's **16 transactions / 304 CK**. Both
 are asserted, the classic path kept as a negative control. (These read 51 and 336

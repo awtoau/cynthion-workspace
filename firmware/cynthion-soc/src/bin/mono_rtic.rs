@@ -32,7 +32,7 @@
 //!
 //! ## What it proves
 //!
-//! `scripts/soc_rtic_monotonic.py` runs it: 100 periods on a 5 ms absolute grid,
+//! `scripts/soc/soc_rtic_monotonic.py` runs it: 100 periods on a 5 ms absolute grid,
 //! `delay_until` rather than `delay`, so a period that overran cannot push the
 //! next one out and the figure reported is lateness against an absolute
 //! deadline -- the same discipline `src/timer.rs` states for adding rather than

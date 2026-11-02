@@ -4,7 +4,7 @@
 //! `src/bin/workload_bare.rs`, `src/bin/workload_rtic.rs` and
 //! `src/bin/mono_rtic.rs` all carry a `#[riscv_rt::core_interrupt]`, which makes
 //! them handler modules: they may not contain `write!`, `writeln!`, `fmt::Write`
-//! or the name `Uart` (`scripts/soc_irq_log_check.py`). That is the right rule —
+//! or the name `Uart` (`scripts/soc/soc_irq_log_check.py`). That is the right rule —
 //! `Uart::put` spins on `LSR.THRE`, and a handler that spins on a
 //! level-sensitive source presents as a dead CPU with a running clock — and this
 //! is how those three obey it, the same way `src/usb_report.rs` does for the USB
@@ -130,7 +130,7 @@ impl Console {
     /// `#[idle]` gave up waiting for the run (#362).
     ///
     /// Printed before the report, never instead of it: the report's `periods N
-    /// of 100` is what `scripts/soc_rtic_monotonic.py` asserts on, and a
+    /// of 100` is what `scripts/soc/soc_rtic_monotonic.py` asserts on, and a
     /// timeout that printed nothing else would look like a hung guest.
     #[cfg(feature = "rticmono")]
     pub fn wait_timeout(&mut self, limit_us: u32, waited_us: u32, periods: u32) {

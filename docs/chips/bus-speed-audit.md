@@ -180,7 +180,7 @@ have returned them. Running it at BAUD 0 costs one USB request.
 
 ## Where each I²C bus actually stops — measured 2026-08-10, board image `1e574f4`
 
-Swept with [`../../scripts/i2c_rate_sweep.py`](../../scripts/i2c_rate_sweep.py),
+Swept with [`../../scripts/soc/i2c_rate_sweep.py`](../../scripts/soc/i2c_rate_sweep.py),
 1000 identity reads per rung, on the `bist1-ck120` variant (sync counted at
 50 MHz). The identity is checked against the value the device is KNOWN to hold,
 because `i2c soak` takes its expected value from its own first read and calls a

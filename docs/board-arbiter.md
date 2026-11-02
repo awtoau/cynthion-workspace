@@ -43,7 +43,7 @@ state of what is configured. Nothing owned all three.
 
 - **Not building.** A variant with no bitstream is refused, naming what is
   built. `./dev.py` is the entry point;
-  [`soc_build_fanout.py`](../scripts/soc_build_fanout.py) keeps the builds.
+  [`soc_build_fanout.py`](../scripts/soc/soc_build_fanout.py) keeps the builds.
 - **Not flashing firmware.** [`soc_run.py`](../scripts/soc_run.py) owns that.
 - **Not command dispatch.** A job's commands are SoC *shell* commands. The only
   host program the arbiter runs is `apollo configure`, through

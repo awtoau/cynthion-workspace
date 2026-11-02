@@ -15,7 +15,7 @@
 //! once per turn), an `#[rtic::app]` there. The same discipline
 //! `src/bin/usb_bare.rs` and `src/bin/usb_rtic.rs` already use.
 //!
-//! Built by `scripts/soc_rtic_workload.py`; `required-features = ["wlbare"]`, so
+//! Built by `scripts/soc/soc_rtic_workload.py`; `required-features = ["wlbare"]`, so
 //! the default build does not compile, link or lint it.
 
 #![no_std]
@@ -46,7 +46,7 @@ mod timer;
 mod uart;
 // Everything that formats, so this file -- a handler module -- contains no
 // `writeln!`, no `fmt::Write` and no `Uart`. See its module comment and
-// `scripts/soc_irq_log_check.py`.
+// `scripts/soc/soc_irq_log_check.py`.
 #[allow(dead_code)]
 #[path = "../wl_report.rs"]
 mod wl_report;

@@ -128,7 +128,7 @@ GENERATE_FLAGS = [
     # way-select mux lands in the hit path at an Fmax the BTB already had to be
     # relaxed to meet.
     #
-    # `scripts/soc_cache_sweep.py` measures the trade rather than arguing it.
+    # `scripts/soc/soc_cache_sweep.py` measures the trade rather than arguing it.
     # 3 ways does not exist: PLRU asserts `isPow2` on the way count.
     "--with-fetch-l1", "--fetch-l1-sets", "128", "--fetch-l1-ways", "1",
     "--with-lsu-l1", "--lsu-l1-sets", "128", "--lsu-l1-ways", "1",
@@ -273,7 +273,7 @@ def generate(reset_addr, cache_sets=128, output=None, regions=None,
 
     `None` for either leaves that dimension as `GENERATE_FLAGS` has it, which is
     the only way to give the fetch and load/store caches DIFFERENT geometries --
-    one `cache_sets` cannot say two things. `scripts/soc_cpu_arms.py` uses it.
+    one `cache_sets` cannot say two things. `scripts/soc/soc_cpu_arms.py` uses it.
 
     Ways cost block RAM faster than sets do: `bankCount = wayCount`
     (`FetchL1Plugin.scala:128`), so each way is its own bank of DP16KDs on top of

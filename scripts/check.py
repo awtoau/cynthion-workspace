@@ -176,7 +176,7 @@ def build_checks() -> List[Check]:
                 # Feature sets, not just binaries: `rticmono` and `rticwl` are
                 # the only consumers of the RTIC path, which is where #115, #247
                 # and #259 all land.
-                Step([PYTHON, "scripts/soc_bin_matrix.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_bin_matrix.py"], ROOT),
             ],
         ),
         Check(
@@ -270,7 +270,7 @@ def build_checks() -> List[Check]:
                 # and a red check is not. See #190.
                 #
                 # Imports only; no board, no toolchain, well under a second.
-                Step([PYTHON, "scripts/amaranth_soc_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/amaranth_soc_check.py"], ROOT),
                 # An undriven output port elaborates, places and routes without
                 # a word, which is how `VbusControl`'s two input-enable ports
                 # drove no pad for as long as they existed (#305).
@@ -289,7 +289,7 @@ def build_checks() -> List[Check]:
                 #
                 # `slow`: ~10 shell builds. `--fast` skips it; the gate does
                 # not, because a check nothing runs goes red again unwatched.
-                Step([PYTHON, "scripts/soc_feature_isolation_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_feature_isolation_check.py"], ROOT),
             ],
         ),
         Check(
@@ -304,7 +304,7 @@ def build_checks() -> List[Check]:
                 # here instead of on the board.
                 #
                 # Elaboration only -- no synthesis, no board, a few seconds.
-                Step([PYTHON, "scripts/soc_generate_pac.py", "--check"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_generate_pac.py", "--check"], ROOT),
             ],
         ),
         Check(
@@ -320,8 +320,8 @@ def build_checks() -> List[Check]:
                 #
                 # No build and no board: comparisons over recorded readings, and
                 # the map enumerator's synthetic control. A few seconds.
-                Step([PYTHON, "scripts/soc_review.py", "--self-test"], ROOT),
-                Step([PYTHON, "scripts/soc_map_audit.py", "--control-only"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_review.py", "--self-test"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_map_audit.py", "--control-only"], ROOT),
             ],
         ),
         Check(
@@ -337,7 +337,7 @@ def build_checks() -> List[Check]:
                 #
                 # `slow`: two separate interpreters, ~8 s each -- both causes
                 # were constant within one process, so a loop would have passed.
-                Step([PYTHON, "scripts/soc_repro_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_repro_check.py"], ROOT),
             ],
         ),
         Check(
@@ -352,7 +352,7 @@ def build_checks() -> List[Check]:
                 # stop a sibling module naming `Uart`, so the rest is a grep.
                 #
                 # Source only; no board, no toolchain, well under a second.
-                Step([PYTHON, "scripts/soc_irq_log_check.py"], ROOT),
+                Step([PYTHON, "scripts/soc/soc_irq_log_check.py"], ROOT),
             ],
         ),
         Check(

@@ -13,7 +13,7 @@ Two things this deliberately does *not* do:
   presenting them side by side would invite exactly the wrong conclusion.
 
   It does not treat a small utilisation difference as significant without
-  reference to the measured noise floor. Run ./scripts/pnr_noise.py first;
+  reference to the measured noise floor. Run ./scripts/soc/pnr_noise.py first;
   nextpnr's packing is deterministic (spread 0) but its Fmax is not (spread
   ~6%), and that threshold is printed alongside the table.
 """

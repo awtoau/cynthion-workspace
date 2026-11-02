@@ -96,7 +96,7 @@ Gates, both in seconds — the point is knowing in seconds whether the rig works
 
 | | | |
 |---|---|---|
-| `scripts/soc_bist_transport_sim.py` | 1.7 s | can the CPU read an engine-driven register across the domain boundary |
+| `scripts/soc/soc_bist_transport_sim.py` | 1.7 s | can the CPU read an engine-driven register across the domain boundary |
 | `tests/test_bist_constants.py` | 0.01 s | gateware/firmware agree on base, window, burst, register numbers |
 | `bist smoke` | seconds, on the board | four cells: can the rig both pass **and** detect a fault |
 

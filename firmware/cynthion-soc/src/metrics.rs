@@ -142,7 +142,7 @@ static WORST_GAP: AtomicU32 = AtomicU32::new(0);
 /// handler touches any of them -- `irq::pop` and `events::drain` are normal
 /// context -- so there is nothing to order against and no pairing to get wrong.
 /// Atomics rather than plain statics because a `static mut` is banned crate-wide;
-/// see `scripts/soc_irq_log_check.py`.
+/// see `scripts/soc/soc_irq_log_check.py`.
 const RELAXED: Ordering = Ordering::Relaxed;
 
 /// The low half of `mcycle`. Public so `src/bench.rs` times with the same

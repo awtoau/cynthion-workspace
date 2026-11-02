@@ -128,14 +128,14 @@ def takes_soak(name):
     been told about it, and nothing would say so -- the count would not move and
     the run would still pass. The declaration lives in exactly one place.
     """
-    source = (ROOT / "scripts" / f"{name}.py").read_text()
+    source = _paths.find_script(f"{name}.py").read_text()
     return '"--soak"' in source
 
 
 def run_one(name, python, soak=False):
     """Run one simulation. Returns (name, ok, passed, failed, seconds, tail)."""
     started = time.monotonic()
-    command = [python, str(ROOT / "scripts" / f"{name}.py")]
+    command = [python, str(_paths.find_script(f"{name}.py"))]
     if soak and takes_soak(name):
         command.append("--soak")
     # Bounded by this sim's own history. Unbounded, a looping simulation wedges

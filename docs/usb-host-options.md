@@ -805,7 +805,7 @@ sitting behind the 8-bit `board` CSR decoder.
 
 PLIC source 6 (`Plic(sources=5)` → `6` at `gateware/soc/top.py`; sources 1-5
 are taken, 6-31 are free). The PAC follows automatically —
-`scripts/soc_generate_pac.py` reads `decoder.bus.memory_map` and
+`scripts/soc/soc_generate_pac.py` reads `decoder.bus.memory_map` and
 `interrupt_sources`, so `pac::base::USB_HOST` and `USB_HOST_IRQ` appear without
 anything being hand-written.
 
@@ -998,7 +998,7 @@ have to be before any use.
 
 ## 20. Artifacts
 
-- `scripts/usb_host_area.py` — the §12 measurement, now against the vendored copy.
+- `scripts/soc/usb_host_area.py` — the §12 measurement, now against the vendored copy.
 - `debris/scripts/usb-host-core-area.py`, `debris/scripts/usb-host-area.py` —
   the original measurements, retired once the code was vendored.
 - `tmp/usb-host-area/area-results.json`.
@@ -1031,7 +1031,7 @@ LUNA's own `USBDevice` with a control endpoint and a 512-byte bulk IN endpoint.
 Both ends are upstream gateware written without knowledge of the other, which is
 what makes the result evidence rather than a tautology.
 
-`scripts/usb_host_sie_sim.py` is the check, and it is in `scripts/soc_sims.py`
+`scripts/soc/usb_host_sie_sim.py` is the check, and it is in `scripts/soc_sims.py`
 (**541 checks, up from 520**, 8.1 s). Its 21 assertions, in three groups:
 
 - **The bus comes up, both ways.** A high-speed device is detected as HIGH; a
@@ -1055,7 +1055,7 @@ stack does not.
 
 ## 22. Measured again, from the vendored copy
 
-`scripts/usb_host_area.py`, same method as §12 — LFSR-driven scaffold, SoC clock
+`scripts/soc/usb_host_area.py`, same method as §12 — LFSR-driven scaffold, SoC clock
 generator, `fifo_depth=512`, baseline subtracted:
 
 | build | LUT | FF | BRAM | LUTRAM | fmax on the ULPI clock |

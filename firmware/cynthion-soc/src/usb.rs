@@ -49,7 +49,7 @@
 //!
 //! - **No `log`.** smolusb calls `error!`/`warn!`/`trace!` throughout; this
 //!   firmware has no logging crate and a handler here may not print at all
-//!   (`scripts/soc_irq_log_check.py`), so each call site became a counter in
+//!   (`scripts/soc/soc_irq_log_check.py`), so each call site became a counter in
 //!   [`Trace`], printed by idle. Nothing silently dropped.
 //! - **Slices, not iterators.** smolusb's `write_requested` takes an
 //!   `Iterator<Item = u8>` because its descriptors are `zerocopy` views over
@@ -752,7 +752,7 @@ const FRAME_MAX: usize = 10;
 ///
 /// Not `Sync`-by-atomics for elegance -- the handler is the only writer, and on
 /// this machine cannot preempt itself -- but because a `static` shared with a
-/// handler must not be a `static mut`, which `scripts/soc_irq_log_check.py`
+/// handler must not be a `static mut`, which `scripts/soc/soc_irq_log_check.py`
 /// refuses crate-wide.
 pub struct Frames {
     bytes: [AtomicU8; FRAME_MAX],

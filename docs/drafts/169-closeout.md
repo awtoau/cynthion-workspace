@@ -78,8 +78,8 @@ Six sites import `cynthion.gateware.platform.cynthion_r1_4`:
 
 | site | what it does | risk |
 |---|---|---|
-| `scripts/soc_generate_pac.py:138` | elaborates the SoC to read its memory map — this **is** the `socmap` check | low; `--check` compares against the committed SVD, so a drift shows immediately |
-| `scripts/soc_diagram.py:171` | wraps `platform.request` to record what the SoC asked for | low |
+| `scripts/soc/soc_generate_pac.py:138` | elaborates the SoC to read its memory map — this **is** the `socmap` check | low; `--check` compares against the committed SVD, so a drift shows immediately |
+| `scripts/soc/soc_diagram.py:171` | wraps `platform.request` to record what the SoC asked for | low |
 | `scripts/bram_patch.py:255` | `elaborate_il()` re-elaborates and compares RTLIL against the build directory | **the one real risk.** If the vendored platform emits RTLIL that differs by so much as a module name, every existing build directory reads as stale. Must be validated against a fresh build, and `tests/test_bram_patch_freshness.py` is the test that will say so |
 | `gateware/probes/bram_probe/bram_probe.py:192` | `--build` only | low, and it is a bring-up probe |
 | `gateware/soc/top.py:1705` | the `--build` path for the SoC bitstream. Its comment says "the installed cynthion package, not the in-repo source tree", which is about `amaranth_boards`, not about `board` | low, **but sequence it last**: another agent is live in this file |

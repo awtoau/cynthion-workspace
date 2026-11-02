@@ -6,7 +6,7 @@
 """The #346 split, enforced instead of described.
 
 `docs/chips/hyperram/sim-audit.md` classifies every assertion in
-`scripts/soc_hyperram_sim.py` as one of:
+`scripts/soc/soc_hyperram_sim.py` as one of:
 
     caller     stays -- about the CONTROLLER or the SoC above it
     device     moved onto the twin, where the reference is not our own guess
@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-SIM = ROOT / "scripts" / "soc_hyperram_sim.py"
+SIM = ROOT / "scripts" / "soc" / "soc_hyperram_sim.py"
 AUDIT = ROOT / "docs" / "chips" / "hyperram" / "sim-audit.md"
 LOGFILE = ROOT / "tmp" / "logs" / "hyperram_sim_census.log"
 

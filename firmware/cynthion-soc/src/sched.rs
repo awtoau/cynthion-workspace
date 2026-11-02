@@ -239,7 +239,7 @@ static TOTAL_LATE: [AtomicU32; TASKS] = [const { AtomicU32::new(0) }; TASKS];
 /// Relaxed everywhere, for the reason `src/metrics.rs` gives at length: one
 /// hart, and the only writer that is not the main loop is a task the main loop
 /// cannot observe mid-update. Atomics rather than `static mut`, which is banned
-/// crate-wide -- see `scripts/soc_irq_log_check.py`.
+/// crate-wide -- see `scripts/soc/soc_irq_log_check.py`.
 const RELAXED: Ordering = Ordering::Relaxed;
 
 /// Point the CPU's performance counters at the events worth watching.
@@ -550,7 +550,7 @@ pub fn command(uart: &mut Uart) {
         // `rtic` typed inside the first period has nothing to average.
         let mean = total.checked_div(runs).unwrap_or(0);
         // `late worst N us` and `gap worst N ms` are the tokens
-        // `scripts/soc_test.py` and `scripts/soc_probe.py` parse, so the wording
+        // `scripts/soc_test.py` and `scripts/soc/soc_probe.py` parse, so the wording
         // around them can change and the checks keep working. What follows each
         // is the sentence saying WHICH question it answers -- the two were on one
         // line in different units once, and got compared.

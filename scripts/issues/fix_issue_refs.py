@@ -472,13 +472,13 @@ FIXES = {
     175: (
         note(
             "`scripts/checks.py` does not exist — the harness is "
-            "`scripts/sim_check_harness.py`, driven from `scripts/check.py`. Proposals 1 "
+            "`scripts/soc/sim_check_harness.py`, driven from `scripts/check.py`. Proposals 1 "
             "and 2 are done. **Proposal 3 was deliberately rejected**: "
             "`scripts/soc_sims.py:89-104` argues that tiering on cost \"gets both ends "
             "wrong\", so the tiers are `once`/`soak` over the same 18 simulations rather "
             "than a fast list of the nine cheapest. Proposals 4 and 5 are still real."
         ),
-        [("`scripts/checks.py` is one harness", "`scripts/sim_check_harness.py` is one harness")],
+        [("`scripts/checks.py` is one harness", "`scripts/soc/sim_check_harness.py` is one harness")],
     ),
     194: (
         note(
@@ -665,7 +665,7 @@ FIXES = {
         note(
             "Three rows and two problems have moved. `luna.gateware.interface.jtag` is "
             "down from 18 to **one** import — the deliberate negative control in "
-            "`scripts/soc_jtag_registers_sim.py` — because "
+            "`scripts/soc/soc_jtag_registers_sim.py` — because "
             "`gateware/probes/jtag_registers.py` replaced it (#204). Problems 2 and 4 are "
             "**done** (#221, #215). Files mentioning each module today, over "
             "`gateware/ scripts/ firmware/ tests/`: `architecture.car` 18, "

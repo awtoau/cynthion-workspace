@@ -1,7 +1,7 @@
 # Generated register definitions for the Cynthion r1.4 RISC-V SoC.
 #
 # `src/` below the `base` module is svd2rust output and is regenerated wholesale by
-# `scripts/soc_generate_pac.py`; edit the gateware, not this crate.
+# `scripts/soc/soc_generate_pac.py`; edit the gateware, not this crate.
 [package]
 name = "cynthion-soc-pac"
 version = "0.1.0"

@@ -3,7 +3,7 @@
 //!
 //! `docs/rtic.md` §6 names this as the cheapest next
 //! measurement: *"flesh out `src/bin/rtic.rs` until it runs `workload::handle`,
-//! and re-run `scripts/soc_workload.py` against it"*. This is that. Same
+//! and re-run `scripts/soc/soc_workload.py` against it"*. This is that. Same
 //! `src/workload.rs`, same arrival sequence, same 4,169 instructions of
 //! device-emulation work per event, same 1,000 µs deferred job on the same 5 ms
 //! grid. What differs is who dispatches:
@@ -39,7 +39,7 @@
 //! A 1,000 µs deferral must not delay an event whose deadline is 375 µs, and
 //! nothing else here is allowed to run at all.
 //!
-//! ## Built by `scripts/soc_rtic_workload.py`, never by the default build
+//! ## Built by `scripts/soc/soc_rtic_workload.py`, never by the default build
 //!
 //! `required-features = ["rticwl"]`, so cargo does not compile, link or lint
 //! this without it, and `src/main.rs` does not know it exists.
@@ -75,7 +75,7 @@ mod timer;
 mod uart;
 // Everything that formats, so this file -- a handler module -- contains no
 // `writeln!`, no `fmt::Write` and no `Uart`. See its module comment and
-// `scripts/soc_irq_log_check.py`.
+// `scripts/soc/soc_irq_log_check.py`.
 #[allow(dead_code)]
 #[path = "../wl_report.rs"]
 mod wl_report;

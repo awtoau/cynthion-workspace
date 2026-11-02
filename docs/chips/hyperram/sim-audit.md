@@ -247,7 +247,7 @@ with a deliberately rewired run required to fail.
     scripts/hyperram/hyperram_sim_census.py            # the table against the file
     scripts/hyperram/hyperram_sim_census.py --list     # print the classification
 
-    scripts/soc_hyperram_sim.py                        # 122 checks, caller-side
+    scripts/soc/soc_hyperram_sim.py                        # 122 checks, caller-side
     scripts/hyperram/hyperram_model_sim.py                      # the moved ones + 6 defect runs
     scripts/hyperram/hyperram_model_sim.py --negative-control   # 1 CK of latency error
     scripts/hyperram/hyperram_vendor_model_sim.py --sim icarus  # the twin against the vendor tb

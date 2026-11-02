@@ -63,7 +63,7 @@ PAC1954 and both FUSB302Bs, a ULPI register window on the TARGET PHY, the
 sideband link to Apollo, and memory-mapped SPI flash.
 
 Peripheral base addresses are generated from this SoC's own memory map by
-`scripts/soc_generate_pac.py`; `scripts/check.py` fails if firmware writes one
+`scripts/soc/soc_generate_pac.py`; `scripts/check.py` fails if firmware writes one
 as a literal.
 """
 
@@ -168,7 +168,7 @@ RAM_SIZE = 32 * 1024
 # holds 80. Must match BOOT/IMAGE in firmware/cynthion-boot/memory.x, RAM in
 # firmware/cynthion-soc/memory.x, PAYLOAD in firmware/cynthion-payload/memory.x,
 # MAX_IMAGE in firmware/cynthion-soc/src/hyperram.rs and PAYLOAD_SIZE in
-# scripts/soc_payload.py. `scripts/soc_generate_pac.py --check` reads all of
+# scripts/soc/soc_payload.py. `scripts/soc/soc_generate_pac.py --check` reads all of
 # them and fails on a disagreement.
 IMAGE_ORIGIN = 0x00000400
 
@@ -536,7 +536,7 @@ IRQ_PLL_LOSS = 17
 # edge source latches, a level source does not, and which is which is a fact
 # about the signal.
 #
-# The one table the gateware and `scripts/soc_intc_sim.py` both read, and the
+# The one table the gateware and `scripts/soc/soc_intc_sim.py` both read, and the
 # sim checks it against the table in `../../docs/soc-interrupts.md`.
 IRQ_TRIGGERS = {
     IRQ_CONSOLE:       "level",
@@ -638,10 +638,10 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 #
 # ONE VALUE, for one design. `CYNTHION_SYNC_MHZ=<n>` overrides it, which is what
 # lets one elaboration be built at two clocks without editing this file, and is
-# how `scripts/riscv/riscv_clock_ladder.py` and `scripts/soc_sync_ladder.py` pick a
+# how `scripts/riscv/riscv_clock_ladder.py` and `scripts/soc/soc_sync_ladder.py` pick a
 # rung since #439.
 #
-# 50, and it is measured: `scripts/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
+# 50, and it is measured: `scripts/soc/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
 # seeds, `--no-parallel-refine`. 60 closed on 3 of 4 seeds, worst -3.2%; 50 on
 # 4 of 4, and the binding domain leaves `clk` for `hr_clk` there -- so a rung
 # below 50 buys nothing. Conditions, the whole ladder and the caveat about four
@@ -793,7 +793,7 @@ _refuse_ck_past_the_fabric()
 
 # The geometry of each of the two L1 caches: 64 sets x 2 ways x 64 B line = 8
 # KiB each. A constant rather than a literal at the instantiation because
-# `scripts/soc_generate_pac.py` and `gateware/usercode_map.py` both report it,
+# `scripts/soc/soc_generate_pac.py` and `gateware/usercode_map.py` both report it,
 # and a geometry reported from a different number than the core was generated
 # with would be worse than not reporting it.
 #
@@ -946,9 +946,9 @@ class AwtoSoc(Elaboratable):
         # Kept on the instance, not just as a local.
         #
         # The memory map is the SoC's own description of itself, and two tools want to
-        # read it without building a bitstream: `scripts/soc_generate_pac.py`, which
+        # read it without building a bitstream: `scripts/soc/soc_generate_pac.py`, which
         # turns it into an SVD and then into Rust register definitions, and
-        # `scripts/soc_diagram.py`. Both had to work around its being a local -- the PAC
+        # `scripts/soc/soc_diagram.py`. Both had to work around its being a local -- the PAC
         # generator simply failed with "could not find a memory map on the SoC", which is
         # why every peripheral address in the firmware is still hand-transcribed. That is
         # the class of error that once had firmware sending `0x9f << 24` because a comment
@@ -1056,7 +1056,7 @@ class AwtoSoc(Elaboratable):
         ]
 
         # The same lines, keyed by the decoder window each peripheral lives in,
-        # so `scripts/soc_generate_pac.py` can put an <interrupt> element on the
+        # so `scripts/soc/soc_generate_pac.py` can put an <interrupt> element on the
         # right peripheral in the SVD.
         #
         # Immediately below the wiring it describes: a source number written
@@ -1291,7 +1291,7 @@ class AwtoSoc(Elaboratable):
         # -- one per CK, with no way to stall it. Coalescing under that deficit
         # wrote 48 words for a 32-word line and transposed every odd beat, which
         # is the fault `hr cross` reports and section 9 of
-        # `scripts/soc_hyperram_sim.py` reproduces. It is also what a
+        # `scripts/soc/soc_hyperram_sim.py` reproduces. It is also what a
         # transaction-at-a-time crossing cannot carry; see `HyperRAMHandover`.
         #
         # `clock_stop` (Active Clock Stop, `ClockStopPHY`) is what would let
@@ -1361,7 +1361,7 @@ class AwtoSoc(Elaboratable):
 
         # The BIST engine, on the other side of the mode mux. It runs in `hr`,
         # so device CK is not the CPU clock.
-        # `scripts/soc_bist_transport_sim.py` is where the CPU's read of an
+        # `scripts/soc/soc_bist_transport_sim.py` is where the CPU's read of an
         # engine-driven register is shown to survive unequal clocks -- in 1.4 s,
         # against three failures on the retired branch that each cost a ~90 s
         # synthesis and a reconfigure to diagnose.
@@ -1464,7 +1464,7 @@ class AwtoSoc(Elaboratable):
         # The cost is one cycle per bus beat and it is paid only by traffic that
         # reaches the bus at all; a cache hit never does. See wishbone_pipe.py
         # for the duplicate-strobe hazard this handles, which is the reason it
-        # is not simply a register on `ack`, and scripts/soc_bus_sim.py for the
+        # is not simply a register on `ack`, and scripts/soc/soc_bus_sim.py for the
         # measurement of both.
         # The CSR PMA region is narrowed to the top of the CLINT (#452), so a
         # window added above it would be decoded by the fabric and unreachable
@@ -2114,7 +2114,7 @@ def main():
     #
     # Kept because it is the only path that replaces BLOCK RAM INIT without a rebuild --
     # the bootloader and the default image both -- where a staged image goes in over
-    # JTAG (`scripts/soc_jtag_stage.py`) or the console (`load`) and touches neither.
+    # JTAG (`scripts/soc/soc_jtag_stage.py`) or the console (`load`) and touches neither.
     #
     # It has to be random rather than the real image. ecpbram locates the old contents
     # BY VALUE, and a real firmware image is ~87% zeroes; those zeroes also fill every

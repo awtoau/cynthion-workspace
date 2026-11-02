@@ -13,14 +13,14 @@ they were taken under; what to *do* about any of them is an issue. See
 
 | script | answers |
 |---|---|
-| [`soc_peripheral_area.py`](../scripts/soc_peripheral_area.py) | what each peripheral costs synthesised alone — an upper bound |
-| [`soc_instrumentation_cost.py`](../scripts/soc_instrumentation_cost.py) | what the three instrumentation peripherals cost **in context** — a delta |
-| [`soc_upstream_copy_check.py`](../scripts/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
-| [`pnr_noise.py`](../scripts/pnr_noise.py) | how much of an Fmax difference is placement luck |
-| [`soc_icache_model.py`](../scripts/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
-| [`soc_review.py`](../scripts/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
-| [`soc_map_audit.py`](../scripts/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
-| [`soc_decoder_cost.py`](../scripts/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
+| [`soc_peripheral_area.py`](../scripts/soc/soc_peripheral_area.py) | what each peripheral costs synthesised alone — an upper bound |
+| [`soc_instrumentation_cost.py`](../scripts/soc/soc_instrumentation_cost.py) | what the three instrumentation peripherals cost **in context** — a delta |
+| [`soc_upstream_copy_check.py`](../scripts/soc/soc_upstream_copy_check.py) | whether our verbatim copy of luna_soc's SPI PHY is still verbatim |
+| [`pnr_noise.py`](../scripts/soc/pnr_noise.py) | how much of an Fmax difference is placement luck |
+| [`soc_icache_model.py`](../scripts/soc/soc_icache_model.py) | what a `.text` layout costs in I-cache misses |
+| [`soc_review.py`](../scripts/soc/soc_review.py) | what moved since the recorded baseline, and what got duplicated — run it after every change |
+| [`soc_map_audit.py`](../scripts/soc/soc_map_audit.py) | how much of the decoded address space is mapped, and what an unmapped read does |
+| [`soc_decoder_cost.py`](../scripts/soc/soc_decoder_cost.py) | which knob drives the Wishbone decoder's cell count |
 
 ---
 
@@ -79,7 +79,7 @@ USERCODE plus `gateware/usercode_map.py`. What that was worth in cells is in
 [#443](https://github.com/awtoau/cynthion-workspace/issues/443), with the
 conditions it was measured under.
 
-- [`soc_repro_check.py`](../scripts/soc_repro_check.py) is the gate: two builds of
+- [`soc_repro_check.py`](../scripts/soc/soc_repro_check.py) is the gate: two builds of
   one tree, byte-compared, and `check.py`'s `repro` runs it.
 
 ### The floor: a COMB delta under ~200 is the mapper
@@ -87,14 +87,14 @@ conditions it was measured under.
 - Null control, 2026-08-12, `432d29b`, `bist0-ck160-dqs1-merge0-sync60`,
   `--no-parallel-refine`: one 32-bit identity constant given a different value,
   no logic touched → **TRELLIS_COMB +194, TRELLIS_FF +1**
-  ([`soc_trim_delta.py --trim null-constant`](../scripts/soc_trim_delta.py)).
+  ([`soc_trim_delta.py --trim null-constant`](../scripts/soc/soc_trim_delta.py)).
 - Global, not local folding: the whole `gateware_id` block is 153 COMB, and the
   move is 194.
 - So a COMB delta is a result only when it is well clear of ±194 **and** an FF,
   BRAM or LUTRAM delta of the same sign supports it. Numbers this unsettles, and
   the trims that survive it:
   [#454](https://github.com/awtoau/cynthion-workspace/issues/454).
-- [`soc_review.py`](../scripts/soc_review.py) enforces it: a smaller move is
+- [`soc_review.py`](../scripts/soc/soc_review.py) enforces it: a smaller move is
   printed and explicitly not called a regression.
 
 ### The other hazard: Fmax is placement luck
@@ -102,11 +102,11 @@ conditions it was measured under.
 Already known (71.45–76.99 MHz across identical builds) and confirmed again
 here: 84.88 MHz and 73.69 MHz from two builds differing by 22 cells. No Fmax
 figure in this document is offered as evidence of anything;
-[`pnr_noise.py`](../scripts/pnr_noise.py) is what settles a timing question.
+[`pnr_noise.py`](../scripts/soc/pnr_noise.py) is what settles a timing question.
 
 ## 3. What each peripheral costs
 
-Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
+Out of context, so upper bounds. `./scripts/soc/soc_peripheral_area.py`.
 
 | module | LUT4 eq | DFF | DP16KD | |
 |---|---:|---:|---:|---|
@@ -163,7 +163,7 @@ assignments that expose internals to the ILA. Its docstring states the
 obligation — "If upstream changes, this must be re-synced or it is measuring a
 different circuit than the one that ships" — and nothing checked it.
 
-[`soc_upstream_copy_check.py`](../scripts/soc_upstream_copy_check.py) now does.
+[`soc_upstream_copy_check.py`](../scripts/soc/soc_upstream_copy_check.py) now does.
 **As of the currently installed `luna_soc`: in sync.** 83 upstream statements,
 85 in the copy, the two extra being the instrumentation assignments and the `as
 fsm:` handle they need. The check was validated against known-bad mutations in
@@ -196,7 +196,7 @@ handlers moves 7,000 bytes out of `run` (17,044 → 10,044) and grows `.text` fr
 not free. Whether the locality is worth 668 bytes is **not measured** — the
 addresses a command touches are the same either way, and only a linker that then
 orders by hotness would change what the cache sees.
-[`soc_icache_model.py`](../scripts/soc_icache_model.py) is what would settle it.
+[`soc_icache_model.py`](../scripts/soc/soc_icache_model.py) is what would settle it.
 
 ### `core::str` cost 880 bytes to compare four ASCII words
 

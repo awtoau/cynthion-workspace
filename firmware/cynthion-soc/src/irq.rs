@@ -32,7 +32,7 @@
 //! `src/events.rs` as a code and two words for the main loop to format.
 //!
 //! Rust's privacy cannot stop a sibling module naming `Uart`, so the rest is
-//! enforced by grep: `scripts/soc_irq_log_check.py`, the `irqlog` check.
+//! enforced by grep: `scripts/soc/soc_irq_log_check.py`, the `irqlog` check.
 //!
 //! ## Concurrency, on one hart with no preemption
 //!
@@ -359,7 +359,7 @@ fn service_i2c() {
     );
     // Through `bus`, which owns every construction of a controller -- see
     // `bus::acknowledge_i2c_interrupt` for why this one operation needs no
-    // ownership, and `scripts/soc_i2c_owner_sim.py` for the rule.
+    // ownership, and `scripts/soc/soc_i2c_owner_sim.py` for the rule.
     crate::bus::acknowledge_i2c_interrupt();
 }
 

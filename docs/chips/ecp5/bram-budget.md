@@ -95,7 +95,7 @@ firmware uses a real `fence.i`. The axis was never closed.
 
 Block RAM per geometry, counted off each geometry's own netlist
 (`DP16KD` cells in `top.json`) by the CPU matrix's `cpu-l1-*` arms
-([`../../../scripts/soc_cpu_arms.py`](../../../scripts/soc_cpu_arms.py)),
+([`../../../scripts/soc/soc_cpu_arms.py`](../../../scripts/soc/soc_cpu_arms.py)),
 measured 2026-08-12 on the shipping SoC:
 
 | geometry | per cache | BRAM | outcome |

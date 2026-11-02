@@ -29,7 +29,7 @@ This is the inventory of standalone FPGA experiments under `gateware/`.
 | `pins/fusb302_id.py` | FUSB302 IDs and PAC1954 ID | syntax | recorded board-identification result | JTAG registers | diagnostic retained; firmware exposes richer device tests |
 | `pins/pin_survey.py` | loopback, levels and edge counts on otherwise uncovered pins | syntax | hardware required | JTAG registers | retained board diagnostic; no CPU or USB dependency |
 | `bram_probe/bram_probe.py` | EBR lane/address decode against known contents | archived `top.bit`; source syntax clean | hardware result recorded in `bram_probe/README.md` | `scripts/bram_probe_expect.py` plus physical pin decode | retained forensic fixture; committed artefacts preserve the exact routed case |
-| `loader/bitstream_sink.py` | USB bulk sink and transfer counters for fast-loader work | syntax | recorded USB throughput result | `scripts/bitstream_load_time_probe.py` | retained transport fixture; product ID comes from `usb_ids.py` |
+| `loader/bitstream_sink.py` | USB bulk sink and transfer counters for fast-loader work | syntax | recorded USB throughput result | `scripts/soc/bitstream_load_time_probe.py` | retained transport fixture; product ID comes from `usb_ids.py` |
 | `usb_bulk/usb_bulk.py` | USB bulk loopback, direct and FIFO-buffered | syntax | recorded throughput result | host USB benchmark tools | retained; current endpoint APIs and unique test VID/PID are in use |
 | `usb_bulk/usb_oneway.py` | one-way USB IN streaming ceiling | syntax | recorded throughput result | `scripts/usb_oneway_speed.py` | retained throughput fixture; unique product ID is in `usb_ids.py` |
 | `usb_bulk/usb_timing.py` | USB transaction timing instrumentation | syntax | recorded timing result | host USB timing probe | retained diagnostic; unique product ID is in `usb_ids.py` |
@@ -47,7 +47,7 @@ tree.
 | source | role | status |
 |---|---|---|
 | `bist.py` | shared JTAG BIST command/status and comparator | retained; simulated by `scripts/hyperram/bist_sim.py` |
-| `jtag_registers.py` | the JTAG register transport every applet reads through, clocked by TCK | replaces luna's `JTAGRegisterInterface` (#204); simulated by `scripts/soc_jtag_registers_sim.py` |
+| `jtag_registers.py` | the JTAG register transport every applet reads through, clocked by TCK | replaces luna's `JTAGRegisterInterface` (#204); simulated by `scripts/soc/soc_jtag_registers_sim.py` |
 | `riscv/*.py` except the four designs above | SoC peripherals, PHYs and CPU wrappers | covered by `scripts/soc_sims.py` and SoC integration |
 | `sideband_advertise.py`, `sideband_link.py`, `sideband_debug.py` | drop-in FPGA_ADV blocks | covered by dedicated simulations and active SoC integration |
 | `board/`, `build_helpers.py`, `usb_ids.py` | local platform and build/identity support | shared infrastructure, not loadable designs |

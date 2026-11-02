@@ -263,7 +263,7 @@ def resolve_bitstream(job: Job) -> Path:
             f"no bitstream built for variant {job.variant!r}. Built: "
             f"{', '.join(sorted(built)) or 'none'}. Build it with "
             f"`./dev.py run --build-only` under that variant's environment, or "
-            f"`scripts/soc_build_fanout.py`; this does not build.")
+            f"`scripts/soc/soc_build_fanout.py`; this does not build.")
     return built[job.variant]
 
 

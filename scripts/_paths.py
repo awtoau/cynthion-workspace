@@ -24,3 +24,11 @@ def script_files():
     for name in SUBDIRS:
         found += (HERE / name).glob("*.py")
     return sorted(found)
+
+
+def find_script(name):
+    """Path of the script called `name` (e.g. "soc_bus_sim.py"), wherever it lives."""
+    for directory in (HERE, *(HERE / sub for sub in SUBDIRS)):
+        if (directory / name).is_file():
+            return directory / name
+    raise FileNotFoundError(f"no script {name} under {HERE}")

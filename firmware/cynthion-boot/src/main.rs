@@ -36,7 +36,7 @@
 //! - Configuring the FPGA restores the bitstream's pair: block RAM init is written by
 //!   configuration and nothing else. Something always answers at the image origin from
 //!   power-on onwards, but it is not always the same thing.
-//! - Matters for `scripts/soc_jtag_stage.py --clear`: it removes the header, but a
+//! - Matters for `scripts/soc/soc_jtag_stage.py --clear`: it removes the header, but a
 //!   board that already copied an image keeps running it -- clearing the header does
 //!   not restore the old bytes. Reconfiguring does, in about a second; `--clear` says
 //!   so.
@@ -63,7 +63,7 @@
 //! ## It does not manage the header
 //!
 //! - A rejected image is left exactly as found. Clearing it is a policy decision
-//!   (retry, or give up) and policy belongs in the image: `scripts/soc_jtag_stage.py
+//!   (retry, or give up) and policy belongs in the image: `scripts/soc/soc_jtag_stage.py
 //!   --clear` is where it lives.
 //!
 //! ## No formatting, and nothing that wants an allocator

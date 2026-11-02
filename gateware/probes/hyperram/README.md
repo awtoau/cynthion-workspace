@@ -18,5 +18,5 @@ in [`../../README.md`](../../README.md); `./dev.py hyperram` is the shorter answ
 them can express the fault. The master that bubbles is `HyperRAMWishbone` in
 `../riscv/vexii_bootram.py`; the only harness on that path is
 `scripts/hyperram/hyperram_measure.py`, which drives the shipping SoC and has no gateware
-here, and the only regression cover is `scripts/soc_hyperram_sim.py`. That is why
+here, and the only regression cover is `scripts/soc/soc_hyperram_sim.py`. That is why
 the burst-write fault survived a directory of eleven HyperRAM test programs.

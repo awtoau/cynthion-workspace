@@ -166,7 +166,7 @@ def delta(now, before):
     return (now - before) & MASK32
 
 
-# Apollo clocks TCK at 12 MHz (`scripts/soc_jtag_stage_sim.py` states it, and
+# Apollo clocks TCK at 12 MHz (`scripts/soc/soc_jtag_stage_sim.py` states it, and
 # `bus/jtag_stage.py` constrains the domain at 20 MHz with headroom).
 APOLLO_TCK_MHZ = 12.0
 

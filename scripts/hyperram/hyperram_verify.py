@@ -144,7 +144,7 @@ def main():
 
     results["controller vs our Python model"] = step(
         "the controller against our own model -- fault injection and the SoC above it",
-        [py, str(s / "soc_hyperram_sim.py")])[0]
+        [py, str(s / "soc" / "soc_hyperram_sim.py")])[0]
 
     # 2. Wiring, still without a board. `sel` has no device read-back, so this is
     # the ONLY thing that can tell a dead capture-phase axis from an inert one.
