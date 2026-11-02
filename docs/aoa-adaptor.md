@@ -32,6 +32,39 @@
 | B | the phone, facing an existing host (e.g. DJI RC) | TARGET-C | device stack only, no host core | answer 51, record 52 strings, on 53 detach/re-attach as `18d1:2d00`, bridge bulk to PC | low gateware; Type-C role handling with a DJI RC UNSURE |
 | C | passthrough tap that also speaks AOA | both | host + device on two PHYs + analyzer | as A and B | high (~18k LUT projected, not measured); AUX loses the console |
 
+### Diagram
+
+```
+ A. Cynthion = accessory HOST            Android phone is the DEVICE
+ ┌──────────┐ ACM0 data  ┌─────────────────────────────┐  TARGET-A   ┌─────────┐
+ │ Linux PC │◄──────────►│ CONTROL/AUX   FPGA          │◄───────────►│ Android │
+ │ cdc_acm  │ ACM1 diag  │  CDC-ACM x2   host SIE+shim │ VBUS out    │ phone   │
+ └──────────┘◄───────────│               RV: 51/52/53, │ AOA bulk    │ (device)│
+                         │               pump, diag    │             └─────────┘
+                         └─────────────────────────────┘
+
+ B. Cynthion = the PHONE                 existing accessory is the HOST
+ ┌──────────┐ ACM0 data  ┌─────────────────────────────┐  TARGET-C   ┌─────────┐
+ │ Linux PC │◄──────────►│ CONTROL/AUX   FPGA          │◄───────────►│ DJI RC  │
+ │ cdc_acm  │ ACM1 diag  │  CDC-ACM x2   device stack  │ no VBUS out │ (host)  │
+ └──────────┘◄───────────│               RV: answer 51,│ AOA bulk    │ accessory
+                         │               log 52, on 53 │             └─────────┘
+                         │               re-attach 2d00│
+                         └─────────────────────────────┘
+
+ C. Cynthion = tap (host + device + analyzer)       needs two PHYs, AUX loses console
+ ┌─────────┐ TARGET-C ┌───────────────────────────────┐ TARGET-A ┌─────────┐
+ │ DJI RC  │◄────────►│ device stack ◄─RV─► host SIE  │◄────────►│ phone   │
+ │ (host)  │          │      └── analyzer ──┘         │ VBUS out │ (device)│
+ └─────────┘          └───────────┬───────────────────┘          └─────────┘
+                          CONTROL │ capture + diag
+                                  ▼
+                              Linux PC
+```
+
+- Arrows are data; A and B put the AOA bulk pipe on ACM0 and RV diagnostics on ACM1.
+- Host SIE exists (simulated, +2.1k LUT); device stack exists (LUNA); the CSR/FIFO shim and `target_phy` hand-over are the missing pieces.
+
 ## Linux side (no custom driver)
 - Linux can already be an AOA accessory with libusb; no kernel driver. Stage 0 needs only a PC and a phone.
 - Recommended: composite device with **two stock CDC-ACM functions**, `cdc_acm` binds both.
