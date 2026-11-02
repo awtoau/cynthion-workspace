@@ -6,6 +6,7 @@
 //! - Every wait is `wait_until` or `stage`: a limit, an op name, elapsed on expiry.
 //! - No engine (QEMU, `target::BOARD` = None): every call returns `Error::NoEngine`.
 
+use core::cell::Cell;
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
 
@@ -83,6 +84,9 @@ const STATUS_US: u32 = 50_000;
 const DATA_US: u32 = 500_000;
 /// Bulk from the console: no spec bound; 100 ms is the longest a typed command may sit.
 pub const BULK_US: u32 = 100_000;
+/// Whole pump/echo: 1 MiB cap at a 1 MB/s worst case = 1.05 s; x1.25 rounded. Expiry: `Timeout`.
+const PUMP_US: u32 = 1_300_000;
+pub const PUMP_MAX: u32 = 1 << 20;
 /// RX FIFO refill is ~0.1 us per byte (4 usb cycles of CDC); 2 us covers one read.
 const FIFO_US: u32 = 2;
 /// Error retries per transaction: xHCI endpoint context CERR = 3.
@@ -173,6 +177,25 @@ pub struct Status {
     pub tx_level: u8,
 }
 
+/// Result of a pump or echo run; `err` is why it stopped early.
+pub struct Pump {
+    pub bytes_out: u32,
+    pub bytes_in: u32,
+    pub packets: u32,
+    pub naks: u32,
+    pub ticks: u32,
+    /// Byte sum of everything received.
+    pub sum: u32,
+    /// First wrong received byte: (offset, got, expected).
+    pub bad: Option<(u32, u8, u8)>,
+    pub err: Option<Error>,
+}
+
+/// Test stream: byte `off` = seed + off (aoa_testkit P_RAMP, counter at seed 0).
+fn ramp(seed: u8, off: u32) -> u8 {
+    seed.wrapping_add(off as u8)
+}
+
 #[derive(Clone, Copy)]
 struct Regs(usize);
 
@@ -217,11 +240,12 @@ pub struct Host {
     tog_out: u16,
     pub ep_in: u8,
     pub ep_out: u8,
+    naks: Cell<u32>,
 }
 
 impl Host {
     pub const fn new(base: Option<usize>) -> Self {
-        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0 }
+        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0, naks: Cell::new(0) }
     }
 
     pub fn addr(&self) -> Result<u8, Error> {
@@ -339,7 +363,7 @@ impl Host {
                 RESP_ACK => {
                     return if ty == TY_IN { self.read_rx(r, inbuf, len) } else { Ok(0) };
                 }
-                RESP_NAK => {}
+                RESP_NAK => self.naks.set(self.naks.get() + 1),
                 RESP_STALL => return Err(Error::Stall),
                 code => {
                     errors += 1;
@@ -406,6 +430,115 @@ impl Host {
                    "bulk out", limit_us)?;
         self.tog_out ^= bit;
         Ok(())
+    }
+
+    /// Bulk max packet from the link speed (USB 2.0 5.8.3): 512 at HS, else 64.
+    fn bulk_mps(&self) -> Result<usize, Error> {
+        Ok(if (self.host()?.rd(LINK) >> 2) & 3 == 0 { 512 } else { 64 })
+    }
+
+    /// Microseconds left in the run; `Timeout` once `PUMP_US` is spent.
+    fn pump_left(started: clock::Instant, op: &'static str) -> Result<u32, Error> {
+        let spent = clock::to_micros(started.elapsed(clock::now()));
+        match PUMP_US.checked_sub(spent) {
+            Some(left) if left > 0 => Ok(left),
+            _ => Err(Error::Timeout { op, limit_us: PUMP_US, elapsed_us: spent }),
+        }
+    }
+
+    fn pump_send(&mut self, ep: u8, p: &mut Pump, len: u32, seed: u8, started: clock::Instant)
+                 -> Result<(), Error> {
+        let mps = self.bulk_mps()?;
+        let mut buf = [0u8; 512];
+        let n = (len - p.bytes_out).min(mps as u32) as usize;
+        for (i, b) in buf[..n].iter_mut().enumerate() {
+            *b = ramp(seed, p.bytes_out + i as u32);
+        }
+        self.bulk_out(ep, &buf[..n], Self::pump_left(started, "pump out")?)?;
+        p.bytes_out += n as u32;
+        p.packets += 1;
+        Ok(())
+    }
+
+    fn pump_recv(&mut self, ep: u8, p: &mut Pump, seed: Option<u8>, started: clock::Instant)
+                 -> Result<(), Error> {
+        let mps = self.bulk_mps()?;
+        let mut buf = [0u8; 512];
+        let n = self.bulk_in(ep, &mut buf[..mps], Self::pump_left(started, "pump in")?)?;
+        for (i, &b) in buf[..n].iter().enumerate() {
+            p.sum = p.sum.wrapping_add(b as u32);
+            let at = p.bytes_in + i as u32;
+            if let Some(s) = seed {
+                if p.bad.is_none() && b != ramp(s, at) {
+                    p.bad = Some((at, b, ramp(s, at)));
+                }
+            }
+        }
+        p.bytes_in += n as u32;
+        p.packets += 1;
+        Ok(())
+    }
+
+    fn pump_new() -> Pump {
+        Pump { bytes_out: 0, bytes_in: 0, packets: 0, naks: 0, ticks: 0, sum: 0, bad: None, err: None }
+    }
+
+    fn pump_end(&self, mut p: Pump, naks0: u32, started: clock::Instant, r: Result<(), Error>) -> Pump {
+        p.naks = self.naks.get() - naks0;
+        p.ticks = started.elapsed(clock::now());
+        p.err = r.err();
+        p
+    }
+
+    /// `len` bytes of the ramp as consecutive bulk OUT packets; `zlp` ends a whole-packet
+    /// multiple (or an empty transfer) with a zero-length packet.
+    pub fn pump_out(&mut self, ep: u8, len: u32, seed: u8, zlp: bool) -> Result<Pump, Error> {
+        let mps = self.bulk_mps()? as u32;
+        if len > PUMP_MAX {
+            return Err(Error::Bad("len over 1 MiB"));
+        }
+        let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
+        let mut r = Ok(());
+        while r.is_ok() && p.bytes_out < len {
+            r = self.pump_send(ep, &mut p, len, seed, started);
+        }
+        if r.is_ok() && zlp && len % mps == 0 {
+            r = Self::pump_left(started, "pump out").and_then(|left| self.bulk_out(ep, &[], left));
+            p.packets += r.is_ok() as u32;
+        }
+        Ok(self.pump_end(p, naks0, started, r))
+    }
+
+    /// Read `len` bytes of bulk IN (whole packets, short ones included); the ramp is
+    /// checked when `seed` is given.
+    pub fn pump_in(&mut self, ep: u8, len: u32, seed: Option<u8>) -> Result<Pump, Error> {
+        self.bulk_mps()?;
+        if len > PUMP_MAX {
+            return Err(Error::Bad("len over 1 MiB"));
+        }
+        let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
+        let mut r = Ok(());
+        while r.is_ok() && p.bytes_in < len {
+            r = self.pump_recv(ep, &mut p, seed, started);
+        }
+        Ok(self.pump_end(p, naks0, started, r))
+    }
+
+    /// OUT one packet, then IN until it has come back; the ramp is checked on the way in.
+    pub fn echo(&mut self, ep: u8, len: u32, seed: u8) -> Result<Pump, Error> {
+        self.bulk_mps()?;
+        if len > PUMP_MAX {
+            return Err(Error::Bad("len over 1 MiB"));
+        }
+        let (naks0, started, mut p) = (self.naks.get(), clock::now(), Self::pump_new());
+        let mut r = Ok(());
+        while r.is_ok() && p.bytes_in < len {
+            r = self.pump_send(ep, &mut p, len, seed, started);
+            while r.is_ok() && p.bytes_in < p.bytes_out {
+                r = self.pump_recv(ep, &mut p, Some(seed), started);
+            }
+        }
+        Ok(self.pump_end(p, naks0, started, r))
     }
 
     /// GET_DESCRIPTOR(device) at the current address.
