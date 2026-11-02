@@ -670,4 +670,13 @@ class USBSIE(wiring.Component):
                     m.d.usb += ipd.eq(0)
                     m.next = "IDLE"
 
+        # The FSM only enters RESET at power-up; a later bus reset must still
+        # drive the reset controller's PHY mode (SE0 via HS terminations, chirps).
+        with m.If(reset_ctrl.reset_active):
+            m.d.comb += [
+                self.utmi.op_mode.eq(reset_ctrl.phy.op_mode),
+                self.utmi.xcvr_select.eq(reset_ctrl.phy.xcvr_select),
+                self.utmi.term_select.eq(reset_ctrl.phy.term_select),
+            ]
+
         return m
