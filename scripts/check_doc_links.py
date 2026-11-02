@@ -39,18 +39,36 @@ LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 SHARED_PREFIX = "sources"
 
 
-def resolves(candidate: Path) -> bool:
-    """Exists here, or -- under `sources/` only -- in the main checkout.
+def is_tracked(candidate: Path) -> bool:
+    """True if git tracks the file, or anything under the directory.
 
-    `sources/**` is gitignored, so every datasheet link was broken in every
-    worktree and this whole check was red there: 20+ failures, none real (#365).
+    Judged in the nearest repository, so a path inside a submodule uses the
+    submodule's own index and ignore rules (#376).
     """
-    if candidate.exists():
-        return True
+    if candidate.is_dir():
+        base, spec = candidate, "."
+    else:
+        base, spec = candidate.parent, candidate.name
+    out = subprocess.run(["git", "-C", str(base), "ls-files", "--", spec],
+                         capture_output=True, text=True)
+    return out.returncode == 0 and bool(out.stdout.strip())
+
+
+def resolves(candidate: Path) -> bool:
+    """Exists and is tracked, or -- under `sources/` only -- in the main checkout.
+
+    A gitignored or untracked file resolves on one machine only (#376).
+    `sources/**` is gitignored by design, so it is exempt from the tracked test
+    and falls back to main: every datasheet link was broken in every worktree
+    otherwise (#365).
+    """
     try:
         relative = candidate.resolve().relative_to(ROOT)
     except ValueError:
-        return False
+        return candidate.exists() and is_tracked(candidate)
+    if candidate.exists() and (relative.parts[:1] == (SHARED_PREFIX,)
+                               or is_tracked(candidate)):
+        return True
     if relative.parts[:1] != (SHARED_PREFIX,):
         return False
     return resolve_shared(ROOT, relative) is not None
