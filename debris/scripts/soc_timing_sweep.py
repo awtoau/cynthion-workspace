@@ -301,7 +301,7 @@ def main():
             return 1
 
     if not args.firmware.exists():
-        print(f"no firmware at {args.firmware}; build it with ./scripts/riscv_firmware.py")
+        print(f"no firmware at {args.firmware}; build it with ./scripts/riscv/riscv_firmware.py")
         return 1
 
     return sweep(args.label, args.runs, args.firmware, args.allow_fail)

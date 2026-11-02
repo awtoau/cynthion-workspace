@@ -9,7 +9,7 @@
 //!
 //! So JEDEC, SFDP, the status register, erase and page program are only
 //! reachable from here. Ported from the C bring-up firmware that found the
-//! path's faults -- `scripts/riscv_firmware.py`, which keeps the ILA evidence.
+//! path's faults -- `scripts/riscv/riscv_firmware.py`, which keeps the ILA evidence.
 //!
 //! ## Register access (`amaranth_soc.csr`, granularity 8)
 //!
@@ -96,7 +96,7 @@ pub const MAX_PROGRAM_WORDS: usize = 16;
 ///
 /// 2 MiB in: clear of the bitstream at offset 0 and of the image at 0xb0000,
 /// and well below 4 MiB, where the address wraps back onto the bitstream while
-/// appearing to be nowhere near it. Same sector as `scripts/riscv_firmware.py`.
+/// appearing to be nowhere near it. Same sector as `scripts/riscv/riscv_firmware.py`.
 pub const SCRATCH: u32 = 0x0020_0000;
 
 /// `SPIFlashMemoryMap.MMAP_DEFAULT_TIMEOUT`: how long the memory map keeps chip

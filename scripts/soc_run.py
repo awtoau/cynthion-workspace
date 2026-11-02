@@ -594,7 +594,7 @@ def main():
     parser.add_argument("--no-build", action="store_true",
                         help="skip cargo and gateware; load what exists")
     parser.add_argument("--c-firmware", action="store_true",
-                        help="use scripts/riscv_firmware.py instead of the Rust crate")
+                        help="use scripts/riscv/riscv_firmware.py instead of the Rust crate")
     parser.add_argument("--write-tests", action="store_true",
                         help="C firmware only: compile in the flash erase/program tests")
     parser.add_argument("--force-flash", action="store_true",
@@ -784,7 +784,7 @@ def main():
         if args.c_firmware:
             if not args.no_build:
                 cmd = [sys.executable,
-                       str(ROOT / "scripts" / "riscv_firmware.py")]
+                       str(ROOT / "scripts" / "riscv" / "riscv_firmware.py")]
                 if args.write_tests:
                     cmd.append("--write-tests")
                 result = run(cmd)

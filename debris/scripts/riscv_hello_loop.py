@@ -170,7 +170,7 @@ def main():
             if not args.skip_build:
                 emit(handle, "building")
                 if not run([sys.executable,
-                            str(ROOT / "scripts" / "riscv_firmware.py"),
+                            str(ROOT / "scripts" / "riscv" / "riscv_firmware.py"),
                             "--target", args.target], handle, "firmware"):
                     return 1
                 if not run([PYTHON,

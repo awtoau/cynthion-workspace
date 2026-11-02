@@ -27,8 +27,8 @@ reopened after the second configure -- but by then the node exists and udev has
 it, so the reopen is fast enough to catch the banner. That is the race this
 script is built around rather than one it pretends does not exist.
 
-    ./scripts/riscv_console_capture.py
-    ./scripts/riscv_console_capture.py --lines 20
+    ./scripts/riscv/riscv_console_capture.py
+    ./scripts/riscv/riscv_console_capture.py --lines 20
 """
 
 import argparse
@@ -38,7 +38,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 APOLLO_CLI = ROOT / "repos" / "apollo" / "apollo_fpga" / "commands" / "cli.py"
 
 sys.path.insert(0, str(ROOT / "gateware"))

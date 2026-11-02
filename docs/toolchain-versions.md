@@ -208,7 +208,7 @@ failure looks exactly like a dead CPU.
 | `qemu-system-riscv32` | 10.2.2 |
 
 `riscv64-linux-gnu-gcc` targets Linux but produces fine bare-metal objects; see
-the header of `scripts/riscv_firmware.py`.
+the header of `scripts/riscv/riscv_firmware.py`.
 
 QEMU is used only as `-M virt`, and the pairing is deliberate: `virt` presents an
 NS16550A at `0x10000000` and a PLIC at `0x0c000000` (which `src/intc.rs` drives),

@@ -108,7 +108,7 @@ GENERATE_FLAGS = [
     # out which number won.
     #
     # ONE WAY IS STILL AN OPEN CHOICE, not forced. `flash_cache_flush()`
-    # (`scripts/riscv_firmware.py`) evicts by reading the cache's size at line
+    # (`scripts/riscv/riscv_firmware.py`) evicts by reading the cache's size at line
     # stride, which does NOT make a direct-mapped cache a correctness
     # requirement. Two reasons:
     #   * replacement policy is PLRU, not random (`FetchL1Plugin.scala:187`,

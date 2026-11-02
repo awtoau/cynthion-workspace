@@ -18,7 +18,7 @@ This exists for two things those do not do:
 
 ## Socket mode
 
-    ./scripts/riscv_console.py --serve 9000
+    ./scripts/riscv/riscv_console.py --serve 9000
     nc localhost 9000
 
 Read-only by design: bytes flow device to client, never back. The console is an output
@@ -38,9 +38,9 @@ sees ticks and no header. Reconfigure the FPGA to see the banner again.
 The product is the useful one. A CPU with marginal timing does not stop; it computes the
 wrong answer, so a correct product means more than output merely arriving.
 
-    ./scripts/riscv_console.py                 # tail to stdout
-    ./scripts/riscv_console.py --serve 9000    # also serve on TCP 9000
-    ./scripts/riscv_console.py --once          # read one burst and exit
+    ./scripts/riscv/riscv_console.py                 # tail to stdout
+    ./scripts/riscv/riscv_console.py --serve 9000    # also serve on TCP 9000
+    ./scripts/riscv/riscv_console.py --once          # read one burst and exit
 """
 
 import argparse
@@ -49,7 +49,7 @@ import sys
 import threading
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))

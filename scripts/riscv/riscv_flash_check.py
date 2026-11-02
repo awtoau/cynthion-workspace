@@ -26,8 +26,8 @@ THE PORT IS RESOLVED BY USB IDENTITY, NEVER BY NODE NUMBER. This workstation
 has eleven ttyACM nodes across four vendors, and an earlier investigation into
 a silent SoC spent hours reading an ST-LINK.
 
-    ./scripts/riscv_flash_check.py
-    ./scripts/riscv_flash_check.py --no-configure   # board already programmed
+    ./scripts/riscv/riscv_flash_check.py
+    ./scripts/riscv/riscv_flash_check.py --no-configure   # board already programmed
 """
 
 import argparse
@@ -38,7 +38,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Where Apollo's reference reads are dropped. `flash-read` writes to a file
 # rather than stdout, so it needs somewhere to put them.
@@ -151,7 +151,7 @@ TTY_DEADLINE_S = 60.0
 
 
 # The offset the firmware reads twice and benchmarks. Must match
-# FLASH_TEST_OFFSET in scripts/riscv_firmware.py.
+# FLASH_TEST_OFFSET in scripts/riscv/riscv_firmware.py.
 BENCH_OFFSET = 0x00000040
 
 

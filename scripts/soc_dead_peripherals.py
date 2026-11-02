@@ -23,7 +23,7 @@ address map, one entry per decoder window:
      nowhere but `target.rs`, and reaches `src/ulpi.rs` as `BOARD.ulpi`.
   3. **Raw.** The window's literal hex address, anywhere in `firmware/` or
      `scripts/` -- for a caller that hardcodes rather than importing.
-  4. **Host.** The generated C firmware (`scripts/riscv_firmware.py`) keeps its
+  4. **Host.** The generated C firmware (`scripts/riscv/riscv_firmware.py`) keeps its
      own `#define`s, so a window only that file names is reported as such: a
      user, but not one the shipping Rust firmware has.
 
@@ -68,7 +68,7 @@ SKIP = ("/repos/", "/tmp/", "/target/", "/debris/", "cynthion-soc-pac/",
 # The generated C firmware is a user, and a different kind: it is not built by
 # `soc_run.py` unless `--c-firmware` is passed, so a window only it reaches has
 # no user in the shipping image.
-C_GENERATOR = "scripts/riscv_firmware.py"
+C_GENERATOR = "scripts/riscv/riscv_firmware.py"
 
 # Windows whose driver is not in doubt. If the detector calls one of these dead
 # it is the detector that is broken -- see the docstring.

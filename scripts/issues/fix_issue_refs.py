@@ -181,14 +181,14 @@ FIXES = {
             "references have no successor: `ecp5-test/fabric/FABRIC_TEST.md` was not "
             "migrated (the surviving record of the LUT budget is `gateware/README.md`, "
             "and it now says 20,476 LUT4, not 20,143), and `scripts/hyperram_ladder.py` "
-            "is gone — the analogue is `scripts/riscv_clock_ladder.py`. **#91 is closed**, "
+            "is gone — the analogue is `scripts/riscv/riscv_clock_ladder.py`. **#91 is closed**, "
             "so the block this issue declares is lifted."
         ),
         [
             ("`ecp5-test/riscv/vexii_cpu.py`", "`gateware/soc/cpu/cpu.py`"),
             ("`ecp5-test/fabric/FABRIC_TEST.md`", "`gateware/README.md`"),
             ("the way `scripts/hyperram_ladder.py` sweeps the HyperRAM clock",
-             "the way `scripts/riscv_clock_ladder.py` sweeps the clock"),
+             "the way `scripts/riscv/riscv_clock_ladder.py` sweeps the clock"),
         ],
     ),
     204: (
@@ -287,7 +287,7 @@ FIXES = {
             "`docs/chips/w25q32-config-flash.md`, which is the live document. Also: "
             "\"this needs a soft CPU inside the FPGA\" is **no longer a blocker** — the "
             "CPU exists and drives the flash (`gateware/soc/top.py`, "
-            "`scripts/riscv_flash_check.py`). The measurements are still not done."
+            "`scripts/riscv/riscv_flash_check.py`). The measurements are still not done."
         ),
         [("`docs/luna_ecp5_fpga/spi-flash-summary.md`",
           "`docs/chips/w25q32-config-flash.md` (the earlier summary is archived at "
@@ -569,7 +569,7 @@ FIXES = {
         note(
             "**#91 is closed** and the gate it names is satisfied: the CPU drives the "
             "flash today (`gateware/soc/top.py`, "
-            "`firmware/cynthion-soc/src/selftest.rs`, `scripts/riscv_flash_check.py`). "
+            "`firmware/cynthion-soc/src/selftest.rs`, `scripts/riscv/riscv_flash_check.py`). "
             "The measurements below are still not done."
         ),
         [],

@@ -638,7 +638,7 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 #
 # ONE VALUE, for one design. `CYNTHION_SYNC_MHZ=<n>` overrides it, which is what
 # lets one elaboration be built at two clocks without editing this file, and is
-# how `scripts/riscv_clock_ladder.py` and `scripts/soc_sync_ladder.py` pick a
+# how `scripts/riscv/riscv_clock_ladder.py` and `scripts/soc_sync_ladder.py` pick a
 # rung since #439.
 #
 # 50, and it is measured: `scripts/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
@@ -2069,7 +2069,7 @@ def main():
 
     if not args.firmware.exists():
         print(f"no firmware at {args.firmware}")
-        print("build it with ./scripts/riscv_firmware.py")
+        print("build it with ./scripts/riscv/riscv_firmware.py")
         return 1
 
     # Two images in one 64 KiB init, at their two origins.
@@ -2082,7 +2082,7 @@ def main():
     # bootloader treat every failure the same way.
     #
     # Without --bootloader the image is packed at 0 and runs from the reset vector. That
-    # is the C generator's layout (`scripts/riscv_firmware.py`), which has no bootloader
+    # is the C generator's layout (`scripts/riscv/riscv_firmware.py`), which has no bootloader
     # and is linked for 0.
     boot = b""
     if args.bootloader and args.bootloader.exists():
