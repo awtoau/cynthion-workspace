@@ -239,7 +239,7 @@ each family exposes. Comparing them:
 ## docs/chips/ecp5/peripheral-clock-audit.md intro (removed)
 
 `usb` and `sync` used to come from one PLL and, in practice, ran at the same
-rate. [`gateware/soc/clocks.py`](../../../gateware/soc/clocks.py) now takes `usb`
+rate. `gateware/soc/clocks.py` now takes `usb`
 straight from the 60 MHz oscillator on A8, so `sync` has a PLL to itself and is a
 free parameter. Three assumptions that were safe under the old topology are not
 safe under this one:
