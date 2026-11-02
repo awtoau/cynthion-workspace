@@ -904,11 +904,17 @@ def main():
         # arguments and answer `no host engine`, never fall to `usage:` or fault.
         # Ports with no engine (aux, control) answer the same on the board.
         command("usb", [b"usb <port> aoa", b"usb <port> role [mode]",
-                        b"usb <port> in <ep> <len>"],
+                        b"usb <port> in <ep> <len>", b"usb <port> pump out",
+                        b"usb <port> echo <ep> <n>"],
                 "`usb` lists the host verbs")
+        command("usb target_c pump sideways", [b"usage: usb <port> pump out"],
+                "`pump` with a bad direction prints its usage")
+        command("usb target_c echo 99 4", [b"usage: usb <port> echo"],
+                "`echo` rejects an endpoint over 15")
         usb_host_verbs = ("role", "role host", "reset", "desc",
                           "setup 80 06 00 01 00 00 12 00", "in 0 8", "out 1 aa",
-                          "tx aa", "rx", "addr", "aoa")
+                          "tx aa", "rx", "addr", "aoa", "pump out 1 64", "pump out 1 512 7 zlp",
+                          "pump in 1 64", "pump in 1 64 7", "echo 1 64", "echo 1 64 7")
         for verb in usb_host_verbs:
             command(f"usb aux {verb}", [b"no host engine on aux"],
                     f"`usb aux {verb}` says aux has no host engine")

@@ -1,4 +1,4 @@
-//! `usb <port> role|reset|desc|setup|in|out|tx|rx|addr|aoa` -- syntax over `crate::usb_host`.
+//! `usb <port> role|reset|desc|setup|in|out|tx|rx|addr|aoa|pump|echo` -- syntax over `crate::usb_host`.
 //!
 //! No transfer logic here: parse, call the driver, print its `Error` as it displays.
 
@@ -9,8 +9,9 @@ use crate::uart::Uart;
 use crate::usb_host::{self, Error, Host};
 
 /// Verbs this module owns; `usb.rs` routes on them.
-pub(crate) const VERBS: [&[u8]; 11] = [
+pub(crate) const VERBS: [&[u8]; 13] = [
     b"trace", b"role", b"reset", b"desc", b"setup", b"in", b"out", b"tx", b"rx", b"addr", b"aoa",
+    b"pump", b"echo",
 ];
 
 fn fail(uart: &mut Uart, error: Error) {
@@ -136,7 +137,69 @@ pub(crate) fn command(uart: &mut Uart, host: &mut Host, verb: &[u8], args: &[u8]
             }
             Err(e) => fail(uart, e),
         },
+        b"pump" => pump(uart, host, args),
+        b"echo" => echo(uart, host, args),
         _ => {}
+    }
+}
+
+/// `<ep 0-15> <len> [seed] [zlp]` words after the direction word.
+fn pump_args(args: &[u8]) -> Option<(u8, u32, Option<u8>, bool)> {
+    let mut words = args.split(|&b| b == b' ').filter(|w| !w.is_empty());
+    let ep = parse_decimal(words.next()?).filter(|&e| e < 16)? as u8;
+    let len = parse_decimal(words.next()?)?;
+    let (mut seed, mut zlp) = (None, false);
+    for word in words {
+        if word == b"zlp" {
+            zlp = true;
+        } else {
+            seed = Some(parse_decimal(word).filter(|&s| s < 256)? as u8);
+        }
+    }
+    Some((ep, len, seed, zlp))
+}
+
+fn report(uart: &mut Uart, what: &str, run: Result<usb_host::Pump, Error>) {
+    let p = match run {
+        Ok(p) => p,
+        Err(e) => return fail(uart, e),
+    };
+    let us = crate::clock::to_micros(p.ticks).max(1);
+    let bytes = (p.bytes_out + p.bytes_in) as u64;
+    let rate = bytes * 100 / us as u64;
+    let _ = writeln!(uart, "{} out {} in {} bytes {} packets {} naks {} elapsed {} us {}.{:02} MB/s sum {:08x}",
+                     what, p.bytes_out, p.bytes_in, bytes, p.packets, p.naks, us, rate / 100,
+                     rate % 100, p.sum);
+    if let Some((at, got, want)) = p.bad {
+        let _ = writeln!(uart, "mismatch at {} got {:02x} want {:02x}", at, got, want);
+    }
+    if let Some(e) = p.err {
+        let _ = writeln!(uart, "stopped: {}", e);
+    }
+}
+
+fn pump(uart: &mut Uart, host: &mut Host, args: &[u8]) {
+    let (dir, rest) = match args.iter().position(|&b| b == b' ') {
+        Some(at) => (&args[..at], &args[at + 1..]),
+        None => (args, &args[..0]),
+    };
+    match (dir, pump_args(rest)) {
+        (b"out", Some((ep, len, seed, zlp))) => {
+            report(uart, "pump out", host.pump_out(ep, len, seed.unwrap_or(1), zlp))
+        }
+        (b"in", Some((ep, len, seed, _))) => report(uart, "pump in", host.pump_in(ep, len, seed)),
+        _ => {
+            let _ = writeln!(uart, "usage: usb <port> pump out <ep> <len> [seed] [zlp] | in <ep> <len> [seed]");
+        }
+    }
+}
+
+fn echo(uart: &mut Uart, host: &mut Host, args: &[u8]) {
+    match pump_args(args) {
+        Some((ep, len, seed, _)) => report(uart, "echo", host.echo(ep, len, seed.unwrap_or(1))),
+        None => {
+            let _ = writeln!(uart, "usage: usb <port> echo <ep> <len> [seed]");
+        }
     }
 }
 
