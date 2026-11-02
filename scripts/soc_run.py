@@ -1322,6 +1322,13 @@ def write_rodata_flash(args, emit):
              f"-- not rewriting. `--force-flash` writes it anyway.")
         return True
 
+    import soc_confirm
+
+    # IDCODE and flash JEDEC checked before the erase (apollo#15).
+    if soc_confirm.part_gate(BITSTREAM, flash=True) is not None:
+        FLASH_WRITTEN.unlink(missing_ok=True)
+        return False
+
     emit(f"  writing flash at {FLASH_RODATA_OFFSET:#x} "
          f"(bitstream at 0x0 is not touched)")
     emit(f"  the CPU executes from here, so it goes quiet NOW and comes back "

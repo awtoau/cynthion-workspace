@@ -196,6 +196,58 @@ def lookup(usercode, root=ROOT, index=None):
     return table.get(f"{int(usercode):#010x}")
 
 
+def bitstream_idcode(path):
+    """The IDCODE `ecppack` packed into a `.bit` (its VERIFY_ID command), or None.
+
+    Read from the file, not from the platform's `device` string: the string is
+    what the build record was derived from, so only the file can disagree with it
+    (cynthion#185). Preamble `BD B3`, then command `E2 00 00 00` and the code,
+    big-endian.
+    """
+    head = Path(path).read_bytes()[:512]
+    start = head.find(b"\xbd\xb3")
+    if start < 0:
+        return None
+    at = head.find(b"\xe2\x00\x00\x00", start)
+    if at < 0 or at + 8 > len(head):
+        return None
+    return int.from_bytes(head[at + 4:at + 8], "big")
+
+
+def bitstream_part(path):
+    """The `Part:` comment `ecppack` writes at the top of a `.bit`, or None."""
+    head = Path(path).read_bytes()[:128]
+    marker = head.find(b"Part: ")
+    if marker < 0:
+        return None
+    return head[marker + 6:head.find(b"\x00", marker)].decode("ascii", "replace")
+
+
+def bitstream_problems(path, record):
+    """Where the packed `.bit` and its build record disagree on the part.
+
+    A list of lines; empty is a pass. The record's `idcode` is prjtrellis' value
+    for the platform's `device`; the `.bit` carries what `ecppack` really packed.
+    """
+    problems = []
+    want = record.get("idcode")
+    got = bitstream_idcode(path)
+    if got is None:
+        problems.append(f"{Path(path).name}: no VERIFY_ID command found in the "
+                        f"first 512 bytes, so the packed IDCODE is unknown")
+    elif want is not None and got != want:
+        problems.append(
+            f"{Path(path).name} was packed for IDCODE {got:08x} "
+            f"({bitstream_part(path)}), the build record says "
+            f"{want:08x} ({record.get('device')})")
+    part = bitstream_part(path)
+    device = record.get("device")
+    if part and device and not part.startswith(device):
+        problems.append(f"{Path(path).name} says `Part: {part}`, the record "
+                        f"says device {device}")
+    return problems
+
+
 def describe(usercode, record=None):
     """One line for a USERCODE, using the record when there is one."""
     code = int(usercode)

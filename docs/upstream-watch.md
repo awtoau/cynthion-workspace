@@ -29,7 +29,10 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 |---|---|---|---|
 | apollo [PR#67](https://github.com/greatscottgadgets/apollo/pull/67) FPGA_ADV: UART RX replaced by edge counter | merged 2024-05-29 | SAMD11 has no crystal, UART baud drifts: conflicts with our 230400-baud sideband | USE (weighs toward shrinking the sideband) |
 | apollo [#116](https://github.com/greatscottgadgets/apollo/issues/116) flash fails if the gateware takes the JTAG pins | open | our DMA JTAG / fast flash may hit it | WATCH |
-| apollo [#29](https://github.com/greatscottgadgets/apollo/issues/29) `jtag_init` assumes RESET state | open | relevant to DMA JTAG | WATCH |
+| apollo [#29](https://github.com/greatscottgadgets/apollo/issues/29) `jtag_init` assumes RESET state | open | handled: `JTAGChain.__enter__` sends `GO_TO_STATE(RESET)` right after `JTAG_START` (`repos/apollo/apollo_fpga/jtag.py:254`), 5 TMS clocks unconditionally (`jtag_tap.c:293`); `tests/test_jtag_start_then_reset.py` | USE |
+| apollo [#15](https://github.com/greatscottgadgets/apollo/issues/15) `flash_program` checks no part IDs | open | fixed here: `soc_confirm.part_gate` checks IDCODE and flash JEDEC (`ef4016`) before every configure and flash write; `tests/test_prewrite_part_checks.py` | USE |
+| cynthion [#232](https://github.com/greatscottgadgets/cynthion/issues/232) custom bitstream needs a CPU reset delay | open | handled differently: R14/T14 `oe` is low until a byte is accepted and the firmware never speaks first (`serial_line.py`, `target.rs` `NEVER_SPEAKS_FIRST`); `soc_serial_sim.py` pins it | USE |
+| cynthion [#185](https://github.com/greatscottgadgets/cynthion/issues/185) 25F/12F device string vs bitstream | closed | packed IDCODE is checked against the build record at build time; see [`lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) | USE |
 | apollo [#108](https://github.com/greatscottgadgets/apollo/issues/108) prefer `force_fpga_offline()` | open | we use it | USE |
 | apollo [PR#109](https://github.com/greatscottgadgets/apollo/pull/109) r1.4 detection voltage | merged | board-rev detection | USE |
 | saturn-v [#23](https://github.com/greatscottgadgets/saturn-v/issues/23) bootloader fits 2 KB only with the ARM GNU toolchain | open | pin the toolchain | USE |
