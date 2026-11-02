@@ -118,6 +118,9 @@ def main():
     ap.add_argument("--repeat-seed", type=int, default=None, metavar="SEED",
                     help="hold the seed at SEED for every run: what a plain "
                          "rebuild varies by, since no build passes a seed")
+    ap.add_argument("--seeds", type=int, nargs="+", default=None,
+                    help="explicit seed list (overrides --runs): re-place the "
+                         "seeds another arm failed on, same placement, other flags")
     ap.add_argument("--opts", default=NEXTPNR_OPTS,
                     help="extra nextpnr flags; defaults to the ones every build "
                          "uses. Pass '' for a single-threaded control")
@@ -126,8 +129,12 @@ def main():
     args = ap.parse_args()
 
     opts = args.opts.split()
-    seeds = ([args.repeat_seed] * args.runs if args.repeat_seed is not None
-             else list(range(1, args.runs + 1)))
+    if args.seeds:
+        seeds = args.seeds
+    elif args.repeat_seed is not None:
+        seeds = [args.repeat_seed] * args.runs
+    else:
+        seeds = list(range(1, args.runs + 1))
     emit(f"{args.name}: netlist {args.json}")
     emit(f"runs: {args.runs}  target freq: {args.freq}  jobs: {args.jobs}")
     emit(f"seeds: {seeds}  opts: {' '.join(opts) or '(none)'}")
