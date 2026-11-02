@@ -428,8 +428,8 @@ power-up with no JTAG attached.
 `sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`, `bootram.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
 invariants they depend on are worth writing down because nothing enforces them:
-every PLIC source must be driven in `sync` (the PLIC has no synchroniser and
-treats sources as combinational levels), and `Clint.mtime` must be driven in
+every interrupt-controller line (`intc.lines[...]`) must be driven in `sync` (the controller has no synchroniser and
+treats lines as combinational levels), and `Clint.mtime` must be driven in
 `sync` (it is a bare 64-bit assignment, and a cross-domain one would be
 catastrophic). Both hold today.
 
