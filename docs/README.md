@@ -91,6 +91,7 @@ in its §13 got there in the first place.
 * [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
 * [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
 * [`usb-host-options.md`](usb-host-options.md) — USB Host Mode on Cynthion at 480 Mbps — Proposal
+* [`usb-mitm-design.md`](usb-mitm-design.md) — USB MITM design: port/PHY assignment, relay vs proxy, spoofing, tap record, cell estimate, build order
 
 ### Per-chip notes
 
