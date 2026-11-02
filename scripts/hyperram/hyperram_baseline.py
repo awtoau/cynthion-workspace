@@ -120,9 +120,15 @@ def build_one(ck):
 
 def configure(ck):
     bit = OUT / f"ck{ck:g}" / "top.bit"
-    r = subprocess.run(["apollo", "configure", str(bit)], cwd=ROOT, capture_output=True, text=True)
-    say(f"configure {bit.name} ck{ck:g}: rc {r.returncode} {(r.stdout + r.stderr).strip()[-200:]}")
-    return r.returncode == 0
+    # Retried: a running SoC drives its UART on the JTAG-shared pins (IDCODE ffffffff).
+    for attempt in range(1, 4):
+        r = subprocess.run(["apollo", "configure", str(bit)], cwd=ROOT, capture_output=True,
+                           text=True)
+        say(f"configure ck{ck:g} attempt {attempt}: rc {r.returncode} "
+            f"{(r.stdout + r.stderr).strip()[-160:]}")
+        if r.returncode == 0:
+            return True
+    return False
 
 
 class Board:
