@@ -189,7 +189,12 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
                 let _ = writeln!(uart, "  state {:04x}", hw::r16(offset::STATE));
                 errors(uart, true);
             }
-            b"xor" => test(uart, 2, 0x1000, 0, 0x5eed, 1),
+            b"xor" => {
+                // A clean write, then the same read with the checker's want inverted:
+                // every word must fail, or the checker cannot see a failure.
+                test(uart, 1, 0x1000, 0x7f_0000, 0x5eed, 0);
+                test(uart, 2, 0x1000, 0x7f_0000, 0x5eed, 1);
+            }
             _ => {
                 let _ = writeln!(uart, "usage: hr inject <hang|xor>");
             }
