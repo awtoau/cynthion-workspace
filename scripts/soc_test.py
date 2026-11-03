@@ -839,7 +839,7 @@ def main():
                    b"[status|floor|alert|rate|detect|limit|samples|bracket"
                    b"|hispeed|reset]",
                    # `hr` (#588); `test` and `inject` are the destructive ones.
-                   b"[abort|calibrate|delay|errors|fill|inject|read|reg|status|test|write]",
+                   b"[abort|calibrate|delay|errors|fill|inject|read|reg|results|status|test|write]",
                    # `input` went with the selector that reached no pin (#305).
                    b"[status|off|control|both|charge]"]
         command("help", listing, "`help` lists every command")

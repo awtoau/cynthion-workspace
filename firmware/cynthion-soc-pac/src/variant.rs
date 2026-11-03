@@ -15,3 +15,7 @@ pub const SYNC_HZ: u32 = 60000000;
 /// Getting it wrong gives a bus that violates its own setup times and
 /// answers most of the time.
 pub const I2C_PRESCALE: u16 = 11;
+
+/// HyperRAM CK, in Hz (`CYNTHION_HYPERRAM_CK_MHZ`): the driver's wait bounds
+/// convert hr cycles to `rdtime` ticks with it.
+pub const HYPERRAM_CK_HZ: u32 = 180000000;

@@ -112,6 +112,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("hr inject <hang|xor>", "force the watchdog, or a checker failure"),
     ("hr read <addr> [n]", "bytes, through the window"),
     ("hr reg <id0|id1|cr0|cr1> [v]", "read a register, or write it and read back"),
+    ("hr results", "the last op's counters, a failed calibration included"),
     ("hr status", "ready, CK measured, calibration, errors"),
     ("hr test [w|r|wr] [n] [a] [seed]", "generator/checker at bus rate; DESTROYS the range"),
     ("hr write <addr> <byte>...", "bytes, through the window"),

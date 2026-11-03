@@ -177,6 +177,17 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
             }
         },
         b"errors" => errors(uart, true),
+        // The last op's latched results, whatever it was (a failed calibration included).
+        b"results" => {
+            counters(uart, 0);
+            let _ = writeln!(
+                uart,
+                "  checked {} errors {} missing {} first-bad {:08x} got/want {:08x} bits {:04x} state {:04x}",
+                hw::r32(offset::CHECKED), hw::r32(offset::ERRS), hw::r32(offset::MISSING),
+                hw::r32(offset::BAD_INDEX), hw::r32(offset::BAD_GOT_WANT),
+                hw::r16(offset::BAD_BITS), hw::r16(offset::STATE)
+            );
+        }
         b"inject" => match if n > 1 { w[1] } else { b"" } {
             b"hang" => {
                 // The engine ignores `done`; the transaction watchdog must fire.
@@ -247,7 +258,7 @@ fn calibration(uart: &mut Uart) {
 #[cfg(not(feature = "qemu"))]
 fn errors(uart: &mut Uart, clear: bool) {
     let e = hw::r16(offset::ERRORS);
-    let _ = write!(uart, "  errors {:04x}", e);
+    let _ = write!(uart, "  errors {:04x} (state {:04x})", e, hw::r16(offset::STATE));
     for (bit, name) in ERROR_NAMES.iter().enumerate() {
         if e >> bit & 1 == 1 {
             let _ = write!(uart, " {}", name);

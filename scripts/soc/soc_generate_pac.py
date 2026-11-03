@@ -661,6 +661,12 @@ def variant_constants():
     return sync_hz, prescale_for(sync_hz, soc_module.I2C_SCL_HZ), soc_module.I2C_SCL_HZ
 
 
+def hyperram_ck_hz():
+    """HyperRAM CK of this variant (`CYNTHION_HYPERRAM_CK_MHZ`), for the driver's bounds."""
+    import top as soc_module
+    return round(soc_module.HYPERRAM_CK_MHZ * 1e6)
+
+
 def render_variant():
     """The constants that follow `CYNTHION_SYNC_MHZ`, as one includable file.
 
@@ -687,6 +693,10 @@ def render_variant():
         "/// Getting it wrong gives a bus that violates its own setup times and",
         "/// answers most of the time.",
         f"pub const I2C_PRESCALE: u16 = {prescale};",
+        "",
+        "/// HyperRAM CK, in Hz (`CYNTHION_HYPERRAM_CK_MHZ`): the driver's wait bounds",
+        "/// convert hr cycles to `rdtime` ticks with it.",
+        f"pub const HYPERRAM_CK_HZ: u32 = {hyperram_ck_hz()};",
         "",
     ])
 

@@ -108,8 +108,8 @@ def main() -> int:
           and "checked 2048 errors 2048" in text, text[-300:])
     text = shell("hr errors", "hr errors")
     out(text)
-    check("errors clear after reading", text.rstrip().endswith("errors 0000") or
-          "errors 0000\n" in text.split("hr errors")[-1], text[-200:])
+    check("errors clear after reading", "errors 0000 " in text.split("hr errors")[-1],
+          text[-200:])
 
     failed = [w for w, ok in results if not ok]
     out(f"\n{len(results) - len(failed)}/{len(results)} passed" +

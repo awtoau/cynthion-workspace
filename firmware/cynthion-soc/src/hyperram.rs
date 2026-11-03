@@ -158,6 +158,12 @@ pub mod backend {
     const BASE: usize = cynthion_soc_pac::base::HYPERRAM;
     const WIN: usize = cynthion_soc_pac::base::HYPERRAM_WINDOW;
     const SYNC_HZ: u32 = cynthion_soc_pac::base::SYNC_HZ;
+    /// hr cycles per `rdtime` tick, rounded DOWN so a bound never comes out short
+    /// (3 at CK 180, 2 at 120; 2 at 165, which is 37% loose).
+    const HR_PER_TICK: u32 = {
+        let k = cynthion_soc_pac::base::HYPERRAM_CK_HZ / SYNC_HZ;
+        if k == 0 { 1 } else { k }
+    };
 
     pub const OP_COPY_OUT: u8 = 1;
     pub const OP_COPY_IN: u8 = 2;
@@ -246,16 +252,18 @@ pub mod backend {
     }
 
     /// Bound for an op moving `bytes`: words + 38 hr cycles per transaction (latency
-    /// 13 + 25 fixed; one per 1 KiB counts more than the 1336-byte bursts need), at
-    /// CK 180 = sync/3, + 64 for the handshake and polling; x1.25. Expiry: CODE_TIMEOUT.
+    /// 13 + 25 fixed; one per 1 KiB counts more than the 1336-byte bursts need), in
+    /// ticks via HR_PER_TICK, + 64 for the handshake and polling; x1.25. Expiry:
+    /// CODE_TIMEOUT. A read that loses words also spends them in the tail fill and can
+    /// outlast this; the gateware then still reports it.
     pub fn op_ticks(bytes: u32) -> u32 {
         let hr = bytes / 2 + 2 + ((bytes >> 10) + 1) * 38;
-        5 * (hr / 3 + 64) / 4
+        5 * (hr / HR_PER_TICK + 64) / 4
     }
 
     /// CALIBRATE: one 2048-word write, then 128 taps x (DELAYF step <= 1032 + 2048-word
-    /// read + 4 x 38) hr cycles = 416 k, /3 sync; x1.25.
-    pub const CAL_TICKS: u32 = 5 * (416_000 / 3 + 64) / 4;
+    /// read + 4 x 38) hr cycles = 416 k, in ticks; x1.25.
+    pub const CAL_TICKS: u32 = 5 * (416_000 / HR_PER_TICK + 64) / 4;
 
     /// Ready after configuration: tLOCK2 15 ms (ECP5 DS-02012) + RESET# 4 us + the
     /// automatic calibration (CAL_TICKS); x1.25.
