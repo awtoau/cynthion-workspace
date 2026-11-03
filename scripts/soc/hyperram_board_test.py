@@ -72,13 +72,16 @@ def main() -> int:
     for mode in ("w", "r", "wr"):
         text = shell(f"hr test {mode} {WHOLE:x} 0 1a2b")
         out(text)
-        ok = "test ok" in text and re.search(r"errors 0 missing 0", text) is not None
-        if mode == "w":
-            ok = "test ok" in text
         rate = re.search(r"= (\d+\.\d) MB/s", text)
         checked = re.search(r"checked (\d+)", text)
+        # complete as well as clean: every word of the array was checked
+        ok = ("test ok" in text and re.search(r"errors 0 missing 0", text) is not None
+              and checked is not None and int(checked.group(1)) == WHOLE // 2)
+        if mode == "w":
+            ok = "test ok" in text
         rows.append((mode, rate.group(1) if rate else "?", checked.group(1) if checked else "?"))
-        check(f"test {mode} over 8 MiB: ok" + ("" if mode == "w" else ", 0 errors, 0 missing"),
+        check(f"test {mode} over 8 MiB: ok" + ("" if mode == "w" else
+                                              ", checked == 4194304 words, 0 errors, 0 missing"),
               ok, text[-400:])
     out("\n| mode | MB/s | words checked |\n|---|---|---|")
     for row in rows:
