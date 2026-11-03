@@ -233,6 +233,7 @@ class Flash:
         self.pos = b.rd_stable("PHASE_POS")
         self.seq = b.rd_stable("SEQ")
         self.seq_bad = 0
+        self.abort_bit = b.rd("ABORT") & 1
         b.wr("CSH", math.ceil(10e-9 * self.hz) | math.ceil(50e-9 * self.hz) << 8, force=True)
         b.wr("TS", 0, force=True)
         b.wr("MBYTE", 0xF0, force=True)
@@ -278,15 +279,17 @@ class Flash:
         # Waits for: STATUS.done. Expected `expect_s` (transfer at the measured SCK, plus
         # datasheet-max BUSY for program/erase); x1.25 plus the debugger's round trips.
         deadline = time.monotonic() + 1.25 * expect_s + JTAG_S
-        done = False
+        done, status = False, 0
         while time.monotonic() < deadline:
-            if b.rd("STATUS") & 1:
+            status = b.rd("STATUS")
+            if status & 1:
                 done = True
                 break
         row = dict(label=label, sck=self.sck, sck_meas=self.f, op=kind, desc=d, addr=addr,
                    length=length, burst=burst, count=count, check=check, seed=seed, xor=xor,
-                   done=done, phase=self.phase(), n_steps=self.n_steps,
-                   lat=b.cache.get("LAT"), xfer=b.cache.get("XFER"))
+                   window=list(window), done=done, phase=self.phase(), n_steps=self.n_steps,
+                   lat=b.cache.get("LAT"), xfer=b.cache.get("XFER"),
+                   lock_lost=bool(status >> 3 & 1))
         for name in RESULT_REGS[kind] if not quick else QUICK_REGS[kind]:
             row[name.lower()] = b.rd_stable(name) if done else b.rd(name)
         for name in ALL_RESULT_REGS:
@@ -301,7 +304,11 @@ class Flash:
             say(f"  {label}: SEQ {row['seq']} != expected {self.seq}: result not this op's")
             self.seq = row["seq"]
         if not done:
-            say(f"  {label}: HUNG after {1.25 * expect_s + JTAG_S:.2f} s, state {row['state']:#06x}")
+            say(f"  {label}: HUNG after {1.25 * expect_s + JTAG_S:.2f} s, state {row['state']:#06x}, "
+                f"SEQ {row['seq']}, BUSY_N {b.rd('BUSY_N')}, lock lost {row['lock_lost']}; abort")
+            self.abort_bit ^= 1
+            b.wr("ABORT", self.abort_bit)
+            self.seq = b.rd_stable("SEQ")       # the engine reset clears it
         return row
 
     def read_s(self, mode, length, burst):
@@ -716,23 +723,63 @@ def diag(args):
     say(f"  ops: {args.ops} JEDEC reads at {best}: {bad_op} wrong, SEQ mismatches "
         f"{fl.seq_bad}, ID around ops wrong {bad_id_op}")
     seed = last_seed()
-    lat0 = best[1]
     stride = max(1, fl.n_steps // 16)
-    turns = {}
-    for lat in range(max(0, lat0 - 1), lat0 + 2):
-        for turn in range(3):
-            row = ""
-            for _ in range(0, fl.n_steps, stride):
-                fl.set_capture((fl.phase() + stride) % fl.n_steps, lat)
-                r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
-                          burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
-                          expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="diag")
-                row += "." if r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES else "X"
-            turns[(lat, turn)] = row
-            say(f"    lat {lat} turn {turn} (steps {fl.pos - fl.n_steps}..{fl.pos}): {row}")
-    record(dict(label="diag", sck=args.sck, sck_meas=fl.f, n=len(pats), bad_rw=bad_rw,
-                bad_id=bad_id, ops=args.ops, bad_op=bad_op, seq_bad=fl.seq_bad,
-                bad_id_op=bad_id_op, turns={f"{k[0]},{k[1]}": v for k, v in turns.items()}))
+
+    def probe():
+        r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
+                  burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
+                  expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="diag")
+        return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
+
+    def walk(lat, h):
+        """One counted turn (8 x DIV single-pulse writes), a probe every `stride` steps."""
+        row = ""
+        for _ in range(0, fl.n_steps, stride):
+            fl.set_capture((fl.phase() + stride) % fl.n_steps, lat, h)
+            row += "." if probe() else "X"
+        return row
+
+    def shift(a, c):
+        """Columns c lags a by (circular best match), in phase steps."""
+        n = len(a)
+        score = [sum(a[i] == c[(i + k) % n] for i in range(n)) for k in range(n)]
+        k = max(range(n), key=lambda k: score[k])
+        return (k if k <= n // 2 else k - n) * stride
+
+    # Drift: two turns of single writes, one batch write of a full turn, a third turn.
+    lat, h = best[1], best[2]
+    rows = [walk(lat, h), walk(lat, h)]
+    fl.pstep_bit ^= 1
+    b.wr("PHASE_STEP", (fl.pstep_bit << 31) | fl.n_steps)
+    fl.pos += fl.n_steps
+    for _ in range(20):
+        if not b.rd("STATUS") & 4:
+            break
+    rows.append(walk(lat, h))
+    pos_hw = b.rd_stable("PHASE_POS")
+    d_single, d_batch = shift(rows[0], rows[1]), shift(rows[1], rows[2]) - shift(rows[0], rows[1])
+    for k, r in enumerate(rows):
+        say(f"    lat {lat} xfer {h >> 1} turn {k}{' (after a batch turn)' if k == 2 else ''}: {r}")
+    say(f"  PHASESTEP: counted {fl.pos}, PHASE_POS {pos_hw}; eye moves {d_single:+d} steps per "
+        f"turn of single writes, {d_batch:+d} for one batch turn ({fl.n_steps} steps/turn counted, "
+        f"div {fl.div}); lock lost {bool(b.rd('STATUS') >> 3 & 1)}")
+    out = dict(label="diag", sck=args.sck, sck_meas=fl.f, div=fl.div, n=len(pats), bad_rw=bad_rw,
+               bad_id=bad_id, ops=args.ops, bad_op=bad_op, seq_bad=fl.seq_bad,
+               bad_id_op=bad_id_op, rows=rows, d_single=d_single, d_batch=d_batch,
+               pos=fl.pos, pos_hw=pos_hw)
+    if args.drv:
+        # Output drive: SR3 DRV1:0 = 11 (25%, read 0x60) vs 00 (100%), volatile (50h, 11h).
+        widths = {}
+        for name, sr3 in (("25%", 0x60), ("100%", 0x00), ("25% restored", 0x60)):
+            fl.raw(desc(0x50), label="volatile SR write enable")
+            fl.raw(desc(0x11, dw=W1), length=1, wdata=sr3 << 24, label=f"SR3 {sr3:#04x}")
+            got = fl.raw(desc(0x15, dw=W1, read=True), length=1, label="SR3")["result"] & 0xFF
+            row = walk(lat, h)
+            widths[name] = row.count(".") * stride
+            say(f"  drive {name}: SR3 reads {got:#04x}; lat {lat} row {row}; clean "
+                f"{widths[name]} of {fl.n_steps} steps")
+        out["drv_widths"] = widths
+    record(out)
     return 0
 
 
@@ -764,11 +811,27 @@ def table(run_id=None):
     def get(sck, label):
         return next((r for r in reversed(rows) if r.get("sck") == sck and r["label"] == label), None)
 
+    def valid(r):
+        """Complete and fresh: done, this op's SEQ, every expected byte checked."""
+        lo, hi = r.get("window", [0, 0])
+        want = hi - lo if hi else r["length"]
+        return r["done"] and r.get("seq_ok", True) and r["checked"] == want
+
+    def ctl_cell(c):
+        """A control passes only if it fails every byte it checked."""
+        if c is None:
+            return "-"
+        if not c["done"]:
+            return "HUNG"
+        return f"{c['errors']}" + ("" if valid(c) and c["errors"] == c["checked"] else " NOT ALL")
+
     def cell(r):
         if r is None:
             return "-"
         if not r["done"]:
             return "HUNG"
+        if not valid(r):
+            return "INVALID"
         return f"{r['mb_s']:.2f} / {r['errors']}"
 
     modes = list(MODES)
@@ -785,8 +848,7 @@ def table(run_id=None):
         bl, sc = get(sck, "blank check"), get(sck, "scan")
         print(f"| {sck:g} | {meas:.3f} | {e['width'] if e else '-'} | " + " | ".join(cells)
               + f" | {cell(get(sck, 'EBh 1-4-4 burst32'))} | {cell(get(sck, '0Bh 1-1-1 burst32'))}"
-              + " | " + " | ".join("-" if c is None else ("HUNG" if not c["done"] else str(c["errors"]))
-                                   for c in ctl)
+              + " | " + " | ".join(ctl_cell(c) for c in ctl)
               + f" | {'-' if bl is None else bl['errors']} | "
               + f"{'-' if sc is None else format(sc['mb_s'], '.2f')} |")
     print("\n| SCK | op | n | min ms | avg ms | max ms |")
@@ -814,6 +876,7 @@ def main():
     pd.add_argument("--sck", type=float, default=100)
     pd.add_argument("--n", type=int, default=300)
     pd.add_argument("--ops", type=int, default=100)
+    pd.add_argument("--drv", action="store_true", help="eye width at SR3 drive 25% vs 100%")
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
