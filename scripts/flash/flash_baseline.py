@@ -63,10 +63,16 @@ TEST_BASE, TEST_SIZE = 0x280000, 0x100000
 SWEEP_SCK = [20, 50, 80, 100, 120, 132, 140, 150, 160, 180, 200, 240]
 # Datasheet 9.6 maxima (s): what each WLOOP opcode may take per unit.
 T_MAX = {0x02: 3e-3, 0x32: 3e-3, 0x20: 0.4, 0x52: 1.6, 0xD8: 2.0}
-WIDTH = {"0Bh 1-1-1": 1, "3Bh 1-1-2": 2, "BBh 1-2-2": 2, "6Bh 1-1-4": 4, "EBh 1-4-4": 4}
+# QPI: present on this board's IQ part though its datasheet omits it (probe, #590); timing
+# from the W25Q32JV-DTR datasheet rev H: 2-clock opcode, M7-0 counts as 2 of 8 dummies.
+QPI_MODES = {"QPI EBh 4-4-4": desc(0xEB, cmd_w4=True, abits=32, aw=W4, dummy=6, dw=W4,
+                                   read=True, tail=1)}
+MODES = dict(READ_MODES, **QPI_MODES)
+WIDTH = {"0Bh 1-1-1": 1, "3Bh 1-1-2": 2, "BBh 1-2-2": 2, "6Bh 1-1-4": 4, "EBh 1-4-4": 4,
+         "QPI EBh 4-4-4": 4}
 EYE_MODE = "EBh 1-4-4"
 EYE_BYTES = 4096
-LAT_RANGE = range(0, 12)
+LAT_RANGE = range(0, 10)     # round trip in sck cycles: 2 at 20 MHz (scan), more as T shrinks
 JTAG_S = 1.0                 # debugger round trips on top of any op deadline (hyperram harness)
 ALL_RESULT_REGS = ("RUN_CYCLES", "BYTES", "TXS", "CHECKED", "ERRORS", "BAD_INDEX",
                    "BAD_GOT_WANT", "BAD_BITS", "RESULT", "BUSY_MIN", "BUSY_MAX", "BUSY_SUM",
@@ -221,15 +227,16 @@ class Flash:
         self.n_steps = 8 * self.div                  # PHASESTEP per period, TN-02200 18.4.1
         self.f = measured_sck(b)
         self.hz = self.f * 1e6
-        self.go_bit = 0
-        self.pstep_bit = 0
+        self.go_bit = b.rd("GO") & 1
+        self.pstep_bit = b.rd("PHASE_STEP") >> 31
+        self.pos = b.rd_stable("PHASE_POS")
         b.wr("CSH", math.ceil(10e-9 * self.hz) | math.ceil(50e-9 * self.hz) << 8, force=True)
         b.wr("TS", 0, force=True)
         b.wr("MBYTE", 0xF0, force=True)
 
     # -- capture setting ---------------------------------------------------------
     def phase(self):
-        return self.b.rd("PHASE_POS") % self.n_steps
+        return self.pos % self.n_steps
 
     def set_capture(self, step, lat):
         """Delay-only PHASESTEPs (glitch-free direction) to reach `step`, then lat/xfer."""
@@ -237,23 +244,26 @@ class Flash:
         if delta:
             self.pstep_bit ^= 1
             self.b.wr("PHASE_STEP", (self.pstep_bit << 31) | delta)
-            # Waits for: delta pulses x 4 cycles of 60 MHz (67 ns each). Bounded at 200 polls.
-            for _ in range(200):
+            # Waits for: delta pulses x 4 cycles of 60 MHz (67 ns each, < 25 us for a
+            # period). One JTAG read (~ms) outlasts it; bounded at 20 polls.
+            for _ in range(20):
                 if not self.b.rd("STATUS") & 4:
                     break
             else:
                 raise Hung(f"PHASESTEP {delta} never finished")
+            self.pos += delta
         frac = step / self.n_steps
         self.b.wr("XFER", int(frac < 0.25 or frac >= 0.75))
         self.b.wr("LAT", lat)
 
     # -- ops -------------------------------------------------------------------------
     def op(self, kind, *, d=0, addr=0, length=0, burst=0, count=0, stride=0, check=0, seed=0,
-           xor=0, poll_after=0, expect_s=0.0, label="", quick=False):
+           xor=0, poll_after=0, wdata=0, expect_s=0.0, label="", quick=False):
         b = self.b
         for name, v in (("OP", kind | poll_after << 8), ("DESC", d), ("ADDR", addr),
                         ("LENGTH", length), ("BURST", burst), ("COUNT", count),
-                        ("STRIDE", stride), ("CHECK", check), ("SEED", seed), ("XOR", xor)):
+                        ("STRIDE", stride), ("CHECK", check), ("SEED", seed), ("XOR", xor),
+                        ("WDATA", wdata)):
             b.wr(name, v)
         self.go_bit ^= 1
         b.wr("GO", self.go_bit)
@@ -281,15 +291,29 @@ class Flash:
         txs = max(1, math.ceil(length / burst))
         return (length * 8 / WIDTH[mode] + txs * 60) / self.hz
 
-    def raw(self, d, length=0, label="raw", poll_after=0, expect_s=0.0):
-        return self.op(OP_RAW, d=d, length=length, poll_after=poll_after, expect_s=expect_s,
-                       label=label)
+    def raw(self, d, length=0, label="raw", poll_after=0, wdata=0, expect_s=0.0):
+        return self.op(OP_RAW, d=d, length=length, poll_after=poll_after, wdata=wdata,
+                       expect_s=expect_s, label=label)
+
+    def qpi(self, on):
+        """Enter QPI with 8 dummy clocks (C0h P5-4=11: the 133 MHz setting, DTR datasheet
+        8.2.38), or exit (FFh, 4-wide; ignored in SPI mode)."""
+        if on:
+            self.raw(desc(0x38), label="QPI enter")
+            self.raw(desc(0xC0, cmd_w4=True, dw=W4), length=1, wdata=0x30 << 24,
+                     label="QPI set read parameters")
+        else:
+            self.raw(desc(0xFF, cmd_w4=True), label="QPI exit")
 
     def read(self, mode, addr, length, burst=None, check=CHECK_PATTERN, seed=0, xor=0, label=""):
         burst = burst or length
-        r = self.op(OP_READ, d=READ_MODES[mode], addr=addr, length=length, burst=burst,
+        if mode in QPI_MODES:
+            self.qpi(True)
+        r = self.op(OP_READ, d=MODES[mode], addr=addr, length=length, burst=burst,
                     check=check, seed=seed, xor=xor, expect_s=self.read_s(mode, length, burst),
                     label=label or f"read {mode}")
+        if mode in QPI_MODES:
+            self.qpi(False)
         secs = r["run_cycles"] / self.hz if r["run_cycles"] else 0
         r["mb_s"] = r["bytes"] / secs / 1e6 if secs and r["done"] else 0
         r["mode"] = mode
@@ -298,7 +322,8 @@ class Flash:
     def wloop(self, opcode, addr, count, stride, *, burst=0, dw=W1, seed=0, label=""):
         d = desc(opcode, abits=24, dw=dw)
         r = self.op(OP_WLOOP, d=d, addr=addr, count=count, stride=stride, burst=burst, seed=seed,
-                    expect_s=count * T_MAX[opcode], label=label)
+                    expect_s=count * (T_MAX[opcode] + (burst * 8 / (4 if dw == W4 else 1)
+                                                       + 120) / self.hz), label=label)
         n = r["busy_n"] or 1
         r.update(opcode=opcode, t_min_ms=r["busy_min"] / self.hz * 1e3 if r["busy_n"] else None,
                  t_max_ms=r["busy_max"] / self.hz * 1e3, t_avg_ms=r["busy_sum"] / n / self.hz * 1e3)
@@ -366,16 +391,16 @@ def pick(fl, grid):
     return widest[len(widest) // 2], len(widest)
 
 
-def eye(fl, probe, label, stride):
+def eye(fl, probe, label, stride, lats=LAT_RANGE):
     grid = {}
     steps = range(0, fl.n_steps, stride)
     for step in steps:
-        for lat in LAT_RANGE:
+        for lat in lats:
             fl.set_capture(step, lat)
             grid[(step, lat)] = probe()
     best, width = pick(fl, grid)
     rows = []
-    for lat in LAT_RANGE:
+    for lat in lats:
         rows.append(f"lat {lat:>2} " + "".join("." if grid[(s, lat)] else "X" for s in steps))
     say(f"  eye {label} (phase steps 0..{fl.n_steps - 1} by {stride}):\n    " + "\n    ".join(rows))
     say(f"  {label}: best {best}, widest clean run {width} points")
@@ -386,7 +411,7 @@ def eye(fl, probe, label, stride):
 
 
 def jedec_ok(fl):
-    r = fl.raw(desc(0x9F, dw=W1, read=True), length=3, label="JEDEC ID")
+    r = fl.op(OP_RAW, d=desc(0x9F, dw=W1, read=True), length=3, label="JEDEC ID", quick=True)
     return r["done"] and r["result"] & 0xFFFFFF == 0xEF4016
 
 
@@ -407,7 +432,33 @@ def identify(fl):
     say(f"  ID: JEDEC {out['jedec']:#08x}, SR1 {out['sr1']:#04x} SR2 {out['sr2']:#04x} "
         f"SR3 {out['sr3']:#04x}; QPI 9Fh -> {out['qpi_jedec']:#08x}, "
         f"SPI after {out['jedec_after']:#08x}")
+    out["dtr"] = dtr_probe(fl)
     return out
+
+
+def dtr_probe(fl):
+    """Does EDh (DTR quad I/O, DTR datasheet Table 4) answer? The PHY is SDR, so: address 0
+    (constant nibbles, no edge race), one sample per CLK = one nibble of each DDR byte.
+    Compared against SDR EBh reads of the same bytes; any lat, either nibble."""
+    ebh = READ_MODES[EYE_MODE]
+    ref = []
+    for a in (24, 28):
+        r = fl.op(OP_RAW, d=ebh, addr=a, length=4, label="DTR ref")
+        ref += list(r["result"].to_bytes(4, "big"))
+    keep_lat = fl.b.cache.get("LAT")
+    found = None
+    edh = desc(0xED, abits=24, aw=W4, dummy=6, dw=W4, read=True, tail=1)
+    for lat in LAT_RANGE:
+        fl.b.wr("LAT", lat)
+        got = fl.op(OP_RAW, d=edh, addr=0, length=16, label="DTR EDh")["result"]
+        nibs = [(got >> (28 - 4 * k)) & 0xF for k in range(8)]
+        for name, sel in (("high", lambda b: b >> 4), ("low", lambda b: b & 0xF)):
+            if nibs == [sel(b) for b in ref]:
+                found = dict(lat=lat, nibble=name)
+    fl.b.wr("LAT", keep_lat)
+    say(f"  DTR probe (EDh, bytes 24..31 at addr 0): ref {bytes(ref).hex()} -> "
+        + (f"answers ({found['nibble']} nibbles at lat {found['lat']})" if found else "no match"))
+    return dict(ref=bytes(ref).hex(), found=found)
 
 
 def scan(fl, label="scan"):
@@ -435,12 +486,14 @@ def measure(sck, state):
     fl = open_board(sck)
     if fl is None:
         return 1
+    fl.qpi(False)   # a run killed inside a QPI read leaves the part in QPI until power-off
     # 1. capture from the JEDEC ID (x1 on IO1): enough for status polls and the scan.
     best, width = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 16))
     if best is None:
         record(dict(label="point", sck=sck, sck_meas=fl.f, ok=False, why="no JEDEC eye"))
         say(f"sck{sck:g}: no capture setting reads the JEDEC ID; point abandoned")
         return 0
+    state["jedec_best"] = best
     fl.set_capture(*best)
     ident = identify(fl)
     try:
@@ -468,20 +521,27 @@ def measure(sck, state):
                 f"avg {r['t_avg_ms']:9.3f} max {r['t_max_ms']:9.3f} ms"
                 + ("" if r["done"] else " HUNG"))
             record(dict(r, kind="write"))
+        if not all(r["done"] for r in er + pg):
+            # A BUSY poll that never ends holds the engine: nothing more runs on this load.
+            raise Hung("program/erase poll never finished")
         say(f"  blank check: errors {blank['errors']} / {blank['checked']}"
             + ("" if blank["done"] else " HUNG"))
         record(dict(blank, kind="blank"))
         # 3. capture from the seeded EBh read (all four IO, both directions).
-        probe = lambda: (lambda r: r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES)(
-            fl.read(EYE_MODE, TEST_BASE, EYE_BYTES, seed=seed, label="eye"))
-        best, width = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 32))
+        def probe():
+            r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
+                      burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
+                      expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="eye")
+            return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
+        lat0 = state["jedec_best"][1]
+        best, width = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 32),
+                          lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 3)))
         if best is None:
             say(f"sck{sck:g}: no clean EBh capture; measuring at the JEDEC setting")
-            best = state.get("fallback")
-        else:
-            fl.set_capture(*best)
+            best = state["jedec_best"]
+        fl.set_capture(*best)
         # 4. every mode, whole test region in one transaction, then 32-byte bursts.
-        for mode in READ_MODES:
+        for mode in MODES:
             r = fl.read(mode, TEST_BASE, TEST_SIZE, seed=seed, label=f"{mode} region")
             report(fl, r)
             r = fl.read(mode, TEST_BASE, 1 << 16, burst=32, seed=seed, label=f"{mode} burst32")
@@ -566,7 +626,7 @@ def table(run_id=None):
             return "HUNG"
         return f"{r['mb_s']:.2f} / {r['errors']}"
 
-    modes = list(READ_MODES)
+    modes = list(MODES)
     print(f"Run {run_id}. Cells: MB/s / errors over the {TEST_SIZE >> 20} MiB test region "
           f"(one transaction); burst32 = 64 KiB in 32-byte transactions.\n")
     print("| SCK req | SCK meas | eye EBh (pts) | " + " | ".join(modes)
