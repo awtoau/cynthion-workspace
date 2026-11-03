@@ -18,9 +18,7 @@ Method and its limits:
 * Matching is by NAME, not by object: `obj.x.eq(` drives, any other `.x` reads.
   Names collide across classes, so every hit is a candidate to confirm by hand.
 * It UNDER-reports one shape: a mux that forwards a field counts as a driver,
-  so a chain ending at an undriven face reads as wired. `latency_clocks` is the
-  live example -- `hyperram_share.py:191` drives the controller from
-  `stage`/`bist`, and neither face is driven by anything. Object-level, and out
+  so a chain ending at an undriven face reads as wired. Object-level, and out
   of this scan's reach.
 * `--check` asserts known-dangling ports are found AND known-wired ports are
   not, so a pass carries information ([`docs/instruments.md`](../docs/instruments.md)).
