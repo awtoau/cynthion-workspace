@@ -20,7 +20,7 @@ APPLET_ID = 0x464C4231   # "FLB1"
 
 REG = dict(ID=1, GO=2, OP=3, DESC=4, MBYTE=5, ADDR=6, LENGTH=7, BURST=8, COUNT=9, STRIDE=10,
            CSH=11, LAT=12, XFER=13, XOR=14, SEED=15, CHECK=16, WDATA=17, PHASE_STEP=18,
-           BITMAP_IDX=19, TS=20,
+           BITMAP_IDX=19, TS=20, CHK_LO=21, CHK_HI=22,
            STATUS=32, CK_KHZ=33, PLL_DIV=34, CK_COUNT=35, RUN_CYCLES=36, BYTES=37, TXS=38,
            CHECKED=39, ERRORS=40, BAD_INDEX=41, BAD_GOT_WANT=42, BAD_BITS=43, RESULT=44,
            BUSY_MIN=45, BUSY_MAX=46, BUSY_SUM=47, BUSY_N=48, STATE=49, PHASE_POS=50,
@@ -163,9 +163,11 @@ class FlashBaselineTop(Elaboratable):
         for name, sig in (("DESC", eng.desc), ("MBYTE", eng.mbyte), ("ADDR", eng.addr),
                           ("LENGTH", eng.length), ("BURST", eng.burst), ("COUNT", eng.count),
                           ("STRIDE", eng.stride), ("XOR", eng.xor), ("SEED", eng.seed),
-                          ("CHECK", eng.check), ("WDATA", eng.wdata), ("LAT", tx.lat),
-                          ("XFER", phy.xfer)):
+                          ("CHECK", eng.check), ("WDATA", eng.wdata), ("XFER", phy.xfer),
+                          ("CHK_LO", eng.chk_lo), ("CHK_HI", eng.chk_hi)):
             m.d.comb += sig.eq(rw(name))
+        lat = rw("LAT")                  # [3:0] token delay, [8] DDR pairing
+        m.d.comb += [tx.lat.eq(lat[:4]), tx.half.eq(lat[8])]
         bidx = rw("BITMAP_IDX")
         m.d.comb += eng.bitmap_rd.addr.eq(bidx)
         regs.add_read_only_register(REG["BITMAP_DATA"], read=eng.bitmap_rd.data)

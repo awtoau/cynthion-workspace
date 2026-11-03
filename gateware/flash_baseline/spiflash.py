@@ -19,7 +19,7 @@ SECTOR_BITS = 12                 # 4 KiB erase sector (datasheet 6.1)
 ADDR_BYTES_BITS = 22             # 4 MiB part
 BITMAP_WORDS = (1 << (ADDR_BYTES_BITS - SECTOR_BITS)) // 32
 
-W1, W2, W4 = 0, 1, 2             # width codes: 1, 2, 4 lines
+W1, W2, W4, W8 = 0, 1, 2, 3      # width codes: 1, 2, 4 lines; 4 lines DDR (a byte per CLK)
 OP_RAW, OP_READ, OP_WLOOP = 1, 2, 3
 CHECK_NONE, CHECK_PATTERN, CHECK_BLANK = 0, 1, 2
 LAT_MAX = 15
@@ -44,6 +44,10 @@ READ_MODES = {
     "6Bh 1-1-4": desc(0x6B, abits=24, aw=W1, dummy=8, dw=W4, read=True, tail=1),
     "EBh 1-4-4": desc(0xEB, abits=32, aw=W4, dummy=4, dw=W4, read=True, tail=1),
 }
+# DTR (W25Q32JV-DTR rev H Table 4, Fig 27a): address + M on 4 lines DDR (4 CLK), 7 dummy,
+# a byte per CLK. The address phase here is SDR, 6 cycles: right only for a pair-equal
+# address (0); cycles 4-6 are M = 00h (no continuous read) and 2 dummies, so 5 more.
+DTR = desc(0xED, abits=24, aw=W4, dummy=5, dw=W8, read=True, tail=1)
 MBYTE = 0xF0
 WREN = desc(0x06)
 POLL = desc(0x05, dw=W1, read=True, poll=True)
@@ -70,7 +74,9 @@ class FlashPins:
         self.cs = Signal()
         self.o = Signal(4)
         self.oe = Signal(4)
-        self.i = Signal(4)       # sampled data, already back in the engine domain
+        # Sampled data, back in the engine domain: [0:4] at the `cap` rising edge,
+        # [4:8] at the `cap` falling edge before it.
+        self.i = Signal(8)
 
 
 class TxEngine(Elaboratable):
@@ -86,6 +92,7 @@ class TxEngine(Elaboratable):
         self.length = Signal(32)      # data bytes
         self.csh = Signal(8)          # /CS high cycles after the transaction (min)
         self.lat = Signal(4)
+        self.half = Signal()          # DDR: which falling/rising samples pair into a byte
         self.wbyte = Signal(8)
         self.wnext = Signal()         # wbyte consumed this cycle
         self.rx_valid = Signal()
@@ -115,7 +122,7 @@ class TxEngine(Elaboratable):
             return Mux(wc == W4, bits >> 2, Mux(wc == W2, bits >> 1, bits))
 
         def per_byte(wc):
-            return Mux(wc == W4, 1, Mux(wc == W2, 3, 7))
+            return Mux(wc == W8, 0, Mux(wc == W4, 1, Mux(wc == W2, 3, 7)))
 
         def shifted(wc):
             return Mux(wc == W4, sr << 4, Mux(wc == W2, sr << 2, sr << 1))
@@ -123,7 +130,7 @@ class TxEngine(Elaboratable):
         in_set = Signal(4)
         out_o, out_oe, rd_o, rd_oe = Signal(4), Signal(4), Signal(4), Signal(4)
         m.d.comb += [
-            in_set.eq(Mux(dw == W4, 0b1111, Mux(dw == W2, 0b0011, 0b0010))),
+            in_set.eq(Mux(dw[1], 0b1111, Mux(dw == W2, 0b0011, 0b0010))),
             out_o.eq(Mux(w == W4, sr[28:32],
                      Mux(w == W2, Cat(sr[30], sr[31], 1, 1), Cat(sr[31], 0, 1, 1)))),
             out_oe.eq(Mux(w == W1, 0b1101, 0b1111)),
@@ -232,11 +239,16 @@ class TxEngine(Elaboratable):
         base_acc = Mux(d_first, 0, acc)
         new_acc = Signal(8)
         new_bits = Signal(4)
+        prev_r = Signal(4)
+        m.d.sync += prev_r.eq(p.i[0:4])
+        ddr = Mux(self.half, Cat(p.i[4:8], prev_r), Cat(p.i[0:4], p.i[4:8]))
         m.d.comb += [
-            new_acc.eq(Mux(d_w == W4, Cat(p.i[0:4], base_acc[0:4]),
+            new_acc.eq(Mux(d_w == W8, ddr,
+                       Mux(d_w == W4, Cat(p.i[0:4], base_acc[0:4]),
                        Mux(d_w == W2, Cat(p.i[0:2], base_acc[0:6]),
-                           Cat(p.i[1], base_acc[0:7])))),
-            new_bits.eq(Mux(d_first, 0, nbits) + Mux(d_w == W4, 4, Mux(d_w == W2, 2, 1))),
+                           Cat(p.i[1], base_acc[0:7]))))),
+            new_bits.eq(Mux(d_first, 0, nbits)
+                        + Mux(d_w == W8, 8, Mux(d_w == W4, 4, Mux(d_w == W2, 2, 1)))),
         ]
         m.d.sync += self.rx_valid.eq(0)
         with m.If(d_tok):
@@ -268,6 +280,8 @@ class OpEngine(Elaboratable):
         self.csh_r = Signal(8, init=2)
         self.csh_w = Signal(8, init=8)
         self.check = Signal(2)
+        self.chk_lo = Signal(24)       # compare only addresses in [chk_lo, chk_hi); hi 0 = all
+        self.chk_hi = Signal(24)
         self.xor = Signal(8)
         self.seed = Signal(32)
         self.wdata = Signal(32)
@@ -331,7 +345,8 @@ class OpEngine(Elaboratable):
         m.d.comb += new_acc.eq(Mux(word_start, 0, acc) | (bad << sector[:5]))
         with m.If(tx.rx_valid & checking & ~polling):
             m.d.sync += [chk_addr.eq(chk_addr + 1), self.bytes.eq(self.bytes + 1)]
-            with m.If(self.check != CHECK_NONE):
+            in_win = (self.chk_hi == 0) | ((chk_addr >= self.chk_lo) & (chk_addr < self.chk_hi))
+            with m.If((self.check != CHECK_NONE) & in_win):
                 m.d.sync += [self.checked.eq(self.checked + 1), self.errors.eq(self.errors + bad),
                              self.bad_bits.eq(self.bad_bits | (got ^ want))]
                 with m.If(bad & (self.bad_index == 0xFFFFFFFF)):
@@ -470,8 +485,8 @@ class FlashPHY(Elaboratable):
         m = Module()
         p = self.pins
         m.d.sync += [self.pad_cs.eq(p.cs), self.pad_o.eq(p.o), self.pad_oe.eq(p.oe)]
-        q_c, q_cn = Signal(4), Signal(4)
-        m.d.cap += q_c.eq(self.pad_i)
-        m.d.capn += q_cn.eq(q_c)
-        m.d.sync += p.i.eq(Mux(self.xfer, q_cn, q_c))
+        q_c, q_f, q_fr, q_cn = Signal(4), Signal(4), Signal(4), Signal(8)
+        m.d.cap += [q_c.eq(self.pad_i), q_fr.eq(q_f)]
+        m.d.capn += [q_f.eq(self.pad_i), q_cn.eq(Cat(q_c, q_fr))]
+        m.d.sync += p.i.eq(Mux(self.xfer, q_cn, Cat(q_c, q_fr)))
         return m
