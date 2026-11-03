@@ -13,7 +13,7 @@
 //! |---|---|---|---|
 //! | `<peripheral>_init()` | every boot, and on demand | **nothing** | [`bringup`], and `init` |
 //! | evidence gathered inside it | with it | nothing | itself, to learn what it is looking at |
-//! | `hyperram clear`, `pac1954 reset` | never automatically | **yes, and says so** | an operator |
+//! | `pac1954 reset` | never automatically | **yes, and says so** | an operator |
 //!
 //! Rule 5 below makes `_init()` something people run casually, from the shell,
 //! on a board mid-experiment. That is only safe if it cannot lose anything. The
@@ -423,45 +423,45 @@ fn fusb302b_init(out: &mut Out, devices: &mut Devices) {
     );
 }
 
-/// The BIST variant has NO BootRAM, and a read of an address in no declared
-/// region never gets an ack -- the CPU stalls on the load and the board is
-/// silent from reset, with no banner and no shell. `soc_run.py` already
-/// compiles the same probe out of `cynthion-boot` for this reason; the shell
-/// gained the call at boot afterwards and did not inherit the guard (#226).
+/// Spare header bytes (the header is 0..12, the image from 32): a canary that
+/// survives only if the part kept power, and the build that wrote it.
+const CANARY_BYTE: u32 = 16;
+const STAMP_BYTE: u32 = 20;
+const CANARY: u32 = 0x4852_5057; // "HRPW"
+
+/// `hyperram_init()` -- ready, calibrated, CR0 at its default, and did it keep power.
+/// Non-destructive: writes only the canary and stamp, after reading them.
+#[cfg(not(feature = "qemu"))]
 fn hyperram_init(out: &mut Out) {
-    let report = hyperram::init(info::build::GIT_WORD);
-    if !report.alive {
-        return out.line(
-            "hyperram",
-            "FAIL",
-            format_args!(
-                "no round trip after {} CS# pulses -- the part is not answering",
-                report.pulses
-            ),
-        );
+    use crate::hyperram::backend as hw;
+    use cynthion_soc_pac::hyperram::offset;
+    if !hw::wait_ready() {
+        return out.line("hyperram", "FAIL",
+                        format_args!("not ready and calibrated (status {:04x}, errors {:04x})",
+                                     hw::status(), hw::r16(offset::ERRORS)));
     }
-    if let Some((address, wrote, seen)) = report.mismatch {
-        out.line(
-            "hyperram",
-            "FAIL",
-            format_args!("register {address:04x}: wrote {wrote:04x}, read back {seen:04x}"),
-        );
-    }
-    out.line(
-        "hyperram",
-        if report.kept { "ok" } else { "WARN" },
-        format_args!(
-            "awake after {} CS# pulse(s), round trip ok, {}",
-            report.pulses,
-            if !report.kept {
-                "POWER WAS LOST: defaults in force, re-stage any image"
-            } else if report.stamp == info::build::GIT_WORD {
-                "power kept since this build wrote the canary"
-            } else {
-                "power kept, canary written by another build"
-            }
-        ),
-    );
+    let cal = hw::r32(offset::CAL);
+    hw::w8(offset::REG_SEL, 2);
+    let code = hw::run(hw::OP_REG_READ, hw::op_ticks(2));
+    let cr0 = hw::r16(offset::REG_RDATA);
+    let found = hyperram::read_u32(CANARY_BYTE);
+    let was = hyperram::read_u32(STAMP_BYTE);
+    let wrote = hyperram::write_u32(CANARY_BYTE, CANARY)
+        & hyperram::write_u32(STAMP_BYTE, info::build::GIT_WORD);
+    let kept = found == Some(CANARY);
+    let verdict = if code != 0 || cr0 != 0x8f2f || !wrote { "FAIL" }
+                  else if kept { "ok" } else { "WARN" };
+    out.line("hyperram", verdict, format_args!(
+        "cal tap {} width {}, cr0 {:04x} (code {:x}), {}",
+        cal & 0x7f, (cal >> 8) & 0xff, cr0, code,
+        if !kept { "POWER WAS LOST: re-stage any image" }
+        else if was == Some(info::build::GIT_WORD) { "power kept since this build" }
+        else { "power kept, canary from another build" }));
+}
+
+#[cfg(feature = "qemu")]
+fn hyperram_init(out: &mut Out) {
+    out.line("hyperram", "ok", format_args!("RAM stand-in, no peripheral on this target"));
 }
 
 fn w25q32_init(out: &mut Out) {

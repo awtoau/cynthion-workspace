@@ -19,11 +19,6 @@ pub const SPIFLASH: usize = 0x10000000;
 /// Size of the SPIFLASH window, in bytes.
 pub const SPIFLASH_SIZE: usize = 0x00400000;
 
-/// hyperram: 8388608 bytes of memory at 0x20000000
-pub const HYPERRAM: usize = 0x20000000;
-/// Size of the HYPERRAM window, in bytes.
-pub const HYPERRAM_SIZE: usize = 0x00800000;
-
 /// console: 8 registers at 0xf0000000
 pub const CONSOLE: usize = 0xf0000000;
 /// Size of the CONSOLE window, in bytes.
@@ -40,16 +35,6 @@ pub const SPI0_SIZE: usize = 0x00000040;
 pub const FLASH_PROBE: usize = 0xf0000200;
 /// Size of the FLASH_PROBE window, in bytes.
 pub const FLASH_PROBE_SIZE: usize = 0x00000020;
-
-/// hyperram_probe: 13 registers at 0xf0000280
-pub const HYPERRAM_PROBE: usize = 0xf0000280;
-/// Size of the HYPERRAM_PROBE window, in bytes.
-pub const HYPERRAM_PROBE_SIZE: usize = 0x00000040;
-
-/// bootram: 6 registers at 0xf0000400
-pub const BOOTRAM: usize = 0xf0000400;
-/// Size of the BOOTRAM window, in bytes.
-pub const BOOTRAM_SIZE: usize = 0x00000020;
 
 /// apollo_uart: 8 registers at 0xf0000500
 pub const APOLLO_UART: usize = 0xf0000500;
@@ -114,15 +99,12 @@ pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
 /// Interrupt source number wired to BOARD_CLOCKS_PLL_LOSS.
 pub const BOARD_CLOCKS_PLL_LOSS_IRQ: u32 = 17;
 
-/// hyperram_bist: 64 registers at 0xf0000800
-pub const HYPERRAM_BIST: usize = 0xf0000800;
-/// Size of the HYPERRAM_BIST window, in bytes.
-pub const HYPERRAM_BIST_SIZE: usize = 0x00000200;
-
-/// hyperram_ck: 4 registers at 0xf0000a00
-pub const HYPERRAM_CK: usize = 0xf0000a00;
-/// Size of the HYPERRAM_CK window, in bytes.
-pub const HYPERRAM_CK_SIZE: usize = 0x00000010;
+/// hyperram: 41 registers at 0xf0000800
+pub const HYPERRAM: usize = 0xf0000800;
+/// Size of the HYPERRAM window, in bytes.
+pub const HYPERRAM_SIZE: usize = 0x00000080;
+/// Interrupt source number wired to HYPERRAM.
+pub const HYPERRAM_IRQ: u32 = 18;
 
 /// intc: 2 registers at 0xf0000c00
 pub const INTC: usize = 0xf0000c00;
@@ -135,6 +117,11 @@ pub const USB_HOST: usize = 0xf0001000;
 pub const USB_HOST_SIZE: usize = 0x00000020;
 /// Interrupt source number wired to USB_HOST.
 pub const USB_HOST_IRQ: u32 = 10;
+
+/// hyperram_window: 4096 bytes of memory at 0xf0010000
+pub const HYPERRAM_WINDOW: usize = 0xf0010000;
+/// Size of the HYPERRAM_WINDOW window, in bytes.
+pub const HYPERRAM_WINDOW_SIZE: usize = 0x00001000;
 
 /// clint: 5 registers at 0xf0800000
 pub const CLINT: usize = 0xf0800000;
@@ -167,4 +154,4 @@ pub const CPU_CACHE_WAYS: u32 = 1;
 
 /// First 32 bits of SHA-256 over the SVD plus everything above:
 /// the map this firmware was built against. Host-compared (#307).
-pub const MAP_DIGEST: u32 = 0x8e1af06a;
+pub const MAP_DIGEST: u32 = 0x2c96519f;

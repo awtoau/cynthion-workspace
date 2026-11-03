@@ -61,19 +61,12 @@ CONSTANT = re.compile(r"\.eq\(\s*(?:0|1|-1|0[xb][0-9a-fA-F_]+|\d+|C\(|Const\()")
 
 # --check expectations. A control in each direction.
 MUST_FIND = {
-    "register_space": "constant",   # #319/#531: the bit is allocated, tied to 0
     "armed": "unread",              # serial_line.py, declared a diagnostic
     "frame_errors": "unread",       # serial_line.py, declared a diagnostic
     "phy_ready": "unread",          # clocks.py, the 1.2 ms ULPI preparation
-    "recovery_cycles": "undriven",  # #341's tCSHI lever, added and never wired
-    "read_stall_cycles": "undriven",  # bootram.py, the sink for `sel` bits 5:4
 }
 MUST_NOT_FIND = {
-    "rwds_at",        # hyperram_probe.rwds_at -> the share mux: the exemplar, wired
-    "start_transfer", # driven every transaction
-    "final_word",
-    "write_ready",
-    "perform_write",
+    "pair_ack",       # hyperram.py: the stager's handshake, wired in top.py
 }
 
 

@@ -56,7 +56,7 @@ exercises it.
 | 15 | — | SBU peripheral, TARGET — balls **A2**, **E4** | level | no — no peripheral ([`sbu.md`](sbu.md), [#518](https://github.com/awtoau/cynthion-workspace/issues/518)) |
 | 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
 | 17 | — | PLL loss of lock | **edge**, fall on `locked` | **yes** |
-| 18 | — | HyperRAM peripheral: op done / error (#588) | level | no — #588 phase 2 |
+| 18 | — | HyperRAM peripheral ([`peripherals/hyperram.py`](../gateware/soc/peripherals/hyperram.py)): op done / error, gated by `IRQ_EN` (#588) | level | **yes** |
 
 * The six not built need a peripheral that does not exist. Their numbers are
   gaps, tied low in `intc.py`, so wiring one up renumbers nothing.

@@ -91,11 +91,6 @@ use core::ptr::{read_volatile, write_volatile};
 
 mod aoat;
 mod bench;
-// The HyperRAM BIST engine's driver (#226). Built into every image rather than
-// `#[cfg]`-gated: `Bist::present` reads the engine's ident and refuses to
-// measure without it, so a shipping image says "this bitstream has no engine"
-// where a gated one could not say anything at all.
-mod bist;
 mod board;
 mod bus;
 mod clock;
@@ -119,6 +114,8 @@ mod gpio;
 // (#411). One task, one LED, no gateware -- the GPIO peripheral's push-pull mode
 // is the whole handover.
 mod heartbeat;
+// Shared with `cynthion-boot`, which uses the reader half.
+#[allow(dead_code)]
 mod hyperram;
 mod info;
 mod intc;

@@ -133,7 +133,7 @@ def test_one_insert_per_row(statements):
 
 
 def test_identifiers_are_validated_not_trusted():
-    assert bm.ident("hyperram_bist") == '"hyperram_bist"'
+    assert bm.ident("flash_full_sck") == '"flash_full_sck"'
     for bad in ('drop"', "Upper", "1st", "has space", "x" * 64, ""):
         with pytest.raises(ValueError):
             bm.ident(bad)

@@ -18,19 +18,13 @@ Only the three import lines differ from upstream: `LEDResources` and
 otherwise, see that module), and `CynthionPlatform` from the local reduced
 `.core`.
 
-**Plus the `ram` resource's electrical attributes** -- the one deliberate
-divergence, see `HYPERRAM_*` below and #311. Pin locations are untouched.
-
 Everything else -- pin map, connectors, `default_clk`, device, package -- is
 upstream's. Do not "improve" it. A pin map that differs from the board is worse
 than no change at all: the build succeeds and the wrong ball drives the wrong
 net. The speed grade is pinned rather than read from the environment; see the
 class body.
 
-**`gateware/soc/top.py` builds against this file** (#416). It imported the
-installed `cynthion` package until then, so the attributes below reached the
-probe bitstreams and not the SoC -- which is how #311's DRIVE settings sat in
-the tree while every RAM pin ran at the silicon default.
+**`gateware/soc/top.py` builds against this file** (#416).
 
 Upstream: repos/cynthion/cynthion/python/src/gateware/platform/cynthion_r1_4.py
 """
@@ -58,13 +52,6 @@ LEDS = (
 
 # Derived, so the resource and the table cannot disagree about a ball.
 LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
-
-# HyperRAM pin electricals, stated not inherited. #311, #418.
-HYPERRAM_CK_DRIVE      = "8"
-HYPERRAM_DQ_DRIVE      = "8"
-HYPERRAM_CTRL_DRIVE    = "4"     # CS#/RESET# static in a burst
-HYPERRAM_DQ_HYSTERESIS = "OFF"   # nextpnr forces ON; skews rise against fall
-HYPERRAM_DQ_PULLMODE   = "NONE"  # nextpnr omits it unless stated
 
 # Config-flash pin electricals, stated not inherited. Values are what nextpnr
 # applied when they were omitted (read from top.config), so behaviour is
@@ -247,33 +234,13 @@ class CynthionPlatformRev1D4(CynthionPlatform):
             Attrs(IO_TYPE="LVCMOS33", PULLMODE="UP")
         ),
 
-        # HyperRAM
-        #
-        # Per-subsignal attributes; the resource-level set below is the fallback
-        # for anything they do not name. Direction decides where DRIVE matters --
-        # CK always, DQ/RWDS on writes only, CS#/RESET# never. #311.
+        # HyperRAM: upstream's attributes, the conditions #581 measured clean at CK 180.
         Resource("ram", 0,
-            # CK# runs at SLEWRATE=SLOW whatever this says: Amaranth emits an LPF
-            # entry for `port.p` only, and nextpnr writes SLEWRATE to the named
-            # PIO and never to the pair's other half. DRIVE *is* mirrored. #311.
-            Subsignal("clk",   DiffPairs("C3", "D3", dir="o"),
-                      Attrs(IO_TYPE="LVCMOS33D", DRIVE=HYPERRAM_CK_DRIVE,
-                            SLEWRATE="FAST")),
-            Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io"),
-                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
-                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS,
-                            PULLMODE=HYPERRAM_DQ_PULLMODE)),
-            Subsignal("rwds",  Pins( "D1", dir="io"),
-                      Attrs(DRIVE=HYPERRAM_DQ_DRIVE,
-                            HYSTERESIS=HYPERRAM_DQ_HYSTERESIS,
-                            PULLMODE=HYPERRAM_DQ_PULLMODE)),
-            # SLOW, against the resource-level FAST: neither carries data, and
-            # CS# is PIOB of the same row-2 pad group as CK/CK# with its edge
-            # landing at burst start, on the CK edges the read is timed against.
-            Subsignal("cs",    PinsN("B2", dir="o"),
-                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE, SLEWRATE="SLOW")),
-            Subsignal("reset", PinsN("C1", dir="o"),
-                      Attrs(DRIVE=HYPERRAM_CTRL_DRIVE, SLEWRATE="SLOW")),
+            Subsignal("clk",   DiffPairs("C3", "D3", dir="o"), Attrs(IO_TYPE="LVCMOS33D")),
+            Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io")),
+            Subsignal("rwds",  Pins( "D1", dir="io")),
+            Subsignal("cs",    PinsN("B2", dir="o")),
+            Subsignal("reset", PinsN("C1", dir="o")),
             Attrs(IO_TYPE="LVCMOS33", SLEWRATE="FAST")
         ),
 

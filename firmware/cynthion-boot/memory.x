@@ -10,10 +10,8 @@
  * | BOOT   | 0x0000 | 1 KiB  | this image, and its stack                   |
  * | IMAGE  | 0x0400 | 63 KiB | whatever runs: the shell, or a staged image  |
  *
- * 1 KiB is sized from the measurement, not chosen: the image is 492 bytes and the
- * deepest call chain holds 80, so the region is a little over twice what is used. The
- * cut could be at 512 and the link would pass, with 22 bytes to spare -- which is not a
- * margin, it is a coincidence waiting to be broken by a codegen change.
+ * 1 KiB: the image (769 bytes on the #588 window + COPY transport) and its 80-byte
+ * stack. The floor below fires before they meet; widen BOOT when it does.
  *
  * The boundary must match, in this order of authority:
  *   - IMAGE_ORIGIN in gateware/soc/top.py, which packs both images
@@ -65,17 +63,9 @@ ASSERT(SIZEOF(.bss) == 0, "cynthion-boot has .bss; nothing zeroes it here")
  * in the region it copies into would overwrite its own return addresses partway through
  * the copy.
  *
- * The deepest path is `_start -> boot -> pass -> read_word`: 16 bytes of frame in
- * `boot` and 64 in `pass`, 80 in total, read out of the prologues. The image is 492
- * bytes, so 528 are free -- 6.6 times what is used.
- *
- * The floor below is 256: three times the measurement, rounded up. Not 512, and the
- * difference is what the check is for. A floor set just under what is free fires on the
- * next edit whatever that edit is, which trains people to raise it; one set at three
- * times the need fires when growth has taken more than half the room left, which is a
- * point at which widening BOOT is worth thinking about. What it catches either way is
- * code growing until the stack lands in `.rodata` -- which corrupts a constant rather
- * than faulting, and would present as a CRC that never matches. */
+ * Deepest path `boot -> pass -> copy`: 16 + 48 + 16 = 80 bytes, from the prologues.
+ * Floor 240 = 3x that. It catches code growing until the stack lands in `.rodata`,
+ * which corrupts a constant rather than faulting. */
 /* One word of boot status, at the very top of BOOT with the stack below it.
  *
  * Written on every boot, immediately before the jump: a mark and a reason code saying
@@ -92,8 +82,8 @@ ASSERT(SIZEOF(.bss) == 0, "cynthion-boot has .bss; nothing zeroes it here")
 _boot_status    = ORIGIN(BOOT) + LENGTH(BOOT) - 4;
 _boot_stack_top = _boot_status;
 
-ASSERT(_boot_stack_top - _boot_end >= 256,
-       "cynthion-boot leaves under 256 bytes of stack; shrink it or widen BOOT")
+ASSERT(_boot_stack_top - _boot_end >= 240,
+       "cynthion-boot leaves under 240 bytes of stack; shrink it or widen BOOT")
 
 /* Where the bootloader hands over, and the only jump target in the image.
  *

@@ -205,10 +205,10 @@ pub const BOOT_STATUS_TEXT: &[&str] = &[
     "nothing staged",
     "staged image failed its CRC",
     "staged header rejected: bad length",
-    "hyperram did not answer",
+    "hyperram not ready and calibrated, or a COPY failed",
     "the bootloader panicked",
     "staged image verified but NOT installed: this build boots from flash",
-    "the BIST engine still owned the part; nothing was read",
+    "(unused)",
     "staged image verified, then the COPY read back something else (#544)",
 ];
 
@@ -337,18 +337,12 @@ pub const BRAM_SIZE: usize = 0x0010_0000;
 
 /// How much HyperRAM the part holds: 8 MiB.
 ///
-/// A size with no base, because nothing in this firmware reaches HyperRAM through
-/// the memory window at `cynthion_soc_pac::base::HYPERRAM`. Every access goes over
-/// the CSR staging port in `src/hyperram.rs`, whose spins are bounded -- see the
-/// comment on `Region::word` in `src/memory.rs` for why a shell command must take
-/// the bounded path.
+/// A size with no base: HyperRAM has no CPU address, only the window + COPY (#588).
 #[cfg(not(feature = "qemu"))]
-pub const HYPERRAM_SIZE: usize = cynthion_soc_pac::base::HYPERRAM_SIZE;
+pub const HYPERRAM_SIZE: usize = 0x0080_0000;
 
-/// The same bound on the target with no HyperRAM, so the code that checks against
-/// it compiles and runs identically. `virt` answers from the `.bss` stand-in in
-/// `src/hyperram.rs` for the first 63 KiB or so and reports "did not answer" above
-/// that, which is a real answer about the guard rather than a stub.
+/// The same bound under QEMU; the stand-in in `src/hyperram.rs` covers the staging
+/// area and refuses anything above it.
 #[cfg(feature = "qemu")]
 pub const HYPERRAM_SIZE: usize = 0x0080_0000;
 

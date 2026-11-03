@@ -491,9 +491,9 @@ def cross_check(peripherals, emit):
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
         "HYPERRAM": soc_module.HYPERRAM_BASE,
+        "HYPERRAM_WINDOW": soc_module.HYPERRAM_WINDOW_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
-        "BOOTRAM": soc_module.BOOTRAM_BASE,
     }
 
     ok = True
@@ -551,9 +551,9 @@ def cross_check(peripherals, emit):
     # addresses must come from the register walk. Checking the references as well
     # as the generated file makes a reintroduced literal fail immediately.
     hyperram = (src / "hyperram.rs").read_text()
-    for name in ("ADDR", "CTRL", "STATUS", "DATA", "WDATA"):
+    for name in ("STATUS", "CMD", "HR_ADDR", "WIN_ADDR", "LEN"):
         if f"offset::{name}" not in hyperram:
-            emit(f"  hyperram.rs no longer refers to bootram::offset::{name}")
+            emit(f"  hyperram.rs no longer refers to hyperram::offset::{name}")
             firmware_ok = False
 
     for crate_src in sorted((ROOT / "firmware").glob("*/src")):

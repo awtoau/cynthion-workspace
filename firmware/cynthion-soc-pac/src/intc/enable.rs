@@ -2,25 +2,25 @@
 pub type R = crate::R<EnableSpec>;
 #[doc = "Register `ENABLE` writer"]
 pub type W = crate::W<EnableSpec>;
-#[doc = "Field `MASK` reader - mask \\[17:0\\]"]
+#[doc = "Field `MASK` reader - mask \\[18:0\\]"]
 pub type MaskR = crate::FieldReader<u32>;
-#[doc = "Field `MASK` writer - mask \\[17:0\\]"]
-pub type MaskW<'a, REG> = crate::FieldWriter<'a, REG, 18, u32>;
+#[doc = "Field `MASK` writer - mask \\[18:0\\]"]
+pub type MaskW<'a, REG> = crate::FieldWriter<'a, REG, 19, u32>;
 impl R {
-    #[doc = "Bits 0:17 - mask \\[17:0\\]"]
+    #[doc = "Bits 0:18 - mask \\[18:0\\]"]
     #[inline(always)]
     pub fn mask(&self) -> MaskR {
-        MaskR::new(self.bits & 0x0003_ffff)
+        MaskR::new(self.bits & 0x0007_ffff)
     }
 }
 impl W {
-    #[doc = "Bits 0:17 - mask \\[17:0\\]"]
+    #[doc = "Bits 0:18 - mask \\[18:0\\]"]
     #[inline(always)]
     pub fn mask(&mut self) -> MaskW<'_, EnableSpec> {
         MaskW::new(self, 0)
     }
 }
-#[doc = "INTC.ENABLE, 18 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`enable::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`enable::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+#[doc = "INTC.ENABLE, 19 bits at +0x00\n\nYou can [`read`](crate::Reg::read) this register and get [`enable::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`enable::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
 pub struct EnableSpec;
 impl crate::RegisterSpec for EnableSpec {
     type Ux = u32;

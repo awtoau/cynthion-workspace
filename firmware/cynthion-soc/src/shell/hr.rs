@@ -1,294 +1,292 @@
-//! `hr` -- everything HyperRAM-specific, under one verb.
+//! `hr` -- the HyperRAM peripheral (#588): status, calibration, tests, bytes, errors.
 //!
-//! Moved out of `main.rs` unchanged (#296). `hyperram.rs` and `bench.rs` are the
-//! drivers.
+//! Register map and codes: `docs/chips/hyperram/soc-peripheral.md`. Every wait is
+//! bounded in `hyperram::backend`; a timeout prints as code `ff`.
 
 use core::fmt::Write;
 
 use crate::shell::parse::{parse_hex, trim};
 use crate::uart::Uart;
-use crate::{bench, hyperram};
 
-/// Everything HyperRAM-specific, under one verb.
-///
-///     hr status   registers and the extra-latency sample's verdict
-///     hr read <hex>  one word over the staging port
-///     hr rwds <n> which cycle takes the extra-latency sample (#540)
-///     hr test     round-trip one word through the staging port
-///     hr cross    do the window and the staging port agree?
-///     hr bench    the same walk as `bench hyperram`
-///     hr id       HyperBus has no identify
-pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
-    if rest.is_empty() {
-        return crate::shell::list_family(uart, "hyperram");
+#[cfg(not(feature = "qemu"))]
+use crate::hyperram::backend as hw;
+#[cfg(not(feature = "qemu"))]
+use cynthion_soc_pac::hyperram::offset;
+
+/// Sticky error bits, in `ERRORS` order (`peripherals/hyperram.py`).
+pub(crate) const ERROR_NAMES: [&str; 13] = [
+    "op", "wdog", "underflow", "stream_ovf", "stream_unf", "handshake", "pll_lost",
+    "pll_nolock", "ck_bad", "ck_dead", "cal_none", "reg_mismatch", "check",
+];
+
+/// Operation codes, by value; unnamed values print as hex.
+fn code_name(code: u8) -> &'static str {
+    match code {
+        0 => "ok",
+        1 => "busy",
+        2 => "arg",
+        3 => "not-ready",
+        4 => "uncalibrated",
+        7 => "watchdog",
+        8 => "handshake",
+        9 => "reg-mismatch",
+        10 => "check",
+        11 => "abort",
+        12 => "no-clock",
+        13 => "no-clean-tap",
+        0xff => "timeout",
+        _ => "?",
     }
-    match rest {
-        // The part's OWN registers, which nothing could read until #319. CR0 at
-        // 0x0800 reads 8f2f at power-on defaults; anything else means either a
-        // configuration landed or the read path is wrong -- which is what makes
-        // this the absolute reference #186 asks for.
-        // `hr cr0 <hex>` / `hr cr1 <hex>` -- configure the part, and prove it.
-        _ if rest.starts_with(b"cr0 ") || rest.starts_with(b"cr1 ") => {
-            let addr = if rest[2] == b'0' { crate::hyperram::CR0 } else { 0x0801 };
-            match parse_hex(trim(&rest[4..])) {
-                None => {
-                    let _ = writeln!(uart, "usage: hr cr0|cr1 <hex>");
-                }
-                Some(value) => {
-                    match crate::hyperram::backend::write_register(addr, value as u16) {
-                        Ok(()) => {
-                            let _ = writeln!(uart, "cr{} = {:04x}, read back and matching",
-                                             if addr == crate::hyperram::CR0 { 0 } else { 1 }, value);
-                        }
-                        Err(seen) => {
-                            let _ = writeln!(
-                                uart,
-                                "cr{} WRITE DID NOT LAND: wrote {:04x}, read {:04x}",
-                                if addr == crate::hyperram::CR0 { 0 } else { 1 }, value, seen);
-                        }
-                    }
-                }
-            }
+}
+
+fn words(rest: &[u8]) -> ([&[u8]; 6], usize) {
+    let mut out: [&[u8]; 6] = [&[]; 6];
+    let mut n = 0;
+    for w in rest.split(|&c| c == b' ').filter(|w| !w.is_empty()) {
+        if n == out.len() {
+            break;
         }
-        b"status" => {
-            registers(uart);
-            // Meaningless under fixed latency: the controller gates the sample
-            // on CR0[3], so "never" is the only correct answer there.
-            let _ = writeln!(uart, "rwds-ask {}",
-                             if bench::rwds_ask() { "SEEN" } else { "never" });
+        out[n] = w;
+        n += 1;
+    }
+    (out, n)
+}
+
+#[cfg(feature = "qemu")]
+pub(crate) fn command(uart: &mut Uart, _rest: &[u8]) {
+    let _ = writeln!(uart, "hr: no HyperRAM peripheral on this target");
+}
+
+#[cfg(not(feature = "qemu"))]
+pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
+    let (w, n) = words(trim(rest));
+    if n == 0 {
+        return crate::shell::list_family(uart, "hr");
+    }
+    let arg = |i: usize| if i < n { parse_hex(w[i]) } else { None };
+    match w[0] {
+        b"status" => status(uart),
+        b"calibrate" => {
+            let code = hw::run(hw::OP_CALIBRATE, hw::CAL_TICKS);
+            report(uart, "calibrate", code);
+            calibration(uart);
         }
         b"test" => {
-            // Round-trip one word so the HyperRAM path can be checked without
-            // staging a whole image.
-            hyperram::write_header(0, 0);
-            match hyperram::staged() {
-                Ok(_) => {
-                    let _ = writeln!(
-                        uart,
-                        "hyperram round-trip BAD: zero length should be rejected"
-                    );
+            let mode = match if n > 1 { w[1] } else { b"wr" } {
+                b"w" => 1,
+                b"r" => 2,
+                b"wr" => 3,
+                _ => {
+                    let _ = writeln!(uart, "usage: hr test [w|r|wr] [bytes] [addr] [seed]");
+                    return;
                 }
-                // `Length` specifically: the magic was written and read back,
-                // which is the round trip this checks. `NoMagic` or `Silent`
-                // would mean the word did not survive.
-                Err(hyperram::Reject::Length) => {
-                    let _ = writeln!(uart, "hyperram write+read ok");
-                }
-                Err(_) => {
-                    let _ = writeln!(uart, "hyperram round-trip BAD: the magic did not read back");
-                }
-            }
-            hyperram::invalidate();
+            };
+            test(uart, mode, arg(2).unwrap_or(0x80_0000), arg(3).unwrap_or(0),
+                 arg(4).unwrap_or(0x5eed) as u16, 0);
         }
-        b"cross" => {
-            let result = bench::hyper_cross_check();
-            let (wrote_w, win_w, stg_w) = result.window_written;
-            let (wrote_s, win_s, stg_s) = result.staged_written;
-            let _ = writeln!(
-                uart,
-                "  window wrote {:08x}: window {:08x} staging {:08x}",
-                wrote_w, win_w, stg_w
-            );
-            let _ = writeln!(
-                uart,
-                "  staging wrote {:08x}: window {:08x} staging {:08x}",
-                wrote_s, win_s, stg_s
-            );
-            let (good, bitmap, want, got) = bench::hyper_line_write_check();
-            let _ = writeln!(
-                uart,
-                "  line write: {}/16 correct, bad {:016b} want {:08x} got {:08x}, ck-stalled {} cycles",
-                good, bitmap, want, got, bench::stalls()
-            );
-            if result.ok() {
-                let _ = writeln!(uart, "hyperram ports agree");
-            } else {
-                let _ = writeln!(uart, "hyperram ports DISAGREE");
-            }
-        }
-        // THE DESTRUCTIVE VERB, and it is never called by `hyperram::init`.
-        // Separating the two is the rule: an init that quietly destroyed data
-        // would be a data-loss bug waiting for the first person who ran it
-        // expecting a health check. See `src/init.rs`.
-        b"clear" => {
-            hyperram::clear();
-            let _ = writeln!(
-                uart,
-                "hyperram cleared: staging magic and power canary gone, any staged image \
-                 is invalid.\n  RESET# is not reachable from firmware in this bitstream, \
-                 so the array itself is untouched (#315)."
-            );
-        }
-        b"bench" => bench::command(uart, b"hyperram"),
-        _ if rest.starts_with(b"read") => crate::shell::memory::command(uart, crate::memory::Region::Hyperram, rest),
-        // WHICH cycle the extra-latency sample is taken on. The default comes
-        // from `PHY_ROUND_TRIP_CYCLES`, which is the behavioural PHY's number
-        // and not this board's (#186, #381), so it is swept and not trusted:
-        // set a cycle, clear the counters, read with CR0[3] cleared, and ask
-        // `hr status` whether `rwds-ask` moved. #540.
-        _ if rest.starts_with(b"rwds") => match parse_hex(trim(&rest[4..])) {
-            Some(n) if n <= 0xf => {
-                bench::set_rwds_at(n as u8);
-                let _ = writeln!(uart, "rwds sample at cycle {}{}", n,
-                                 if n == 0 { " (the build-time default)" } else { "" });
+        b"fill" => match (arg(1), arg(2)) {
+            (Some(addr), Some(len)) => {
+                let mode = match if n > 3 { w[3] } else { b"const" } {
+                    b"ramp" => 1,
+                    b"pat" => 2,
+                    _ => 0,
+                };
+                hw::w32(offset::HR_ADDR, addr);
+                hw::w32(offset::LEN, len);
+                hw::w8(offset::MODE, mode);
+                hw::w32(offset::FILL_VALUE, arg(4).unwrap_or(0));
+                let code = hw::run(hw::OP_FILL, hw::op_ticks(len));
+                report(uart, "fill", code);
+                counters(uart, len);
             }
             _ => {
-                let _ = writeln!(uart, "usage: hr rwds <0-f>  (0 = build-time default)");
+                let _ = writeln!(uart, "usage: hr fill <addr> <len> [const|ramp|pat] [value]");
             }
         },
-        _ if rest.starts_with(b"ramp") => {
-            // A 0-255 byte ramp: every byte names its own position, so a
-            // displacement, a duplication or a swapped pair is READ off the dump
-            // rather than inferred from four bytes of a single word.
-            //
-            // `hr ramp` VERIFIES what is already there -- use it after staging
-            // the ramp over JTAG, which writes through a path that shares none
-            // of this SoC's write logic, so a failure is then unambiguously a
-            // READ fault. `hr ramp w` writes it through the memory window first,
-            // which tests the write path against the same known pattern.
-            const RAMP_AT: usize = 0x4000;      // bytes into the window
-            const RAMP_LEN: usize = 256;
-            let base = cynthion_soc_pac::base::HYPERRAM + RAMP_AT;
-            let writing = trim(&rest[4..]) == b"w";
-
-            if writing {
-                for i in (0..RAMP_LEN).step_by(4) {
-                    let word = (i as u32)
-                        | ((i as u32 + 1) << 8)
-                        | ((i as u32 + 2) << 16)
-                        | ((i as u32 + 3) << 24);
-                    // SAFETY: 4-byte aligned, inside the decoded 8 MiB window.
-                    unsafe { core::ptr::write_volatile((base + i) as *mut u32, word) };
+        b"read" => match arg(1) {
+            Some(addr) => {
+                let len = arg(2).unwrap_or(16).clamp(1, 256);
+                if !hw::copy(hw::OP_COPY_IN, addr, 0, len) {
+                    return report(uart, "read", ((hw::status() >> 8) & 0xf) as u8);
                 }
-                bench::evict_pub();
+                for i in 0..len {
+                    if i % 16 == 0 {
+                        let _ = write!(uart, "{}{:06x}:", if i == 0 { "" } else { "\n" }, addr + i);
+                    }
+                    let _ = write!(uart, " {:02x}", hw::win_get(i));
+                }
+                let _ = writeln!(uart);
             }
-
-            let mut wrong = 0;
-            let mut first_bad = RAMP_LEN;
-            let mut got = [0u8; 16];
-            for i in 0..RAMP_LEN {
-                // SAFETY: as above; byte reads inside the same window.
-                let byte = unsafe { core::ptr::read_volatile((base + i) as *const u8) };
-                if i < 16 {
-                    got[i] = byte;
-                }
-                if byte != i as u8 {
-                    wrong += 1;
-                    if first_bad == RAMP_LEN {
-                        first_bad = i;
+            None => {
+                let _ = writeln!(uart, "usage: hr read <addr> [len]");
+            }
+        },
+        b"write" => match arg(1) {
+            Some(addr) if n > 2 => {
+                let mut count = 0;
+                for i in 2..n {
+                    match parse_hex(w[i]) {
+                        Some(b) if b <= 0xff => {
+                            hw::win_put(count, b as u8);
+                            count += 1;
+                        }
+                        _ => {
+                            let _ = writeln!(uart, "bytes are hex 00..ff");
+                            return;
+                        }
                     }
                 }
+                let ok = hw::copy(hw::OP_COPY_OUT, addr, 0, count);
+                let code = if ok { 0 } else { ((hw::status() >> 8) & 0xf) as u8 };
+                report(uart, "write", code);
             }
-
-            // "checked", never "verified": this line is printed BEFORE the
-            // verdict below and says only what was done. `hr ramp w` once read
-            // `256/256 correct` off the D-cache with RESET# asserted, so a
-            // pass-sounding word ahead of the count is how that reads again.
-            let _ = writeln!(uart, "ramp {} at +{:x}, {} bytes",
-                             if writing { "written and checked" } else { "checked" },
-                             RAMP_AT, RAMP_LEN);
-            let _ = write!(uart, "  first 16 want 00..0f got");
-            for byte in got.iter() {
-                let _ = write!(uart, " {:02x}", byte);
+            _ => {
+                let _ = writeln!(uart, "usage: hr write <addr> <byte> [byte...]");
             }
-            let _ = writeln!(uart, "");
-            if wrong == 0 {
-                let _ = writeln!(uart, "  {}/{} correct -- the path is clean", RAMP_LEN, RAMP_LEN);
-            } else {
-                let _ = writeln!(uart, "  {}/{} wrong, first at +{:x}",
-                                 wrong, RAMP_LEN, first_bad);
-            }
+        },
+        b"reg" => {
+            let sel = match if n > 1 { w[1] } else { b"cr0" } {
+                b"id0" => 0,
+                b"id1" => 1,
+                b"cr0" => 2,
+                b"cr1" => 3,
+                _ => {
+                    let _ = writeln!(uart, "usage: hr reg <id0|id1|cr0|cr1> [value]");
+                    return;
+                }
+            };
+            hw::w8(offset::REG_SEL, sel);
+            let code = match arg(2) {
+                Some(value) => {
+                    hw::w16(offset::REG_WDATA, value as u16);
+                    hw::run(hw::OP_REG_WRITE, hw::op_ticks(4))
+                }
+                None => hw::run(hw::OP_REG_READ, hw::op_ticks(2)),
+            };
+            report(uart, "reg", code);
+            let _ = writeln!(uart, "  value {:04x}", hw::r16(offset::REG_RDATA));
         }
-        _ => {
-            let _ = writeln!(
-                uart,
-                "usage: hr status|cr0 <hex>|cr1 <hex>|read <hex>|rwds <n>|ramp|test|cross|bench"
-            );
+        b"delay" => match arg(1) {
+            Some(tap) if tap < 128 => {
+                hw::w8(offset::DELAY, tap as u8);
+                let code = hw::run(hw::OP_SET_DELAY, hw::op_ticks(2) + 1500);
+                report(uart, "delay", code);
+            }
+            _ => {
+                let _ = writeln!(uart, "usage: hr delay <tap 0..7f>");
+            }
+        },
+        b"errors" => errors(uart, true),
+        b"inject" => match if n > 1 { w[1] } else { b"" } {
+            b"hang" => {
+                // The engine ignores `done`; the transaction watchdog must fire.
+                hw::w32(offset::HR_ADDR, 0x7f_0000);
+                hw::w32(offset::LEN, 64);
+                hw::w8(offset::MODE, 0x10 | 2);
+                let code = hw::run(hw::OP_FILL, hw::op_ticks(64));
+                hw::w8(offset::MODE, 0);
+                report(uart, "inject hang", code);
+                let _ = writeln!(uart, "  state {:04x}", hw::r16(offset::STATE));
+                errors(uart, true);
+            }
+            b"xor" => test(uart, 2, 0x1000, 0, 0x5eed, 1),
+            _ => {
+                let _ = writeln!(uart, "usage: hr inject <hang|xor>");
+            }
+        },
+        b"abort" => {
+            hw::w8(offset::CTRL, 1);
+            let _ = writeln!(uart, "abort sent; engine and core reset, calibration reruns");
         }
+        _ => crate::shell::list_family(uart, "hr"),
     }
 }
 
+#[cfg(not(feature = "qemu"))]
+fn report(uart: &mut Uart, what: &str, code: u8) {
+    let _ = writeln!(uart, "{} {} (code {:x})", what, code_name(code), code);
+}
 
-
-/// Every register the part exposes, every field, from the datasheet.
-///
-/// **W956x8MBYA rev A01-006 tables 8, 11 and 5.2** (`sources/W956x8MBYA_A01-006.pdf`).
-/// Decoded rather than printed raw: `8f2f` and `ffc1` say nothing on their own,
-/// and the fields are where a misconfiguration shows.
-pub(crate) fn registers(uart: &mut Uart) {
-    let id0 = crate::hyperram::backend::read_register(0x0000);
-    let id1 = crate::hyperram::backend::read_register(0x0001);
-    let cr0 = crate::hyperram::backend::read_register(0x0800);
-    let cr1 = crate::hyperram::backend::read_register(0x0801);
-
-    // Table 5.2: BOTH count fields are minus-one -- 00000 is "One Row address
-    // bit" -- so capacity is 2^row * 2^col * 2 bytes. Section 8.1.1 states the
-    // answer: "9 column and 13 row address bits ... 8M bytes".
-    let rows = ((id0 >> 8) & 0x1f) + 1;
-    let cols = ((id0 >> 4) & 0xf) + 1;
-    let bytes = 1u32 << (rows as u32 + cols as u32 + 1);
+#[cfg(not(feature = "qemu"))]
+fn status(uart: &mut Uart) {
+    let s = hw::status();
+    let ck_khz = hw::r32(offset::CK_KHZ);
+    let count = hw::r32(offset::CK_COUNT);
+    // CK_COUNT counts hr cycles over 2^19 cycles of the 60 MHz oscillator.
+    let khz = (count as u64 * 60_000) >> 19;
     let _ = writeln!(
         uart,
-        "  id0  {:04x}  {}, die {}, {} row + {} column bits = {} MiB{}",
-        id0,
-        match id0 & 0xf { 6 => "winbond", _ => "unknown maker" },
-        (id0 >> 14) & 3, rows, cols, bytes / (1024 * 1024),
-        if bytes as usize == crate::target::HYPERRAM_SIZE { "" }
-        else { "  *** DISAGREES WITH THE MAPPED WINDOW ***" },
+        "hyperram id {:08x} ck {} kHz requested, {} kHz measured\n  \
+         ready {} locked {} calibrated {} busy {} hr_busy {}  last op {} {}",
+        hw::r32(offset::ID), ck_khz, khz, (s >> 1) & 1, (s >> 2) & 1, (s >> 3) & 1,
+        s & 1, (s >> 5) & 1, s >> 12, code_name(((s >> 8) & 0xf) as u8)
     );
-    let _ = writeln!(uart, "  id1  {:04x}  die revision", id1);
-
-    // Table 8.
-    let _ = writeln!(uart, "  cr0  {:04x}", cr0);
-    let _ = writeln!(uart, "    [15]    {}", if cr0 & 0x8000 != 0 {
-        "normal operation (default)" } else { "DEEP POWER DOWN" });
-    let _ = writeln!(uart, "    [14:12] drive strength {} ohms{}",
-        match (cr0 >> 12) & 7 { 0 => 34, 1 => 115, 2 => 67, 3 => 46,
-                                4 => 34, 5 => 27, 6 => 22, _ => 19 },
-        if (cr0 >> 12) & 7 == 0 { " (default)" } else { "" });
-    let _ = writeln!(uart, "    [11:8]  reserved {:04b}{}", (cr0 >> 8) & 0xf,
-        if (cr0 >> 8) & 0xf == 0xf { " (default, must be 1s)" }
-        else { "  *** should be 1111 ***" });
-    let code = (cr0 >> 4) & 0xf;
-    let _ = writeln!(uart, "    [7:4]   initial latency {}", latency(code));
-    let _ = writeln!(uart, "    [3]     {}", if cr0 & 8 != 0 {
-        "fixed: always 2x initial latency (default)" }
-        else { "variable: 1x or 2x, by RWDS during CA" });
-    // NOTE THE POLARITY -- 1 is LEGACY, not hybrid.
-    let _ = writeln!(uart, "    [2]     {}", if cr0 & 4 != 0 {
-        "legacy wrapped burst (default)" } else { "hybrid burst" });
-    let _ = writeln!(uart, "    [1:0]   burst length {} bytes{}",
-        match cr0 & 3 { 0 => 128, 1 => 64, 2 => 16, _ => 32 },
-        if cr0 & 3 == 3 { " (default)" } else { "" });
-
-    // Table 11.
-    let _ = writeln!(uart, "  cr1  {:04x}", cr1);
-    let _ = writeln!(uart, "    [15:8]  reserved {:02x}{}", (cr1 >> 8) & 0xff,
-        if (cr1 >> 8) & 0xff == 0xff { " (default, must be ff)" }
-        else { "  *** should be ff ***" });
-    let _ = writeln!(uart, "    [6]     master clock {}", if cr1 & 0x40 != 0 {
-        "single ended CK (default)" } else { "differential CK/CK#" });
-    let _ = writeln!(uart, "    [5]     {}", if cr1 & 0x20 != 0 {
-        "HYBRID SLEEP" } else { "normal operation (default)" });
-    let _ = writeln!(uart, "    [4:2]   refresh {}",
-        match (cr1 >> 2) & 7 { 0 => "full array (default)", 1 => "bottom 1/2",
-                               2 => "bottom 1/4", 3 => "bottom 1/8", 4 => "NONE",
-                               5 => "top 1/2", 6 => "top 1/4", _ => "top 1/8" });
-    let _ = writeln!(uart, "    [1:0]   distributed refresh {} (read only)",
-        match cr1 & 3 { 1 => "4 us tCSM", _ => "RESERVED" });
+    calibration(uart);
+    errors(uart, false);
 }
 
-/// `CR0[7:4]`, table 8. Sparse and sign-extended: `5 + sext4(code)`, so 0..2
-/// give 5..7 and 14..15 give 3..4. **3..13 are RESERVED** and the part holds
-/// its last legal latency instead (#401). The frequency is the datasheet's own
-/// maximum for that count.
-fn latency(code: u16) -> &'static str {
-    match code {
-        0 => "5 CK @ 133 MHz max",
-        1 => "6 CK @ 166 MHz max",
-        2 => "7 CK @ 200 MHz max (default)",
-        14 => "3 CK @ 83 MHz max",
-        15 => "4 CK @ 100 MHz max",
-        _ => "RESERVED -- the part holds its last legal latency",
+#[cfg(not(feature = "qemu"))]
+fn calibration(uart: &mut Uart) {
+    let cal = hw::r32(offset::CAL);
+    let _ = write!(uart, "  cal tap {} width {} valid {}\n  taps ", cal & 0x7f,
+                   (cal >> 8) & 0xff, (cal >> 16) & 1);
+    for i in 0..4 {
+        let map = hw::r32(offset::CAL_MAP0 + 4 * i);
+        for bit in 0..32 {
+            let _ = uart.write_str(if map >> bit & 1 == 1 { "#" } else { "." });
+        }
     }
+    let _ = writeln!(uart);
+}
+
+#[cfg(not(feature = "qemu"))]
+fn errors(uart: &mut Uart, clear: bool) {
+    let e = hw::r16(offset::ERRORS);
+    let _ = write!(uart, "  errors {:04x}", e);
+    for (bit, name) in ERROR_NAMES.iter().enumerate() {
+        if e >> bit & 1 == 1 {
+            let _ = write!(uart, " {}", name);
+        }
+    }
+    let _ = writeln!(uart);
+    if clear {
+        hw::w16(offset::ERRORS, e);
+        hw::w8(offset::EVENTS, 3);
+    }
+}
+
+#[cfg(not(feature = "qemu"))]
+fn counters(uart: &mut Uart, bytes: u32) {
+    let cycles = hw::r32(offset::CYCLES);
+    let ck_khz = hw::r32(offset::CK_KHZ) as u64;
+    // bytes per hr cycle x CK = bytes/s; tenths of MB/s
+    let tenths = if cycles == 0 { 0 } else { bytes as u64 * ck_khz / cycles as u64 / 100 };
+    let _ = writeln!(
+        uart,
+        "  words {} xacts {} cycles {} = {}.{} MB/s",
+        hw::r32(offset::WORDS), hw::r32(offset::XACTS), cycles, tenths / 10, tenths % 10
+    );
+}
+
+/// TEST over [addr, addr+bytes): `mode` 1 write, 2 read+check, 3 both per burst.
+#[cfg(not(feature = "qemu"))]
+fn test(uart: &mut Uart, mode: u8, bytes: u32, addr: u32, seed: u16, xor: u16) {
+    hw::w32(offset::HR_ADDR, addr);
+    hw::w32(offset::LEN, bytes);
+    hw::w8(offset::MODE, mode << 2);
+    hw::w16(offset::SEED, seed);
+    hw::w16(offset::XOR, xor);
+    hw::w16(offset::BURST, 0);
+    let moved = if mode == 3 { 2 * bytes } else { bytes };
+    let code = hw::run(hw::OP_TEST, hw::op_ticks(moved));
+    hw::w16(offset::XOR, 0);
+    report(uart, "test", code);
+    counters(uart, moved);
+    let _ = writeln!(
+        uart,
+        "  checked {} errors {} missing {} first-bad {:08x} got/want {:08x} bits {:04x}",
+        hw::r32(offset::CHECKED), hw::r32(offset::ERRS), hw::r32(offset::MISSING),
+        hw::r32(offset::BAD_INDEX), hw::r32(offset::BAD_GOT_WANT),
+        hw::r16(offset::BAD_BITS)
+    );
 }

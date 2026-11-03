@@ -32,13 +32,9 @@ pub(crate) fn load(index: usize, uart: &mut Uart, len: u32) {
     let _ = writeln!(uart, "send {} bytes", len);
 
     let mut crc = hyperram::Crc32::new();
-    let mut dropped = 0u32;
     let mut received = 0u32;
-    let mut pending: u32 = 0;
-    let mut held: u32 = 0;
-
-    // Seek once; the gateware auto-increments, so the inner loop is one store per word.
-    hyperram::seek_image();
+    // Bytes collect in the 4 KiB window; each full window is one COPY_OUT (#588).
+    let mut out = hyperram::Writer::new(hyperram::IMAGE_BYTE);
 
     while received < len {
         // Blocking on THIS console, and only this one: once the sender has started there
@@ -61,43 +57,22 @@ pub(crate) fn load(index: usize, uart: &mut Uart, len: u32) {
         };
         crc.push(byte);
         received += 1;
-
-        // The staging port moves a 32-bit pair, so bytes are grouped four at a time,
-        // little-endian.
-        pending = (pending >> 8) | ((byte as u32) << 24);
-        held += 1;
-        if held == 4 {
-            // A dropped pair leaves a HOLE in the image, and the failure would
-            // otherwise surface as a CRC mismatch at boot -- blaming the read,
-            // not the write that lost it. Counted here rather than in
-            // `hyperram.rs`: `cynthion-boot` includes that file by path and has
-            // no .bss zeroing, so it can hold no statics.
-            if !hyperram::write_pair(pending) {
-                dropped += 1;
-            }
-            held = 0;
-        }
+        out.byte(byte);
     }
-
-    // A length that is not a multiple of four still has to fill its final pair. The
-    // unused bytes are outside `len`, so the bootloader never reads them.
-    if held != 0 && !hyperram::write_pair(pending >> (8 * (4 - held))) {
-        dropped += 1;
-    }
+    out.flush();
 
     // Said BEFORE the header is written, so the report survives even if the
     // reboot that follows takes the console with it.
-    if dropped > 0 {
+    if out.failed {
         let _ = writeln!(
             uart,
-            "load: {} pair(s) TIMED OUT -- the image has holes and its CRC will \
-             not match. The HyperRAM controller did not answer.",
-            dropped
+            "load: a COPY to HyperRAM FAILED -- the image has holes and its CRC will \
+             not match. `hr errors` says why."
         );
     }
 
     let crc = crc.finish();
-    hyperram::write_header(len, crc);
+    let _ = hyperram::write_header(len, crc);
     let _ = writeln!(
         uart,
         "staged {} bytes, crc {:08x}; rebooting",

@@ -73,7 +73,7 @@ C_GENERATOR = "scripts/riscv/riscv_firmware.py"
 # Windows whose driver is not in doubt. If the detector calls one of these dead
 # it is the detector that is broken -- see the docstring.
 KNOWN_USED = ("CONSOLE", "APOLLO_UART", "BOARD_GPIO", "BOARD_I2C",
-              "BOARD_CLOCKS", "BOARD_ULPI", "BOARD_VBUS", "BOOTRAM",
+              "BOARD_CLOCKS", "BOARD_ULPI", "BOARD_VBUS", "HYPERRAM",
               "INTC", "CLINT")
 
 # A name and an address that appear in no source file. The detector must report

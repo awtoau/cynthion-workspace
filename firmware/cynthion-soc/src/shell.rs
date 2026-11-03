@@ -13,7 +13,6 @@
 //! `.text` win would come from, and `.text` is this design's binding constraint.
 //! That is a measurement, not a move, and is deliberately not done here.
 
-pub(crate) mod bist;
 pub(crate) mod console;
 pub(crate) mod cpu;
 pub(crate) mod editor;
@@ -76,13 +75,6 @@ use crate::{
 /// site; the padding is done by hand below for the same reason the rest of this
 /// firmware avoids it.
 pub(crate) const HELP: &[(&str, &str)] = &[
-    ("bist", "the HyperRAM BIST engine, off the Wishbone"),
-    ("bist status", "is the engine there, and what was it built as"),
-    ("bist mode [stage|bist]", "who drives the part; staging or the engine"),
-    ("bist smoke", "four cells: can the rig both pass and detect a fault"),
-    ("bist cell <d> <clk> <sel>", "one cell, by hand"),
-    ("bist sweep [passes]", "drive x clock x readclksel, a row per cell"),
-    ("bist trace [passes]", "the sweep, narrating each cell before it runs"),
     ("board", "every connector, rail and controller"),
     ("bram", "block RAM at address zero"),
     ("bram status", "where and how big; fabric RAM has no identity"),
@@ -111,17 +103,20 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     // while `help` was the only reader. It is not now: this table IS the
     // completion source, so a subcommand missing from here cannot be TAB-completed
     // and cannot be discovered without running the command wrongly first.
-    ("hyperram", "HyperRAM, and its read window"),
-    ("hyperram status", "identity, configuration, geometry and the extra-latency sample"),
-    ("hyperram cr0 <hex>", "write CR0 and read it back -- latency, drive, burst"),
-    ("hyperram cr1 <hex>", "write CR1 and read it back -- clock type, refresh"),
-    ("hyperram rwds <n>", "which cycle takes the extra-latency sample; 0 is the default"),
-    ("hyperram read <hex>", "one word over the staging port"),
-    ("hyperram test", "round-trip one word through the staging port"),
-    ("hyperram cross", "do the window and the staging port agree?"),
-    ("hyperram ramp [w]", "verify a 0-255 byte ramp; `w` writes it first"),
-    ("hyperram bench", "the same walk as `bench hyperram`"),
-    ("hyperram clear", "DESTRUCTIVE: invalidates any staged image"),
+    ("hr", "the HyperRAM peripheral: window + COPY, tests, calibration"),
+    ("hr abort", "reset the engine and core; calibration reruns"),
+    ("hr calibrate", "sweep the read delay, keep the widest clean run's centre"),
+    ("hr delay <tap>", "set the read delay by hand, 0..7f"),
+    ("hr errors", "the sticky errors, then clear them"),
+    ("hr fill <a> <n> [mode] [v]", "fill bytes at bus rate; mode const, ramp or pat"),
+    ("hr inject <hang|xor>", "force the watchdog, or a checker failure"),
+    ("hr read <addr> [n]", "bytes, through the window"),
+    ("hr reg <id0|id1|cr0|cr1> [v]", "read a register, or write it and read back"),
+    ("hr status", "ready, CK measured, calibration, errors"),
+    ("hr test [w|r|wr] [n] [a] [seed]", "generator/checker at bus rate; DESTROYS the range"),
+    ("hr write <addr> <byte>...", "bytes, through the window"),
+    ("hyperram", "HyperRAM as a region; everything else is `hr`"),
+    ("hyperram read <hex>", "one word, through the window"),
     ("i2c", "the three I2C buses behind the mux"),
     ("i2c status", "the controller: base, prescale, selected bus"),
     ("i2c scan [bus]", "scan a bus behind the mux"),
@@ -568,7 +563,6 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // bus at all, so a boardless build renders the same tree with every leaf
         // reporting what it does not have -- which is what `scripts/soc_test.py`
         // drives. See `src/board.rs`.
-        b"bist" => bist::command(uart, rest),
         b"board" => board::tree(uart, &devices.power, &devices.type_c),
         b"led" => led::command(uart, rest),
         b"i2c" => i2c::command(uart, rest, devices),

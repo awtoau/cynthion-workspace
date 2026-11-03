@@ -126,8 +126,7 @@ from peripherals.stream_buffer import StreamBuffer
 from bus.wishbone_pipe import RegisteredResponse
 from bus.fault         import BusFault, worst_ack_cycles
 from peripherals.flash_cdc import ClockCrossedPHY
-from bootram import BootRAM
-from peripherals.hyperram_probe import HyperRAMProbe
+from peripherals.hyperram import HyperRAM
 from peripherals.flash import (FairSPIControlPortCrossbar, FlashPinProbe,
                          HoldableSPIController, ModalSPIFlashMemoryMap,
                          ObservablePHY, QSPIFlashPins, READ_MODES)
@@ -372,12 +371,10 @@ FLASH_BASE = 0x10000000
 # not worth testing: there is no configuration in which it is the one we want.
 FLASH_CACHED = True
 
-# The HyperRAM memory window: ordinary cached loads, stores, and instruction fetches.
-#
-# The base matches Cynthion's existing facedancer map. Eight MiB is the populated
-# W956A8 device; the similarly named 128-Mbit part is not fitted on r1.4.
-HYPERRAM_BASE = 0x20000000
-HYPERRAM_SIZE = 8 * 1024 * 1024
+# HyperRAM (#588): registers + a 4 KiB data window, both in the uncached CSR region.
+# No memory-mapped HyperRAM: the CPU reaches it through the window and COPY.
+HYPERRAM_BASE = 0xf0000800
+HYPERRAM_WINDOW_BASE = 0xf0010000
 
 # The SPI controller's own registers -- the arbitrary-command path, used here
 # only to read the JEDEC ID.
@@ -395,43 +392,6 @@ FLASH_CSR_BASE = 0xf0000100
 # return a stale line and report no activity on a busy bus.
 FLASH_PROBE_BASE = 0xf0000200
 
-# Transaction counters on the HyperRAM window (#173). Answers whether a 64-byte
-# cache-line refill reaches the part as one burst or as sixteen transactions --
-# a question five separate readings of the source could not settle, because every
-# one of them said it should burst and the board says it costs 336 CK.
-HYPERRAM_PROBE_BASE = 0xf0000280
-
-# The HyperRAM BIST engine's register window. 512 bytes: the engine addresses its registers by number, and each number
-# maps to a 32-bit CSR twice -- a parameter at 4*n and a result at 0x100 + 4*n,
-# see `peripherals/bist_csr.py`. Adding a register in the gateware therefore
-# does not move the others.
-#
-# Deliberately the SAME numbering the JTAG applet uses. Two rigs sharing it is
-# what lets a number from one be compared with a number from the other (#226).
-#
-# 0x700 because the board block at BOARD_BASE runs 0x600..0x680 -- a fact worth
-# getting from the elaborated design rather than by reading this list, since
-# BOARD_BASE's extent is the sum of its sub-peripherals and is not written down
-# anywhere.
-HYPERRAM_BIST_BASE = 0xf0000800
-
-# Which CK rung is live, and who owns the part. 16 bytes: four 32-bit
-# registers, see `peripherals/hyperram_ck.py`.
-#
-# 0xa00 because the BIST window above runs 0x800..0x9ff, and 16-byte aligned
-# because the Wishbone decoder requires a window aligned to its own size -- a
-# misaligned one decodes to nothing and hangs the CPU on the first read, with no
-# error at elaboration (#226).
-HYPERRAM_CK_BASE = 0xf0000a00
-
-# The HyperRAM boot port -- where the bootloader reads the staged firmware image from.
-#
-# Uncached like every other CSR here, and for the sharpest possible reason: `status.valid`
-# is set by gateware while the CPU spins on it. A cached read would return the same line
-# forever and the poll would never complete, giving a bootloader that hangs on a HyperRAM
-# that is working perfectly.
-BOOTRAM_BASE = 0xf0000400
-
 # The interrupt controller: two registers, `cpu/intc.py`.
 #
 # 32 bytes of Wishbone -- six CSR bytes at the bridge's stride of 4. Inside the
@@ -439,11 +399,11 @@ BOOTRAM_BASE = 0xf0000400
 # controller would return a stale pending word forever, and aligned to its own
 # size, which the Wishbone decoder requires of every window.
 #
-# 0xc00: the board block ends at 0x680 and the HyperRAM CK window at 0xa10.
+# 0xc00: the board block ends at 0x680 and the HyperRAM CSRs at 0x880.
 INTC_BASE = 0xf0000c00
 
 # The role mux and byte stream for target_phy (`peripherals/usb_host.py`):
-# 32 bytes of CSR. 0xf0001000 is free (INTC 0xc00, HyperRAM BIST 0x800..0x9ff) and
+# 32 bytes of CSR. 0xf0001000 is free (INTC 0xc00, HyperRAM 0x800..0x87f) and
 # inside the uncached CSR region; the FIFO pop registers need that.
 USB_HOST_BASE = 0xf0001000
 
@@ -544,6 +504,9 @@ IRQ_BUTTON = 13
 # so coming up produces a rise and no interrupt.
 IRQ_PLL_LOSS = 17
 
+# HyperRAM op done / error (#588), gated by its IRQ_EN.
+IRQ_HYPERRAM = 18
+
 # Every source's trigger, fixed at elaboration. Firmware cannot change one: an
 # edge source latches, a level source does not, and which is which is a fact
 # about the signal.
@@ -562,6 +525,7 @@ IRQ_TRIGGERS = {
     IRQ_TARGET_USB:    "level",
     IRQ_BUTTON:        "rise",
     IRQ_PLL_LOSS:      "fall",
+    IRQ_HYPERRAM:      "level",
 }
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
@@ -628,7 +592,7 @@ FLASH_DIVISOR = 0
 #               (69 cycles) with one maximal SPI-controller transfer stealing the
 #               crossbar before each of its four phases. `worst_ack_cycles`
 #               derives it; nothing else here is close -- CSR peripherals answer
-#               in 5, block RAM in 1, the HyperRAM window in 20.
+#               in 5, block RAM and the HyperRAM window in 1.
 #   multiplier  1.25x
 #   on expiry   ERR to the CPU -- a load/store access fault the trap handler
 #               names -- and the red LED, which means any bus error (#411).
@@ -656,12 +620,8 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 #
 # 50, and it is measured: `scripts/soc/soc_sync_ladder.py`, 7 rungs x 4 nextpnr
 # seeds, `--no-parallel-refine`. 60 closed on 3 of 4 seeds, worst -3.2%; 50 on
-# 4 of 4, and the binding domain leaves `clk` for `hr_clk` there -- so a rung
-# below 50 buys nothing. Conditions, the whole ladder and the caveat about four
-# seeds against a 9 MHz placement distribution: #432, #467.
-#
-# What binds at 60 is the Wishbone/CSR arbiter's grant fan-out, not the HyperRAM
-# path: registering that grant is the work that would lift this.
+# 4 of 4. Conditions, the whole ladder and the caveat about four seeds against a
+# 9 MHz placement distribution: #432, #467.
 #
 # `--relaxed-btb` (jumpAt = 2) is already on and is NOT the remaining limit --
 # see `cpu/cpu.py`, where it was added for exactly this symptom at 57.55 MHz.
@@ -722,60 +682,8 @@ FLASH_PHY_FAST = False
 # has run byte-exact at 144 MHz SCK on this board (#100).
 FLASH_FULL_SCK = False
 
-# Device CK, in MHz. Independent of SYNC_MHZ: the part runs off the second PLL
-# (`hyperram_clocks.py`), which refuses a value it cannot reach exactly rather
-# than silently rounding to one it can.
-#
-# From the environment so that walking the ladder does not mean editing a
-# tracked file once per rung.
-#
-# COMMA-SEPARATED for a runtime-selectable rung -- `CYNTHION_HYPERRAM_CK_MHZ=100,120`
-# builds both into one bitstream and the CPU picks one through
-# `peripherals/hyperram_ck.py`. Two is the ceiling; `hyperram_clocks.py` argues
-# the limit and refuses the rest.
-HYPERRAM_CK_RUNGS = [float(ck) for ck in
-                     variant.value("CYNTHION_HYPERRAM_CK_MHZ").split(",")]
-
-# Rung 0, for everything that needs a single number. The BIST engine's timing
-# constants are derived from it, so a two-rung build gives the OTHER rung the
-# delays of this one -- longer in real time at a lower CK, which is the safe
-# direction, and the reason rung 0 should be the FASTEST of a pair.
-HYPERRAM_CK_MHZ = HYPERRAM_CK_RUNGS[0]
-
-# The highest CK the HyperRAM fabric has been measured to CLOSE at.
-# Not the PLL's limit -- `hyperram_clocks.py` covers that -- and not the
-# part's, which is 166 MHz.
-#
-# Refused HERE because the alternative is #410: the failure arrives ~200 s later
-# as a raw nextpnr ERROR about `hr_clk`, with nothing naming CK as the cause.
-# Same class as `SYNC_CEILING_MHZ` in `clocks.py`, and the same escape hatch --
-# the ceiling is one measurement of one design and will move, so raising it is
-# an environment variable rather than an edit, and is visible in the command
-# that did it. It does not change what elaborates, so it is not in VARIANT_ENV.
-#
-# Rungs, conditions and the builds behind this number: #410.
-HYPERRAM_CK_CEILING_MHZ = 84.0
-
-
-def _refuse_ck_past_the_fabric():
-    ceiling = float(os.environ.get("CYNTHION_HYPERRAM_CK_CEILING_MHZ")
-                    or HYPERRAM_CK_CEILING_MHZ)
-    over = [ck for ck in HYPERRAM_CK_RUNGS if ck > ceiling]
-    if not over:
-        return
-    from hyperram_clocks import reachable_ck
-
-    fits = [ck for ck in reachable_ck(ceiling / 2, ceiling) if ck <= ceiling]
-    raise SystemExit(
-        f"CYNTHION_HYPERRAM_CK_MHZ={','.join(f'{ck:g}' for ck in over)} is past "
-        f"the fabric ceiling of {ceiling:g} MHz, so place-and-route will "
-        f"fail on hr_clk after ~200 s (#410).\n"
-        f"  rungs that close, top of the ladder: "
-        f"{', '.join(f'{ck:g}' for ck in fits[-6:])}\n"
-        f"  CYNTHION_HYPERRAM_CK_CEILING_MHZ raises this if you mean to try one")
-
-
-_refuse_ck_past_the_fabric()
+# HyperRAM CK, MHz: 180, clean in the #581 sweep (#588). Own PLL off the 60 MHz `usb`.
+HYPERRAM_CK_MHZ = float(variant.value("CYNTHION_HYPERRAM_CK_MHZ"))
 
 # Geometry of each L1 cache: 64 sets x 1 way x 64 B line = 4 KiB each.
 # - Reference is upstream VexRiscv (4 KiB I / 2 KiB D, one way), docs/chips/vexiiriscv-cpu.md.
@@ -789,10 +697,10 @@ class AwtoSoc(Elaboratable):
     """This project's SoC. VexiiRiscv RV32IMAC, with:
 
     - an interrupt controller (17 numbered sources, 11 built) and a CLINT
-    - 64 KiB of block RAM, HyperRAM, and memory-mapped SPI flash
+    - block RAM, memory-mapped SPI flash, and HyperRAM behind registers + a window
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
-    - a flash ILA, a flash pin probe, and a HyperRAM probe
+    - a flash ILA and a flash pin probe
     - a JTAG debug tap, and a JTAG bitstream stager
     - two 16550 consoles: one on USB serial, one on the Apollo UART
     """
@@ -852,7 +760,6 @@ class AwtoSoc(Elaboratable):
         regions = list(vexii_cpu.DEFAULT_REGIONS) + [
             f"base={FLASH_BASE:08x},size={FLASH_SIZE:08x},"
             f"main={1 if FLASH_CACHED else 0},exe={1 if FLASH_CACHED else 0}",
-            f"base={HYPERRAM_BASE:08x},size={HYPERRAM_SIZE:08x},main=1,exe=1",
         ]
 
         # CACHE_SETS, not a literal: the build record reports this same
@@ -1051,6 +958,7 @@ class AwtoSoc(Elaboratable):
             "usb_host":      IRQ_TARGET_USB,
             "board_gpio":    {"BUTTON":       IRQ_BUTTON},
             "board_clocks":  {"PLL_LOSS":     IRQ_PLL_LOSS},
+            "hyperram":      IRQ_HYPERRAM,
         }
 
         intc_bridge = WishboneCSRBridge(intc.bus, data_width=32)
@@ -1215,160 +1123,15 @@ class AwtoSoc(Elaboratable):
         decoder.add(flash_probe_bridge.wb_bus, addr=FLASH_PROBE_BASE,
                     name="flash_probe")
 
-        # HyperRAM: one PHY, one controller, and a boot-time mode saying who
-        # drives them (#432).
-        #
-        #     mode 0  STAGE  the memory window and both staging paths
-        #     mode 1  BIST   the ceiling engine
-        #
-        # The masters are never concurrent, because the boot sequence frees the
-        # part: stage an image into HyperRAM, the resident bootloader copies it
-        # into block RAM, jump. That is what makes a firmware change cost
-        # seconds instead of a ~60 s resynthesis, and what leaves the part with
-        # no live user afterwards.
-        #
-        # PHY, controller and engine are all `hr`, off the second PLL, so a CK
-        # rung does not drag the console divisor or the CLINT tick with it.
-        # BootRAM stays in `sync` and reaches them through `HyperRAMHandover`.
-        from hyperram_clocks import HyperRAMDomains
-        from hyperram_share import HyperRAMHandover, HyperRAMShared
-        from peripherals.hyperram_bist import HyperRAMBist
-        from peripherals.hyperram_ck import HyperRAMClockSelect
-
-        m.submodules.hr_car = hr_car = HyperRAMDomains(ck_mhz=HYPERRAM_CK_RUNGS)
-        # `usb` rather than `clk_60MHz`: the SoC's own generator has already
-        # requested that resource, and Amaranth allows one requester. `usb`
-        # is the same 60 MHz -- the FPGA sources the ULPI clock from it --
-        # so the two PLLs see the same rate, if not the same net.
-        m.d.comb += hr_car.clki.eq(ClockSignal("usb"))
-
-        hr_domains = DomainRenamer({"sync": "hr"})
-        m.submodules.hyper_ram = hyper_ram = hr_domains(HyperRAMShared(
-            ck_mhz=HYPERRAM_CK_MHZ))
-
-        # `sustained` is left at its default of False, and that is a decision
-        # about the MASTER: `RegisteredResponse` below withholds STB for a cycle
-        # after every acknowledgement, so the CPU delivers a 32-bit beat every
-        # three cycles where a held-open HyperBus transaction consumes two words
-        # -- one per CK, with no way to stall it. Coalescing under that deficit
-        # wrote 48 words for a 32-word line and transposed every odd beat, which
-        # is the fault `hr cross` reports and section 9 of
-        # `scripts/soc/soc_hyperram_sim.py` reproduces. It is also what a
-        # transaction-at-a-time crossing cannot carry; see `HyperRAMHandover`.
-        #
-        # `clock_stop` (Active Clock Stop, `ClockStopPHY`) is what would let
-        # `sustained` be true, and it sits under a PHY this module no longer
-        # owns. Both stay off; #185 and the async bridge in #425 are where they
-        # come back.
-        #
-        # `ck_mhz` is passed rather than duplicated. The tCSM burst cap is a
-        # TIME limit expressed in words, so it has to know CK -- which is now
-        # the second PLL's rung and not a function of `SYNC_MHZ` at all.
-        m.submodules.hyper_handover = hyper_handover = HyperRAMHandover(
-            port=hyper_ram.stage, width=hyper_ram.width)
-        # Register space is the CPU's to ask for: `hyperram_ck.ctrl.regs`.
-        m.submodules.bootram = bootram = BootRAM(
-            ck_mhz=HYPERRAM_CK_MHZ,
-            interface=hyper_handover.interface)
-        bootram_bridge = WishboneCSRBridge(bootram.port.bus, data_width=32)
-        m.submodules.bootram_bridge = bootram_bridge
-        decoder.add(bootram_bridge.wb_bus, addr=BOOTRAM_BASE, name="bootram")
-
-        # This extra decoder window is the timing risk in #90: its address compare is
-        # on the path that needed RegisteredResponse to recover Fmax. Simulation can
-        # establish protocol and data integrity; only a build can measure the margin.
-        decoder.add(bootram.mmap.bus, addr=HYPERRAM_BASE, name="hyperram")
-
-        # The HyperRAM transaction counters (#173). Inputs only, taken from
-        # signals `BootRAM` already computes, so this cannot alter the timing of
-        # the thing it measures.
-        m.submodules.hyper_probe = hyper_probe = HyperRAMProbe()
-        # `rwds_ask` is `hr`; the probe counts in `sync`. A level, and nothing
-        # acts on it, so two flops is the whole crossing.
-        rwds_ask = Signal()
-        m.submodules += FFSynchronizer(hyper_ram.stage.rwds_ask, rwds_ask)
-        m.d.comb += [
-            hyper_probe.start_transfer.eq(bootram.probe_start),
-            hyper_probe.beat.eq(bootram.probe_beat),
-            hyper_probe.is_burst.eq(bootram.probe_burst),
-            hyper_probe.word.eq(bootram.probe_word),
-            hyper_probe.busy.eq(bootram.probe_busy),
-            hyper_probe.want.eq(bootram.probe_want),
-            hyper_probe.arming.eq(bootram.probe_arming),
-            hyper_probe.cyc.eq(bootram.probe_cyc),
-            hyper_probe.rwds_ask.eq(rwds_ask),
-            hyper_probe.stall.eq(bootram.probe_stall),
-        ]
-        # The extra-latency sample cycle. Two flops for metastability, not for
-        # coherence: a configuration the firmware moves between passes, never
-        # timed across.
-        m.submodules += FFSynchronizer(hyper_probe.rwds_at,
-                                       hyper_ram.stage.rwds_at, o_domain="hr")
-
-        hyper_probe_bridge = WishboneCSRBridge(hyper_probe.bus, data_width=32)
-        m.submodules.hyper_probe_bridge = hyper_probe_bridge
-        decoder.add(hyper_probe_bridge.wb_bus, addr=HYPERRAM_PROBE_BASE,
-                    name="hyperram_probe")
-
-        # The BIST engine, on the other side of the mode mux. It runs in `hr`,
-        # so device CK is not the CPU clock.
-        # `scripts/soc/soc_bist_transport_sim.py` is where the CPU's read of an
-        # engine-driven register is shown to survive unequal clocks -- in 1.4 s,
-        # against three failures on the retired branch that each cost a ~90 s
-        # synthesis and a reconfigure to diagnose.
-        hyper_bist = HyperRAMBist(ck_mhz=HYPERRAM_CK_MHZ, port=hyper_ram.bist)
-        m.submodules.hyper_bist = hyper_bist
-        hyper_bist_bridge = WishboneCSRBridge(hyper_bist.bus, data_width=32)
-        m.submodules.hyper_bist_bridge = hyper_bist_bridge
-        decoder.add(hyper_bist_bridge.wb_bus, addr=HYPERRAM_BIST_BASE,
-                    name="hyperram_bist")
-
-        # Which CK rung is live, who owns the part, and what the rungs ARE.
-        # Present even with one rung: a driver then reads what it has instead
-        # of being built to know, and `rungs`/`rung0` answer the same way
-        # either way.
-        hyper_ck = HyperRAMClockSelect(ck_rungs=hr_car.ck_rungs)
-        m.submodules.hyper_ck = hyper_ck
-        m.d.comb += [
-            hr_car.sel.eq(hyper_ck.sel),
-            hyper_ck.locked.eq(hr_car.locked),
-            hyper_ram.sel.eq(hyper_ck.bist),
-            hyper_ck.mode.eq(hyper_ram.mode),
-            hyper_ck.refused.eq(hyper_handover.refused),
-            hyper_handover.refused_clear.eq(hyper_ck.refused_clear),
-            bootram.register_space.eq(hyper_ck.regs),
-        ]
-        # THE CONTROLLER'S OWN LATENCY CONFIGURATION, which nothing drove.
-        #
-        # `fixed_latency`, `latency_clocks` and `low_latency_clocks` are
-        # controller INPUTS on the staging port, and `HyperRAMHandover` does not
-        # touch them -- so they held their build-time resets for the life of the
-        # bitstream while firmware reprogrammed the part's CR0 underneath. The
-        # part went variable, the controller kept counting fixed, and reads came
-        # back wrong with no way to see why (#540).
-        #
-        # Two flops each, for the same reason as `rwds_at` above.
-        hr_fixed = Signal()
-        hr_latency = Signal(6)
-        hr_low_latency = Signal(6)
-        m.submodules += [
-            FFSynchronizer(hyper_ck.fixed, hr_fixed, o_domain="hr"),
-            FFSynchronizer(hyper_ck.latency, hr_latency, o_domain="hr"),
-            FFSynchronizer(hyper_ck.low_latency, hr_low_latency, o_domain="hr"),
-        ]
-        m.d.comb += hyper_ram.stage.fixed_latency.eq(hr_fixed)
-        # Zero means "the controller's own reset", so a firmware that never
-        # writes these leaves the build exactly as it was.
-        with m.If(hr_latency != 0):
-            m.d.comb += hyper_ram.stage.latency_clocks.eq(hr_latency)
-        with m.If(hr_low_latency != 0):
-            m.d.comb += hyper_ram.stage.low_latency_clocks.eq(hr_low_latency)
-        m.d.comb += [
-        ]
-        hyper_ck_bridge = WishboneCSRBridge(hyper_ck.bus, data_width=32)
-        m.submodules.hyper_ck_bridge = hyper_ck_bridge
-        decoder.add(hyper_ck_bridge.wb_bus, addr=HYPERRAM_CK_BASE,
-                    name="hyperram_ck")
+        # HyperRAM (#588): `peripherals/hyperram.py`. Stream ring tied off until #580.
+        m.submodules.hyperram = hyperram = HyperRAM(ck_mhz=HYPERRAM_CK_MHZ,
+                                                    sync_mhz=SYNC_MHZ)
+        hyperram_bridge = WishboneCSRBridge(hyperram.bus, data_width=32)
+        m.submodules.hyperram_bridge = hyperram_bridge
+        decoder.add(hyperram_bridge.wb_bus, addr=HYPERRAM_BASE, name="hyperram")
+        decoder.add(hyperram.window, addr=HYPERRAM_WINDOW_BASE, name="hyperram_window")
+        m.d.comb += [hyperram.stream_w_en.eq(0), hyperram.stream_r_en.eq(0),
+                     intc.lines[IRQ_HYPERRAM].eq(hyperram.irq)]
 
         # The JTAG sink, on ER1, and the reset it holds the CPU in while it works.
         #
@@ -1388,10 +1151,10 @@ class AwtoSoc(Elaboratable):
         ]
 
         m.d.comb += [
-            bootram.jtag_req.eq(stager.req),
-            bootram.jtag_addr.eq(stager.addr),
-            bootram.jtag_data.eq(stager.data),
-            stager.ack.eq(bootram.jtag_ack),
+            hyperram.pair_req.eq(stager.req),
+            hyperram.pair_addr.eq(stager.addr),
+            hyperram.pair_data.eq(stager.data),
+            stager.ack.eq(hyperram.pair_ack),
         ]
 
         # The machine external interrupt, from the interrupt controller.
@@ -2145,20 +1908,8 @@ def main():
         print("nothing to do; pass --build")
         return 0
 
-    # THE VENDORED PLATFORM, `gateware/board/cynthion_r1_4.py`.
-    #
-    # This imported the installed `cynthion` package until #416, on the reasoning
-    # that `repos/cynthion/`'s copy pulls in `amaranth_boards`. True of THAT
-    # copy, and never true of the vendored one -- it takes `LEDResources`,
-    # `ULPIResource` and `CynthionPlatform` from local modules for exactly this
-    # reason, which is what vendoring it was for.
-    #
-    # The cost of not switching: the vendored file's one deliberate divergence is
-    # the HyperRAM pins' electrical attributes (#311), so the SoC built with NO
-    # `DRIVE` on any RAM pin -- silicon default, the condition #311 was filed
-    # about -- while the file that fixes it sat unused. Pin LOCATIONS are
-    # identical in both, so every build was correct about where nets land and
-    # nothing failed.
+    # THE VENDORED PLATFORM, `gateware/board/cynthion_r1_4.py` (#416): upstream's pin
+    # map with local LEDResources/ULPIResource/CynthionPlatform, so no amaranth_boards.
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from board.cynthion_r1_4 import CynthionPlatformRev1D4
     from build_helpers import ecppack_opts, source_digest, usercode

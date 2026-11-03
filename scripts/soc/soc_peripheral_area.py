@@ -125,9 +125,9 @@ def _peripherals():
         from peripherals.flash import FlashILA
         return FlashILA(sample_depth=1024)
 
-    def hyperram_probe():
-        from peripherals.hyperram_probe import HyperRAMProbe
-        return HyperRAMProbe()
+    def hyperram():
+        from peripherals.hyperram import HyperRAM
+        return HyperRAM(sim=True)
 
     return [
         ("uart16550",          uart16550,          "x2 in the SoC"),
@@ -146,7 +146,7 @@ def _peripherals():
         ("wishbone_pipe",      wishbone_pipe,      ""),
         ("flash_probe",        flash_probe,        "instrumentation"),
         ("flash_ila",          flash_ila,          "instrumentation, 1 DP16KD"),
-        ("hyperram_probe",     hyperram_probe,     "instrumentation"),
+        ("hyperram",           hyperram,           "#588, no PLL/PHY (sim build)"),
     ]
 
 
