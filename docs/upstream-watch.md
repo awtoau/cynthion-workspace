@@ -5,6 +5,8 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 **Policy:** luna and cynthion maintainers refuse LLM-generated pull requests **and issues** (luna `CONTRIBUTING.md`, "AI policy"). Nothing from this workflow is filed or sent upstream; "CONTRIBUTE" means a human would do it. See [`upstream-boundary.md`](upstream-boundary.md).
 
 
+Bugs we found ourselves in upstream code: [`upstream-bugs.md`](upstream-bugs.md).
+
 **Terminology:** upstream's "Sideband" (PHY, port) is the old r0.x second USB port. It is unrelated to our FPGA_ADV one-wire UART, which this repo also calls "the sideband" ([`chips/cynone-sideband.md`](chips/cynone-sideband.md)).
 
 ## luna (greatscottgadgets/luna)
