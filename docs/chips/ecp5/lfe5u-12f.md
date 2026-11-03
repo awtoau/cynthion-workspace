@@ -392,8 +392,8 @@ workspace has been quoting.
   CCLK/USRMCLK/MCLK entry in any speed grade** of prjtrellis's timing database.
   A clean nextpnr report says nothing whatever about this path.
 
-So [`chips/w25q32-config-flash.md`](../w25q32-config-flash.md)'s *"132% past
-the 62 MHz Lattice specifies for `MCLK`"* is comparing against the wrong number.
+So reading a flash SCK as *"132% past the 62 MHz Lattice specifies for `MCLK`"*
+compares against the wrong number ([W25Q32](../w25q32-config-flash.md#usrmclk-sck)).
 **There is no vendor figure for user-mode `USRMCLK` at all** — we are in
 unmodelled territory, and measurement is the only authority. That is a stronger
 statement than the one it replaces, not a weaker one.

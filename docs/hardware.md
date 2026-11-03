@@ -93,7 +93,7 @@ Canonical table, enforcement lock and limits: [`chips/samd11-apollo.md`](chips/s
 
 - **T8/T7/N8** — SPI and QSPI flash share them; QSPI adds M7/N7.
 - **N4/P3** — target USB direct taps, declared three times (LVDS, LVCMOS33, LVCMOS12 for chirp detection).
-- **Flash SCK has no ball**; reachable only via the `USRMCLK` macro, which caps flash clocking at a characterised 62 MHz (see [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md)).
+- **Flash SCK has no ball**; reachable only via the `USRMCLK` macro: no DDR, no vendor fmax (the 62 MHz is fCCLK, not a USRMCLK limit; see [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md#usrmclk-sck)).
 
 ## Block diagram
 
