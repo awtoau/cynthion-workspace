@@ -23,13 +23,16 @@ REG = dict(ID=1, GO=2, MODE=3, BURST=4, TOTAL=5, XOR=6, STATUS=7, CK_KHZ=8, MAX_
            SYNC_KHZ=10, RUN_CYCLES=11, WORDS_W=12, WORDS_R=13, SRC_WAIT=14, SINK_WAIT=15,
            XACTS=16, MISSING=17, CHECKED=18, ERRORS=19, BAD_INDEX=20, BAD_GOT_WANT=21,
            GENERATED=22, WAIT=23, DELAY=24, REG_ADDR=25, REG_VALUE=26, STRADDLED=27,
-           START_ADDR=28)
+           START_ADDR=28, SEED=29, BAD_BITS=30, CK_COUNT=31)
 
 MODE_WRITE, MODE_READ, MODE_BOTH, MODE_REG = 1, 2, 3, 4
 
 ADDRESS_BITS = 22           # 64 Mbit = 2**22 16-bit words
 FIFO_DEPTH = 512            # 32-bit entries; holds half the longest legal burst
-SYNC_MHZ = 100.0
+# 2 words/cycle at 130 MHz = 260 Mwords/s: above the bus up to CK 240.
+SYNC_MHZ = 130.0
+# CK meter window: 2**19 cycles of the 60 MHz reference (8.74 ms).
+CK_WINDOW_BITS = 19
 
 # ECP5 EHXPLLL limits (FPGA-DS-02012, sysCLOCK PLL): PFD >= 10 MHz, VCO 400..800 MHz.
 PFD_MIN_MHZ, VCO_MIN_MHZ, VCO_MAX_MHZ = 10.0, 400.0, 800.0
@@ -86,6 +89,7 @@ class SeqEngine(Elaboratable):
         self.total = Signal(ADDRESS_BITS + 1)
         self.start_addr = Signal(ADDRESS_BITS)
         self.xor = Signal(16)
+        self.seed = Signal(16)          # xored into written data; vary per write
         self.wait = Signal(5, init=core.wait.init)
         self.reg_addr = Signal(32)
         # results (hr counters, static once `done`)
@@ -103,6 +107,7 @@ class SeqEngine(Elaboratable):
         self.errors = Signal(32)
         self.bad_index = Signal(32, init=0xFFFFFFFF)
         self.bad_got_want = Signal(32)
+        self.bad_bits = Signal(16)      # OR of got ^ want over the run
         self.generated = Signal(32)
 
     def elaborate(self, platform):
@@ -121,7 +126,7 @@ class SeqEngine(Elaboratable):
         with m.If(self.go):
             m.d.sync += [gen_left.eq(Mux(self.mode[0] & ~self.mode[2], self.total & ~1, 0)),
                          gen_addr.eq(self.start_addr & ~1), self.generated.eq(0)]
-        m.d.comb += [wfifo.w_data.eq(Cat(pattern(gen_addr), pattern(gen_addr + 1))),
+        m.d.comb += [wfifo.w_data.eq(Cat(pattern(gen_addr) ^ self.seed, pattern(gen_addr + 1) ^ self.seed)),
                      wfifo.w_en.eq((gen_left != 0) & ~self.go)]
         with m.If(wfifo.w_en & wfifo.w_rdy):
             m.d.sync += [gen_left.eq(gen_left - 2), gen_addr.eq(gen_addr + 2),
@@ -131,17 +136,18 @@ class SeqEngine(Elaboratable):
         chk_addr = Signal(ADDRESS_BITS)
         want_lo, want_hi = Signal(16), Signal(16)
         got_lo, got_hi = rfifo.r_data[:16], rfifo.r_data[16:]
-        m.d.comb += [want_lo.eq(pattern(chk_addr) ^ self.xor),
-                     want_hi.eq(pattern(chk_addr + 1) ^ self.xor),
+        m.d.comb += [want_lo.eq(pattern(chk_addr) ^ self.seed ^ self.xor),
+                     want_hi.eq(pattern(chk_addr + 1) ^ self.seed ^ self.xor),
                      rfifo.r_en.eq(1)]
         with m.If(self.go):
             m.d.sync += [chk_addr.eq(self.start_addr & ~1), self.checked.eq(0),
                          self.errors.eq(0), self.bad_index.eq(0xFFFFFFFF),
-                         self.bad_got_want.eq(0)]
+                         self.bad_got_want.eq(0), self.bad_bits.eq(0)]
         with m.Elif(rfifo.r_rdy):
             bad_lo, bad_hi = got_lo != want_lo, got_hi != want_hi
             m.d.sync += [chk_addr.eq(chk_addr + 2), self.checked.eq(self.checked + 2),
-                         self.errors.eq(self.errors + bad_lo + bad_hi)]
+                         self.errors.eq(self.errors + bad_lo + bad_hi),
+                         self.bad_bits.eq(self.bad_bits | (got_lo ^ want_lo) | (got_hi ^ want_hi))]
             with m.If((self.bad_index == 0xFFFFFFFF) & (bad_lo | bad_hi)):
                 m.d.sync += [self.bad_index.eq(chk_addr + ~bad_lo),
                              self.bad_got_want.eq(Mux(bad_lo, Cat(want_lo, got_lo),
@@ -348,7 +354,7 @@ class BaselineTop(Elaboratable):
         m.d.comb += eng.go.eq(go[0] & ~go_prev)
         for name, sig in (("MODE", eng.mode), ("BURST", eng.burst), ("TOTAL", eng.total),
                           ("XOR", eng.xor), ("REG_ADDR", eng.reg_addr),
-                          ("START_ADDR", eng.start_addr)):
+                          ("START_ADDR", eng.start_addr), ("SEED", eng.seed)):
             m.d.comb += sig.eq(rw(REG[name]))
         wait_reg = rw(REG["WAIT"])
         m.d.comb += eng.wait.eq(Mux(wait_reg[8], wait_reg[:5], core.wait.init))
@@ -361,6 +367,21 @@ class BaselineTop(Elaboratable):
         m.d.comb += [delay_ps.i.eq(delay_reg[8] & ~apply_prev), phy.delay_load.eq(delay_ps.o),
                      phy.delay.eq(delay_reg[:7]), phy.delay_dir.eq(delay_reg[7])]
 
+        # CK meter: hr cycles counted over 2**CK_WINDOW_BITS cycles of the 60 MHz pin.
+        m.domains += ClockDomain("ref", reset_less=True)
+        m.d.comb += ClockSignal("ref").eq(clk60)
+        ref_cnt = Signal(CK_WINDOW_BITS + 1)
+        m.d.ref += ref_cnt.eq(ref_cnt + 1)
+        gate, gate_prev = Signal(), Signal()
+        m.submodules.gate_ff = FFSynchronizer(ref_cnt[-1], gate, o_domain="hr")
+        hr_cnt, ck_count = Signal(32), Signal(32)
+        m.d.hr += gate_prev.eq(gate)
+        with m.If(gate):
+            m.d.hr += hr_cnt.eq(hr_cnt + 1)
+        with m.Elif(gate_prev):
+            m.d.hr += [ck_count.eq(hr_cnt), hr_cnt.eq(0)]
+        regs.add_read_only_register(REG["CK_COUNT"], read=ck_count)
+
         status = Cat(eng.done, phy.delay_busy, phy.cflag, core.ready)
         regs.add_read_only_register(REG["ID"], read=APPLET_ID)
         regs.add_read_only_register(REG["STATUS"], read=status)
@@ -369,6 +390,6 @@ class BaselineTop(Elaboratable):
         regs.add_read_only_register(REG["MAX_BURST"], read=core.max_burst)
         for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
                      "MISSING", "CHECKED", "ERRORS", "BAD_INDEX", "BAD_GOT_WANT",
-                     "GENERATED", "REG_VALUE", "STRADDLED"):
+                     "GENERATED", "REG_VALUE", "STRADDLED", "BAD_BITS"):
             regs.add_read_only_register(REG[name], read=getattr(eng, name.lower()))
         return m

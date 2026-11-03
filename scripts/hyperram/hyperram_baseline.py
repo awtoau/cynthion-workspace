@@ -46,8 +46,8 @@ RESULTS = OUT / "results.jsonl"
 OSS_CAD_ENV = Path.home() / "opt" / "oss-cad-suite" / "environment"
 sys.path.insert(0, str(GW))
 
-from top import (APPLET_ID, MODE_BOTH, MODE_READ, MODE_REG, MODE_WRITE,  # noqa: E402
-                 REG, reachable)
+from top import (APPLET_ID, CK_WINDOW_BITS, MODE_BOTH, MODE_READ, MODE_REG,  # noqa: E402
+                 MODE_WRITE, REG, reachable)
 
 WORDS_ALL = 1 << 22          # whole 64 Mbit array, 16-bit words
 CR0_ADDR = 0x800             # datasheet 9.1: CR0 word address
@@ -155,11 +155,36 @@ class Board:
         self.regs.register_write(REG[name], value)
 
 
-def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label=""):
+def new_seed():
+    """Nonzero 16-bit seed: each write leaves data a stale read cannot match."""
+    return int.from_bytes(os.urandom(2), "little") or 1
+
+
+def measured_ck(b):
+    """hr cycles per 2**CK_WINDOW_BITS cycles of the 60 MHz pin; median of 3 windows, MHz."""
+    vals = []
+    for _ in range(3):
+        first = b.rd("CK_COUNT")
+        # Waits for: the next window (8.74 ms). Bounded at 400 polls (each >= 1 ms over JTAG).
+        for _ in range(400):
+            v = b.rd("CK_COUNT")
+            if v != first:
+                break
+        vals.append(v)
+    return sorted(vals)[1] * 60.0 / (1 << CK_WINDOW_BITS)
+
+
+def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label="",
+             seed=None, ck_meas=None):
+    if seed is None:
+        seed = new_seed() if mode in (MODE_WRITE, MODE_BOTH) else getattr(b, "seed", 0)
+    if mode in (MODE_WRITE, MODE_BOTH):
+        b.seed = seed
     b.wr("MODE", mode)
     b.wr("BURST", burst)
     b.wr("TOTAL", total)
     b.wr("XOR", xor)
+    b.wr("SEED", seed)
     b.wr("START_ADDR", start_addr)
     b.wr("WAIT", 0 if wait is None else (0x100 | wait))
     b.wr("REG_ADDR", CR0_ADDR)
@@ -174,15 +199,16 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
         if b.rd("STATUS") & 1:
             done = True
             break
-    row = dict(label=label, ck_mhz=ck, mode=mode, burst=burst, total=total, xor=xor,
-               wait=wait, done=done, commit=commit(),
+    row = dict(label=label, ck_mhz=ck, ck_meas_mhz=ck_meas, mode=mode, burst=burst, total=total,
+               xor=xor, seed=seed, wait=wait, done=done, commit=commit(),
                time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
                  "MISSING", "STRADDLED", "CHECKED", "ERRORS", "BAD_INDEX", "BAD_GOT_WANT",
-                 "GENERATED", "REG_VALUE"):
+                 "GENERATED", "REG_VALUE", "BAD_BITS"):
         row[name.lower()] = b.rd_stable(name)
     moved = row["words_w"] + row["words_r"]
-    row["mb_s"] = (2 * moved / (row["run_cycles"] / (ck * 1e6)) / 1e6) if row["run_cycles"] else 0
+    clock = ck_meas or ck
+    row["mb_s"] = (2 * moved / (row["run_cycles"] / (clock * 1e6)) / 1e6) if row["run_cycles"] else 0
     row["efficiency"] = moved / row["run_cycles"] if row["run_cycles"] else 0
     OUT.mkdir(parents=True, exist_ok=True)
     with RESULTS.open("a") as f:
@@ -193,8 +219,8 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
         f"errors {row['errors']} / {row['checked']} missing {row['missing']} "
         f"straddled {row['straddled']} src_wait {row['src_wait']} sink_wait {row['sink_wait']}"
         + ("" if done else " HUNG")
-        + (f" first bad @{row['bad_index']} got {bad >> 16:#06x} want {bad & 0xFFFF:#06x}"
-           if row["errors"] else ""))
+        + (f" bad bits {row['bad_bits']:#06x} first bad @{row['bad_index']} "
+           f"got {bad >> 16:#06x} want {bad & 0xFFFF:#06x}" if row["errors"] else ""))
     return row
 
 
@@ -209,54 +235,104 @@ def set_delay(b, taps, direction=0):
     return bool(b.rd("STATUS") & 4)
 
 
-def measure(ck, args):
+def open_board(ck):
     b = Board()
     ident = b.rd_stable("ID")
     if ident != APPLET_ID:
         say(f"ck{ck:g}: wrong applet id {ident:#010x}")
-        return 1
+        return None, None, None
     ck_khz, max_burst = b.rd_stable("CK_KHZ"), b.rd_stable("MAX_BURST")
-    say(f"ck{ck:g}: applet ok, CK {ck_khz / 1000:g} MHz, max burst {max_burst}, "
-        f"status {b.rd('STATUS'):#x}, commit {commit()}")
-    cr0 = run_case(b, ck, mode=MODE_REG, burst=2, total=2, label="CR0 read")["reg_value"]
-    say(f"  CR0 reads {cr0:#06x} (datasheet default 0x8f2f)")
+    ck_meas = measured_ck(b)
+    say(f"ck{ck:g}: applet ok, CK requested {ck_khz / 1000:g} MHz, measured {ck_meas:.4f} MHz "
+        f"(60 MHz pin as reference), sync {b.rd_stable('SYNC_KHZ') / 1000:g} MHz, "
+        f"max burst {max_burst}, status {b.rd('STATUS'):#x}, commit {commit()}")
+    return b, max_burst, ck_meas
 
-    # Input-delay sweep: short write+read per tap; the eye is the run of clean taps.
+
+def sweep_eye(b, ck, max_burst, ck_meas, args):
+    """Short seeded write+read per tap. Returns (best tap, eye width in taps, eye list)."""
     probe = 1 << 16
     eye = []
     for taps in range(0, 128, args.tap_step):
-        cflag = set_delay(b, taps, args.direction)
-        r = run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=probe, label=f"tap {taps}")
-        eye.append((taps, r["errors"] + r["missing"], cflag))
-    clean = [t for t, e, _ in eye if e == 0]
+        set_delay(b, taps, args.direction)
+        r = run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=probe, label=f"tap {taps}",
+                     ck_meas=ck_meas)
+        eye.append((taps, r["errors"] + r["missing"], r["bad_bits"]))
     say(f"  eye ck{ck:g}: " + " ".join(f"{t}:{'.' if e == 0 else 'X'}" for t, e, _ in eye))
+    clean = [t for t, e, _ in eye if e == 0]
     if not clean:
-        say(f"  ck{ck:g}: no clean tap; measuring at tap 0 to record the failure")
-        best = 0
-    else:
-        runs, cur = [], [clean[0]]
-        for t in clean[1:]:
-            if t - cur[-1] == args.tap_step:
-                cur.append(t)
-            else:
-                runs.append(cur)
-                cur = [t]
-        runs.append(cur)
-        widest = max(runs, key=len)
-        best = widest[len(widest) // 2]
-    set_delay(b, best, args.direction)
-    say(f"  ck{ck:g}: measuring at tap {best}")
+        best = min(eye, key=lambda x: x[1])[0]
+        say(f"  ck{ck:g}: no clean tap; fewest errors at tap {best}")
+        return best, 0, eye
+    # Clean runs, wrapping round tap 127 -> 0 is not assumed (taps are not periodic).
+    runs, cur = [], [clean[0]]
+    for t in clean[1:]:
+        if t - cur[-1] == args.tap_step:
+            cur.append(t)
+        else:
+            runs.append(cur)
+            cur = [t]
+    runs.append(cur)
+    widest = max(runs, key=len)
+    return widest[len(widest) // 2], len(widest) * args.tap_step, eye
 
-    run_case(b, ck, mode=MODE_WRITE, burst=max_burst, total=WORDS_ALL, label="write all")
-    run_case(b, ck, mode=MODE_READ, burst=max_burst, total=WORDS_ALL, label="read all")
-    run_case(b, ck, mode=MODE_READ, burst=max_burst, total=WORDS_ALL, xor=1,
-             label="neg control xor")
-    run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=WORDS_ALL, label="write+read")
-    for burst in (16, 32, 64, 128, 256, 512):
-        if burst < max_burst:
-            run_case(b, ck, mode=MODE_WRITE, burst=burst, total=1 << 20, label=f"write b{burst}")
-            run_case(b, ck, mode=MODE_READ, burst=burst, total=1 << 20, label=f"read b{burst}")
+
+def measure(ck, args):
+    b, max_burst, ck_meas = open_board(ck)
+    if b is None:
+        return 1
+    cr0 = run_case(b, ck, mode=MODE_REG, burst=2, total=2, label="CR0 read")["reg_value"]
+    say(f"  CR0 reads {cr0:#06x} (datasheet default 0x8f2f)")
+    best, width, eye = sweep_eye(b, ck, max_burst, ck_meas, args)
+    set_delay(b, best, args.direction)
+    say(f"  ck{ck:g}: measuring at tap {best}; widest clean run {width} taps")
+    with RESULTS.open("a") as f:
+        f.write(json.dumps(dict(label="eye", ck_mhz=ck, ck_meas_mhz=ck_meas, tap=best,
+                                width=width, step=args.tap_step, eye=eye, commit=commit())) + "\n")
+    kw = dict(burst=max_burst, total=WORDS_ALL, ck_meas=ck_meas)
+    run_case(b, ck, mode=MODE_WRITE, label="write all", **kw)
+    run_case(b, ck, mode=MODE_READ, label="read all", **kw)
+    run_case(b, ck, mode=MODE_READ, xor=1, label="neg control xor", **kw)
+    run_case(b, ck, mode=MODE_READ, seed=b.seed ^ 0x5A5A, label="neg control stale seed", **kw)
+    run_case(b, ck, mode=MODE_BOTH, label="write+read", **kw)
+    if not args.quick:
+        for burst in (16, 32, 64, 128, 256, 512):
+            if burst < max_burst:
+                run_case(b, ck, mode=MODE_WRITE, burst=burst, total=1 << 20,
+                         label=f"write b{burst}", ck_meas=ck_meas)
+                run_case(b, ck, mode=MODE_READ, burst=burst, total=1 << 20,
+                         label=f"read b{burst}", ck_meas=ck_meas)
     return 0
+
+
+def soak(ck, args):
+    """Whole-array seeded write+read passes until `minutes` of wall time are spent."""
+    b, max_burst, ck_meas = open_board(ck)
+    if b is None:
+        return 1
+    best, width, _ = sweep_eye(b, ck, max_burst, ck_meas, args)
+    set_delay(b, best, args.direction)
+    say(f"  soak ck{ck:g}: tap {best} (eye {width} taps), {args.minutes:g} min")
+    end = time.monotonic() + 60 * args.minutes
+    passes = errors = missing = 0
+    bad_bits = 0
+    while time.monotonic() < end:
+        r = run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=WORDS_ALL,
+                     label=f"soak {passes}", ck_meas=ck_meas)
+        passes += 1
+        errors += r["errors"]
+        missing += r["missing"]
+        bad_bits |= r["bad_bits"]
+        if not r["done"]:
+            break
+    say(f"  soak ck{ck:g} done: {passes} whole-array write+read passes, "
+        f"{passes * WORDS_ALL} words verified, errors {errors}, missing {missing}, "
+        f"bad bits {bad_bits:#06x}, CK measured {measured_ck(b):.4f} MHz at end")
+    with RESULTS.open("a") as f:
+        f.write(json.dumps(dict(label="soak", ck_mhz=ck, ck_meas_mhz=ck_meas, passes=passes,
+                                errors=errors, missing=missing, tap=best, width=width,
+                                commit=commit(), time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))) + "\n")
+    return 0 if errors == 0 and missing == 0 else 1
 
 
 def table():
@@ -300,6 +376,13 @@ def main():
     pr.add_argument("--no-configure", action="store_true")
     pr.add_argument("--tap-step", type=int, default=4)
     pr.add_argument("--direction", type=int, default=0)
+    pr.add_argument("--quick", action="store_true", help="skip the burst-length sweep")
+    ps = sub.add_parser("soak")
+    ps.add_argument("--ck", type=float, required=True)
+    ps.add_argument("--minutes", type=float, default=10.0)
+    ps.add_argument("--no-configure", action="store_true")
+    ps.add_argument("--tap-step", type=int, default=4)
+    ps.add_argument("--direction", type=int, default=0)
     sub.add_parser("clocks")
     sub.add_parser("table", help="markdown tables from results.jsonl (last run per CK/case)")
     pc = sub.add_parser("case", help="one run on what is loaded: MODE:BURST:TOTAL[:START[:WAIT[:XOR]]] ...")
@@ -313,6 +396,10 @@ def main():
     if args.cmd == "clocks":
         print(reachable(50, 200))
         return 0
+    if args.cmd == "soak":
+        if not args.no_configure and not configure(args.ck):
+            return 1
+        return soak(args.ck, args)
     if args.cmd == "table":
         return table()
     if args.cmd == "case":

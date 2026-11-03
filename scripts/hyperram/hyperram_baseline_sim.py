@@ -147,6 +147,7 @@ def simulate(cases, r_halves):
             ctx.set(eng.burst, case["burst"])
             ctx.set(eng.total, case["total"])
             ctx.set(eng.xor, case.get("xor", 0))
+            ctx.set(eng.seed, case.get("seed", 0))
             ctx.set(eng.wait, case.get("wait", WAIT_DEFAULT))
             ctx.set(eng.reg_addr, 0x800)
             ctx.set(eng.start_addr, case.get("start", 0))
@@ -210,6 +211,9 @@ def main():
         dict(mode=MODE_WRITE, burst=mb, total=TOTAL, tag="rewrite"),
         dict(mode=MODE_READ, burst=16, total=TOTAL, tag="read burst 16"),
         dict(mode=MODE_READ, burst=350, total=1024, start=6, tag="read unaligned start"),
+        dict(mode=MODE_WRITE, burst=mb, total=TOTAL, seed=0x1234, tag="write seeded"),
+        dict(mode=MODE_READ, burst=mb, total=TOTAL, seed=0x1234, tag="read seeded"),
+        dict(mode=MODE_READ, burst=mb, total=TOTAL, seed=0, tag="negative control: stale seed"),
     ]
     for r_halves in (6, 7):
         log.info("round trip %d half-cycles (%s)", r_halves,
@@ -224,7 +228,7 @@ def main():
             if r["mode"] & 2:
                 check(r["missing"] == 0, f"{tag}: no missing words")
                 check(r["checked"] == r["total"], f"{tag}: checker saw every word")
-                expect_errors = r.get("xor") or "wrong-latency" in r["tag"]
+                expect_errors = r.get("xor") or "wrong-latency" in r["tag"] or "stale" in r["tag"]
                 if r.get("xor"):
                     check(r["errors"] == r["total"], f"{tag}: every word fails")
                 elif expect_errors:
@@ -238,8 +242,8 @@ def main():
                 log.info("    sim read efficiency %.1f%%", 100 * r["words_r"] / r["run_cycles"])
             if r["tag"] == "write max burst":
                 log.info("    sim write efficiency %.1f%%", 100 * r["words_w"] / r["run_cycles"])
-        wrong = [a for a in range(TOTAL) if dev.mem.get(a) != pattern_py(a)]
-        check(not wrong, f"R{r_halves}: device memory == pattern" +
+        wrong = [a for a in range(TOTAL) if dev.mem.get(a) != pattern_py(a) ^ 0x1234]
+        check(not wrong, f"R{r_halves}: device memory == pattern ^ last seed" +
               (f" (first wrong {wrong[0]})" if wrong else ""))
         check(dev.cs_low_max <= tcsm_cycles,
               f"R{r_halves}: longest CS# Low {dev.cs_low_max} <= {tcsm_cycles} CK")
