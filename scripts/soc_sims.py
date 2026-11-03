@@ -207,9 +207,15 @@ def main():
     emit(f"\n{BOLD}SoC simulations{RESET}  ({len(chosen)} of {len(SIMS)}, "
          f"tier {tier})\n")
 
+    def run_and_note(name):
+        # One line per finished sim: callers' stall guards need output before the summary.
+        result = run_one(name, args.python, soak)
+        emit(f"  done {name:<20} {result[4]:5.1f}s  {'ok' if result[1] else 'FAILED'}")
+        return result
+
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        results = list(pool.map(lambda n: run_one(n, args.python, soak), chosen))
+        results = list(pool.map(run_and_note, chosen))
 
     # Back into the declared order, so two runs are comparable line by line.
     order = {name: index for index, name in enumerate(SIMS)}
