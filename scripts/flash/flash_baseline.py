@@ -783,6 +783,128 @@ def diag(args):
     return 0
 
 
+def seeds_programmed():
+    """Seeds of every completed program run, oldest first (results.jsonl)."""
+    out = []
+    if RESULTS.exists():
+        for line in RESULTS.read_text().splitlines():
+            r = json.loads(line)
+            if r.get("label") == "program 02h" and r.get("done") and r["seed"] not in out[-1:]:
+                out.append(r["seed"])
+    return out
+
+
+def set_drive(fl, sr3):
+    """SR3 volatile (50h then 11h, datasheet 8.2.5): DRV1:0 = bits 6:5; 0x60 = 25%, 0x00 = 100%."""
+    fl.raw(desc(0x50), label="volatile SR write enable")
+    fl.raw(desc(0x11, dw=W1), length=1, wdata=sr3 << 24, label=f"SR3 {sr3:#04x}")
+    return fl.raw(desc(0x15, dw=W1, read=True), length=1, label="SR3")["result"] & 0xFF
+
+
+def climb_point(sck, seed, stale, drive_check=False):
+    """One quick pass on the programmed region: eyes, EBh region + burst32, 0Bh, QPI,
+    controls (asserted), DTR. Returns (pass, summary dict)."""
+    if not configure(sck):
+        return False, dict(why="configure failed")
+    fl = open_board(sck)
+    if fl is None:
+        return False, dict(why="wrong applet")
+    fl.qpi(False)
+    out = dict(sck=sck, sck_meas=fl.f)
+    best, w = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
+                  lats=range(0, 8), halves=(0, 2))
+    out.update(jedec=best, jedec_width=w)
+    if best is None:
+        out.update(why="no JEDEC eye", lock_lost=bool(fl.b.rd("STATUS") >> 3 & 1))
+        return False, out
+
+    def probe():
+        r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
+                  burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
+                  expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="eye")
+        return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
+    lat0 = best[1]
+    lats = range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 2))
+    best, w = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 16), lats=lats, halves=(0, 2))
+    out.update(ebh=best, ebh_width=w)
+    if drive_check:
+        out["sr3_100"] = set_drive(fl, 0x00)
+        b2, w2 = eye(fl, probe, "EBh seeded DRV 100%", max(1, fl.n_steps // 16), lats=lats,
+                     halves=(0, 2))
+        out.update(ebh_drv100=b2, ebh_width_drv100=w2)
+        if b2 is not None:
+            best = b2
+        r = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, seed=seed, label="EBh 1-4-4 region DRV 100%")
+        report(fl, r)
+        out["region_drv100"] = (r["errors"], r["checked"], r["done"])
+        out["sr3_back"] = set_drive(fl, 0x60)
+    if best is None:
+        out.update(why="no EBh eye", lock_lost=bool(fl.b.rd("STATUS") >> 3 & 1))
+        return False, out
+    rows = {}
+    for mode, length, burst, lbl in ((EYE_MODE, TEST_SIZE, None, "EBh 1-4-4 region"),
+                                      (EYE_MODE, 1 << 16, 32, "EBh 1-4-4 burst32"),
+                                      ("0Bh 1-1-1", TEST_SIZE, None, "0Bh 1-1-1 region"),
+                                      ("QPI EBh 4-4-4", TEST_SIZE, None, "QPI EBh 4-4-4 region")):
+        r = fl.read(mode, TEST_BASE, length, burst=burst, seed=seed, label=lbl)
+        report(fl, r)
+        rows[lbl] = r
+    for lbl, kw in (("ctl stale seed", dict(seed=stale)), ("ctl xor", dict(seed=seed, xor=1))):
+        r = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, label=lbl, **kw)
+        report(fl, r)
+        rows[lbl] = r
+    measure_dtr(fl, seed, stale, dict(jedec_best=out["jedec"]))
+    reg = rows["EBh 1-4-4 region"]
+    ok = (reg["done"] and reg["seq_ok"] and reg["checked"] == TEST_SIZE and reg["errors"] == 0
+          and all(rows[c]["done"] and rows[c]["errors"] == rows[c]["checked"] == TEST_SIZE
+                  for c in ("ctl stale seed", "ctl xor")))
+    out.update(ok=ok, lock_lost=bool(fl.b.rd("STATUS") >> 3 & 1),
+               state=reg["state"], ebh_errors=reg["errors"], ebh_mb_s=reg.get("mb_s"))
+    return ok, out
+
+
+def climb(args):
+    """Upward in 10 MHz steps from --start until two consecutive points fail (or the PLL
+    cannot make the frequency); no erase/program/scan. Drive check at the last pass and
+    the step above it."""
+    global RUN_ID
+    RUN_ID = time.strftime("%Y%m%d-%H%M%S")
+    seeds = seeds_programmed()
+    seed = seeds[-1]
+    stale = seeds[-2] if len(seeds) > 1 else new_seed(seed)
+    scks = []
+    f = args.start
+    while f <= args.stop:
+        if f in reachable(f - 0.01, f + 0.01):
+            scks.append(f)
+        else:
+            say(f"climb: {f:g} MHz not reachable from 60 MHz (PFD >= 10, VCO 400-800); skipped")
+        f += 10
+    say(f"climb {RUN_ID}: {scks}; region seed {seed:#010x}, stale {stale:#010x}")
+    if not build_cached(scks):
+        return 1
+    fails, last_pass, results = 0, None, []
+    for sck in scks:
+        ok, out = climb_point(sck, seed, stale)
+        results.append(out)
+        record(dict(label="climb point", **out))
+        say(f"climb {sck:g}: {'PASS' if ok else 'FAIL'} {out}")
+        if ok:
+            fails, last_pass = 0, sck
+        else:
+            fails += 1
+            if fails == 2:
+                break
+    if last_pass is not None:
+        above = [s for s in scks if s > last_pass][:1]
+        for sck in [last_pass] + above:
+            ok, out = climb_point(sck, seed, stale, drive_check=True)
+            record(dict(label="climb drive", **out))
+            say(f"climb drive {sck:g}: {'PASS' if ok else 'FAIL'} {out}")
+    say(f"climb {RUN_ID} done: last pass {last_pass}")
+    return 0
+
+
 def scan_only(args):
     global RUN_ID
     RUN_ID = time.strftime("%Y%m%d-%H%M%S")
@@ -877,6 +999,9 @@ def main():
     pd.add_argument("--n", type=int, default=300)
     pd.add_argument("--ops", type=int, default=100)
     pd.add_argument("--drv", action="store_true", help="eye width at SR3 drive 25%% vs 100%%")
+    pc = sub.add_parser("climb", help="10 MHz steps up until two points fail; reads only")
+    pc.add_argument("--start", type=float, default=100)
+    pc.add_argument("--stop", type=float, default=300)
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
@@ -891,6 +1016,8 @@ def main():
         return scan_only(args)
     if args.cmd == "diag":
         return diag(args)
+    if args.cmd == "climb":
+        return climb(args)
     if args.cmd == "table":
         return table(args.run)
     return sweep(args)
