@@ -259,6 +259,36 @@ def measure(ck, args):
     return 0
 
 
+def table():
+    keep = {}
+    for line in RESULTS.read_text().splitlines():
+        r = json.loads(line)
+        if not r["label"].startswith(("tap", "case", "CR0", "cr0")):
+            keep[(r["ck_mhz"], r["label"])] = r
+    cks = sorted({k[0] for k in keep if (k[0], "read all") in keep})
+    print("| CK MHz | burst | write MB/s | read MB/s | write+read MB/s | read errors / words | "
+          "write+read errors / words | missing | neg control errors | pin rate MB/s | read % of pin | commit |")
+    print("|" + "---|" * 12)
+    for ck in cks:
+        w, r, b, x = (keep[(ck, k)] for k in ("write all", "read all", "write+read", "neg control xor"))
+        print(f"| {ck:g} | {w['burst']} | {w['mb_s']:.1f} | {r['mb_s']:.1f} | {b['mb_s']:.1f} | "
+              f"{r['errors']} / {r['checked']} | {b['errors']} / {b['checked']} | "
+              f"{r['missing'] + b['missing']} | {x['errors']} / {x['checked']} | {2 * ck:g} | "
+              f"{100 * r['mb_s'] / (2 * ck):.1f} | {r['commit']} |")
+    sizes = (16, 32, 64, 128, 256, 512)
+    print()
+    print("| CK MHz | " + " | ".join(f"burst {n} w / r MB/s" for n in sizes) + " |")
+    print("|" + "---|" * (len(sizes) + 1))
+    for ck in cks:
+        cells = []
+        for n in sizes:
+            w, r = keep.get((ck, f"write b{n}")), keep.get((ck, f"read b{n}"))
+            cells.append("-" if not w else f"{w['mb_s']:.0f} / {r['mb_s']:.0f}"
+                         + ("" if r["errors"] == 0 else f" ({r['errors']} err)"))
+        print(f"| {ck:g} | " + " | ".join(cells) + " |")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -271,6 +301,7 @@ def main():
     pr.add_argument("--tap-step", type=int, default=4)
     pr.add_argument("--direction", type=int, default=0)
     sub.add_parser("clocks")
+    sub.add_parser("table", help="markdown tables from results.jsonl (last run per CK/case)")
     pc = sub.add_parser("case", help="one run on what is loaded: MODE:BURST:TOTAL[:START[:WAIT[:XOR]]] ...")
     pc.add_argument("--ck", type=float, required=True)
     pc.add_argument("--tap", type=int)
@@ -282,6 +313,8 @@ def main():
     if args.cmd == "clocks":
         print(reachable(50, 200))
         return 0
+    if args.cmd == "table":
+        return table()
     if args.cmd == "case":
         b = Board()
         if b.rd_stable("ID") != APPLET_ID:
