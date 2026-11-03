@@ -152,12 +152,13 @@ class _Engine(Elaboratable):
         m.submodules.core = ResetInserter(core_rst)(core)
         pf_clear = Signal()
         m.submodules.prefetch = pf = ResetInserter(pf_clear)(
-            SyncFIFOBuffered(width=16, depth=8))
+            SyncFIFOBuffered(width=18, depth=8))
 
         # ---- op descriptor and progress
         op_live, op_cmd = Signal(), Signal()
         d_op, d_test, lat, hang = Signal(4), Signal(2), Signal(5, init=WAIT_DEFAULT), Signal()
         d_w0, d_nw, d_a0, d_b1 = Signal(22), Signal(23), Signal(), Signal()
+        d_last = Signal(23)                          # d_nw - 1, registered
         d_q0, d_odd, d_ramp, d_seed = Signal(11), Signal(), Signal(8), Signal(16)
         wi, left, cur = Signal(23), Signal(23), Signal(22)
         both_phase, reg_phase = Signal(), Signal()
@@ -182,21 +183,18 @@ class _Engine(Elaboratable):
         started = Signal()
         m.d.comb += [core.n.eq(n_x), core.write.eq(x_write), core.reg.eq(x_reg),
                      core.addr.eq(x_addr), core.wait.eq(lat)]
-        widx, wcur = Signal(23), Signal(22)
-        m.d.comb += [widx.eq(x_wi0 + xi), wcur.eq(d_w0 + widx)]
-        mask_a, mask_b = Signal(), Signal()
-        m.d.comb += [mask_a.eq(x_cmd & (widx == 0) & d_a0),
-                     mask_b.eq(x_cmd & (widx == d_nw - 1) & d_b1)]
 
         # ---- stream ring
         s_wptr, s_rptr = Signal(22), Signal(22)
         m.d.comb += self.s_level.eq((s_wptr - s_rptr) & self.s_mask)
         with m.If(~self.stream_on):
             s += [s_wptr.eq(0), s_rptr.eq(0)]
-        stream_w_ok = (self.stream_on & (self.sin_level >= STREAM_BURST // 2)
-                       & (self.s_level + STREAM_BURST <= self.s_mask))
-        stream_r_ok = (self.stream_on & (self.s_level >= STREAM_BURST)
-                       & (self.sout_level + STREAM_BURST // 2 <= STREAM_FIFO))
+        # registered: a cycle stale is harmless (pointers move at a transaction's start)
+        stream_w_ok, stream_r_ok = Signal(), Signal()
+        s += [stream_w_ok.eq(self.stream_on & (self.sin_level >= STREAM_BURST // 2)
+                             & (self.s_level + STREAM_BURST <= self.s_mask)),
+              stream_r_ok.eq(self.stream_on & (self.s_level >= STREAM_BURST)
+                             & (self.sout_level + STREAM_BURST // 2 <= STREAM_FIFO))]
         other_ok = pair_pending | stream_w_ok | stream_r_ok
 
         # ---- window reader -> prefetch (COPY_OUT source)
@@ -211,39 +209,44 @@ class _Engine(Elaboratable):
         m.d.comb += rd_issue.eq(rd_active & (rd_reads != 0) & (pf.level + rd_valid < 6))
         with m.If(rd_issue):
             s += [rd_q.eq(rd_q + 1), rd_reads.eq(rd_reads - 1)]
+        re_wi = Signal(23)                           # index of the next word emitted
         with m.If(rd_valid):
             s += [rd_prev.eq(win_word), rd_first.eq(0)]
             with m.If(~(d_odd & rd_first)):
+                s += re_wi.eq(re_wi + 1)
                 m.d.comb += [pf.w_en.eq(1),
-                             pf.w_data.eq(Mux(d_odd, Cat(win_word[8:16], rd_prev[0:8]),
-                                              win_word))]
+                             pf.w_data.eq(Cat(Mux(d_odd, Cat(win_word[8:16], rd_prev[0:8]),
+                                                  win_word),
+                                              (re_wi == d_last) & d_b1, (re_wi == 0) & d_a0))]
 
-        # ---- sources
+        # ---- generator: one word per cycle into the prefetch, from registers only
+        g_active, g_w, g_wi, g_left, g_ramp = Signal(), Signal(22), Signal(23), Signal(23), Signal(8)
         fv = o["fill_value"]
-        const_word = Mux(wcur[0], Cat(fv[24:32], fv[16:24]), Cat(fv[8:16], fv[0:8]))
-        ramp_a = Signal(8)
-        m.d.comb += ramp_a.eq(d_ramp + (widx << 1))
-        pat_word = Signal(16)
-        m.d.comb += pat_word.eq(pattern(wcur) ^ d_seed)
+        const_word = Mux(g_w[0], Cat(fv[24:32], fv[16:24]), Cat(fv[8:16], fv[0:8]))
         gen = Mux((d_op == OP_FILL) & (o["fill_mode"] == FILL_CONST), const_word,
                   Mux((d_op == OP_FILL) & (o["fill_mode"] == FILL_RAMP),
-                      Cat((ramp_a + 1)[0:8], ramp_a), pat_word))
+                      Cat((g_ramp + 1)[0:8], g_ramp), pattern(g_w) ^ d_seed))
+        with m.If(g_active & (g_left != 0) & (pf.level < 6)):
+            m.d.comb += [pf.w_en.eq(1),
+                         pf.w_data.eq(Cat(gen, (g_wi == d_last) & d_b1, (g_wi == 0) & d_a0))]
+            s += [g_w.eq(g_w + 1), g_wi.eq(g_wi + 1), g_left.eq(g_left - 1),
+                  g_ramp.eq(g_ramp + 2)]
+
         s_half = Signal()
         pd = Signal(32)                  # pair payload, latched when served
         src = Signal(16)
         with m.Switch(x_src):
-            with m.Case(SRC_WIN):
-                m.d.comb += src.eq(pf.r_data)
-            with m.Case(SRC_GEN):
-                m.d.comb += src.eq(Mux(x_reg, o["reg_wdata"], gen))
+            with m.Case(SRC_WIN, SRC_GEN):
+                m.d.comb += src.eq(Mux(x_reg, o["reg_wdata"], pf.r_data[0:16]))
             with m.Case(SRC_STREAM):
                 m.d.comb += src.eq(Mux(s_half, self.sin_data[16:32], self.sin_data[0:16]))
             with m.Case(SRC_PAIR):
                 m.d.comb += src.eq(Mux(xi[0], _swap(pd[16:32]), _swap(pd[0:16])))
-        m.d.comb += [core.wdata.eq(src), core.wmask.eq(Cat(mask_b, mask_a))]
+        from_pf = x_cmd & ~x_reg & ((x_src == SRC_WIN) | (x_src == SRC_GEN))
+        m.d.comb += [core.wdata.eq(src), core.wmask.eq(Mux(from_pf, pf.r_data[16:18], 0))]
         with m.If(core.wready):
             s += xi.eq(xi + 1)
-            with m.If(x_src == SRC_WIN):
+            with m.If(from_pf):
                 m.d.comb += pf.r_en.eq(1)
                 with m.If(~pf.r_rdy):
                     s += self.underflow.eq(1)
@@ -251,11 +254,13 @@ class _Engine(Elaboratable):
                 s += s_half.eq(~s_half)
                 m.d.comb += self.sin_en.eq(s_half)
 
-        # ---- sinks
+        # ---- sinks. Window writer and checker run from registers: stage A latches the
+        # word with its address/masks/want, stage B writes or compares, stage C counts.
         got = core.rdata
-        want = Signal(16)
-        m.d.comb += want.eq(pat_word ^ Mux(d_op == OP_CALIBRATE, 0, o["xor"]))
-        cmp_mask = Cat(Mux(mask_b, 0, 0xFF), Mux(mask_a, 0, 0xFF))
+        c_w, c_wi, c_q = Signal(22), Signal(23), Signal(11)
+        a_v, a_snk, a_got, a_want = Signal(), Signal(2), Signal(16), Signal(16)
+        a_w, a_ma, a_mb, a_q, a_first = Signal(22), Signal(), Signal(), Signal(11), Signal()
+        b_v, b_diff, b_got, b_want, b_w = Signal(), Signal(16), Signal(16), Signal(16), Signal(22)
         prev_b, prev_b_ok = Signal(8), Signal()
         so_lo, so_half = Signal(16), Signal()
         flush_now = Signal()
@@ -268,26 +273,18 @@ class _Engine(Elaboratable):
                          self.win_we.eq(Mux(word_q[0], Cat(Const(0, 2), en_a, en_b),
                                       Cat(en_a, en_b, Const(0, 2))))]
 
+        s += [a_v.eq(0), b_v.eq(0)]
         with m.If(core.rvalid):
             s += xi.eq(xi + 1)
             with m.Switch(x_snk):
-                with m.Case(SNK_WIN):
-                    with m.If(d_odd):
-                        win_write((d_q0 + widx)[0:11], prev_b, got[8:16],
-                                  prev_b_ok & (widx != 0), ~mask_a)
-                        s += [prev_b.eq(got[0:8]), prev_b_ok.eq(~mask_b)]
-                    with m.Else():
-                        win_write((d_q0 + widx)[0:11], got[8:16], got[0:8], ~mask_a, ~mask_b)
-                with m.Case(SNK_CHECK):
-                    # No FIFO before the checker: the core's `done` follows its last
-                    # rvalid (TAIL waits for every word), so counts are final at done.
-                    diff = Signal(16)
-                    m.d.comb += diff.eq((got ^ want) & cmp_mask)
-                    s += c["checked"].eq(c["checked"] + 1)
-                    with m.If(diff != 0):
-                        s += [c["errs"].eq(c["errs"] + 1), c_bits.eq(c_bits | diff)]
-                        with m.If(c["bad_index"] == 0xFFFFFFFF):
-                            s += [c["bad_index"].eq(wcur), c["bad_got_want"].eq(Cat(want, got))]
+                with m.Case(SNK_WIN, SNK_CHECK):
+                    s += [a_v.eq(1), a_snk.eq(x_snk), a_got.eq(got), a_w.eq(c_w), a_q.eq(c_q),
+                          a_want.eq(pattern(c_w) ^ d_seed
+                                    ^ Mux(d_op == OP_CALIBRATE, 0, o["xor"])),
+                          a_ma.eq(x_cmd & (c_wi == 0) & d_a0),
+                          a_mb.eq(x_cmd & (c_wi == d_last) & d_b1),
+                          a_first.eq(c_wi == 0),
+                          c_w.eq(c_w + 1), c_wi.eq(c_wi + 1), c_q.eq(c_q + 1)]
                 with m.Case(SNK_STREAM):
                     s += so_half.eq(~so_half)
                     with m.If(~so_half):
@@ -296,6 +293,22 @@ class _Engine(Elaboratable):
                         m.d.comb += [self.sout_en.eq(1), self.sout_data.eq(Cat(so_lo, got))]
                 with m.Case(SNK_REG):
                     s += self.r_reg.eq(got)
+        with m.If(a_v & (a_snk == SNK_WIN)):
+            with m.If(d_odd):
+                # A -> B position of word q; the previous word's B -> A position of q
+                win_write(a_q, prev_b, a_got[8:16], prev_b_ok & ~a_first, ~a_ma)
+                s += [prev_b.eq(a_got[0:8]), prev_b_ok.eq(~a_mb)]
+            with m.Else():
+                win_write(a_q, a_got[8:16], a_got[0:8], ~a_ma, ~a_mb)
+        with m.If(a_v & (a_snk == SNK_CHECK)):
+            s += [b_v.eq(1), b_got.eq(a_got), b_want.eq(a_want), b_w.eq(a_w),
+                  b_diff.eq((a_got ^ a_want) & Cat(Mux(a_mb, 0, 0xFF), Mux(a_ma, 0, 0xFF)))]
+        with m.If(b_v):
+            s += c["checked"].eq(c["checked"] + 1)
+            with m.If(b_diff != 0):
+                s += [c["errs"].eq(c["errs"] + 1), c_bits.eq(c_bits | b_diff)]
+                with m.If(c["bad_index"] == 0xFFFFFFFF):
+                    s += [c["bad_index"].eq(b_w), c["bad_got_want"].eq(Cat(b_want, b_got))]
         with m.If(flush_now):
             win_write((d_q0 + d_nw)[0:11], prev_b, Const(0, 8), prev_b_ok, 0)
 
@@ -307,8 +320,13 @@ class _Engine(Elaboratable):
 
         # ---- helpers
         def load_words(w0, nw, a0, b1):
-            s.__iadd__([d_w0.eq(w0), d_nw.eq(nw), d_a0.eq(a0), d_b1.eq(b1),
-                        wi.eq(0), left.eq(nw), cur.eq(w0)])
+            s.__iadd__([d_w0.eq(w0), d_nw.eq(nw), d_last.eq(nw - 1), d_a0.eq(a0),
+                        d_b1.eq(b1), wi.eq(0), left.eq(nw), cur.eq(w0)])
+
+        def start_generator(w0, nw, ramp):
+            s.__iadd__([g_active.eq(1), g_w.eq(w0), g_wi.eq(0), g_left.eq(nw),
+                        g_ramp.eq(ramp)])
+            m.d.comb.__iadd__([pf_clear.eq(1)])
 
         def clear_counters():
             s.__iadd__([c[k].eq(0) for k in c] + [c["bad_index"].eq(0xFFFFFFFF),
@@ -319,7 +337,7 @@ class _Engine(Elaboratable):
         def complete(code):
             s.__iadd__([self.r_code.eq(code), self.r_op.eq(d_op), self.r_cmd.eq(op_cmd),
                         self.r_bits.eq(c_bits), res_out.eq(1), op_live.eq(0),
-                        rd_active.eq(0)] + [self.r[k].eq(c[k]) for k in c])
+                        rd_active.eq(0), g_active.eq(0)] + [self.r[k].eq(c[k]) for k in c])
 
         with m.If(res_out):
             s += res_out.eq(0)
@@ -328,7 +346,8 @@ class _Engine(Elaboratable):
         def start_txn(src_, snk, write, reg, addr, n, is_cmd, wi0):
             s.__iadd__([x_src.eq(src_), x_snk.eq(snk), x_write.eq(write), x_reg.eq(reg),
                         x_addr.eq(addr), n_x.eq(n), x_cmd.eq(is_cmd), x_wi0.eq(wi0),
-                        xi.eq(0), wd_cnt.eq(0), started.eq(0)])
+                        xi.eq(0), wd_cnt.eq(0), started.eq(0),
+                        c_w.eq(addr), c_wi.eq(wi0), c_q.eq(d_q0 + wi0)])
 
         def serve_other():
             with m.If(pair_pending):
@@ -388,11 +407,14 @@ class _Engine(Elaboratable):
                           d_ramp.eq(o["fill_value"][0:8] - o["hr"][0]), d_seed.eq(o["seed"]),
                           d_q0.eq(e[1:12]), d_odd.eq(e[0]), rd_q.eq(e[1:12]),
                           rd_reads.eq(nw + e[0]), rd_first.eq(1),
-                          rd_active.eq(o["op"] == OP_COPY_OUT), prev_b_ok.eq(0),
-                          cal_phase.eq(0), reg_phase.eq(0)]
+                          rd_active.eq(o["op"] == OP_COPY_OUT), prev_b_ok.eq(0), re_wi.eq(0),
+                          cal_phase.eq(0), reg_phase.eq(0), g_active.eq(0)]
                     m.d.comb += pf_clear.eq(1)
                     clear_counters()
                     load_words(w0, nw, o["hr"][0], ~last[0])
+                    with m.If((o["op"] == OP_FILL)
+                              | ((o["op"] == OP_TEST) & o["test_mode"][0])):
+                        start_generator(w0, nw, o["fill_value"][0:8] - o["hr"][0])
                     m.next = "OP"
                 with m.Elif(other_ok):
                     serve_other()
@@ -453,6 +475,7 @@ class _Engine(Elaboratable):
                                       self.cal_map.eq(0), self.cal_valid.eq(0),
                                       d_seed.eq(CAL_SEED), cal_phase.eq(1)]
                                 load_words(self.cal_base, self.cal_words, 0, 0)
+                                start_generator(self.cal_base, self.cal_words, 0)
                             with m.Case(1):          # write the region
                                 with m.If(left == 0):
                                     s += cal_phase.eq(2)
@@ -531,11 +554,16 @@ class _Engine(Elaboratable):
                         with m.Else():
                             s += [left.eq(left - n_x), wi.eq(wi + n_x), cur.eq(cur + n_x),
                                   both_phase.eq(0)]
-                    m.next = "PICK"
+                    m.next = "DRAIN"
                 with m.Elif((wd_cnt != 0) & (wd_cnt >= wd_lim)):
                     s += self.r_state.eq(Cat(Const(3, 4), core.fsm_state, x_src, x_snk,
                                              x_cmd, x_write))
                     m.next = "WDOG"
+
+            with m.State("DRAIN"):
+                # the window writer / checker stages finish before anything reads them
+                with m.If(~a_v & ~b_v):
+                    m.next = "PICK"
 
             with m.State("DELAY_LOAD"):
                 m.d.comb += [state.eq(4), self.delay_load.eq(1)]
