@@ -138,8 +138,14 @@ def takes_soak(name):
 def failure_report(out):
     """Every FAIL line in full, per-group summary lines, then the last 12 lines (#592)."""
     lines = out.strip().splitlines()
-    keep = [l for l in lines if RESULT.match(l) and l.lstrip().startswith("FAIL")
-            or re.search(r"\bprofile \w+, \d+ cases\b|\d+ checks?\b", l)]
+    keep = []
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith("FAIL"):
+            keep.append(l)
+            if i + 1 < len(lines) and not RESULT.match(lines[i + 1]):
+                keep.append(lines[i + 1])      # the message sits on the next line
+        elif re.search(r"\bprofile \w+, \d+ cases\b|\d+ checks?\b", l):
+            keep.append(l)
     return keep + ["--- last 12 lines ---"] + lines[-12:]
 
 
