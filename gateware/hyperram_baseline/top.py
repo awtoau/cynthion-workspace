@@ -288,11 +288,12 @@ class _PLL(Elaboratable):
             raise ValueError(f"no PLL configuration gives {mhz} MHz; reachable near it: "
                              f"{reachable(mhz - 10, mhz + 10)}")
         self.clki_div, self.fb_div, self.div = solved
+        self.locked = Signal(name=f"lock_{domain}")   # EHXPLLL LOCK, for a reader that wants it
 
     def elaborate(self, platform):
         m = Module()
         m.domains += ClockDomain(self.domain)
-        clk, locked = Signal(name=f"clk_{self.domain}"), Signal(name=f"lock_{self.domain}")
+        clk, locked = Signal(name=f"clk_{self.domain}"), self.locked
         extra = {}
         if self.d90:
             m.domains += ClockDomain(self.d90)
