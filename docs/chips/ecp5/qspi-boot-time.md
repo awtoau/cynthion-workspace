@@ -62,7 +62,7 @@ a continuum. Second — and usefully — **62.0 MHz is both the top of ecppack's
 list and the top of Lattice's MCLK frequency table** (FPGA-TN-02039). The tool
 will not let you request an out-of-spec configuration clock, so the
 "out of spec if it appears to work" hazard noted for *user-mode* flash reads
-(see [`../chips/w25q32-config-flash.md`](../w25q32-config-flash.md), where 80 MHz worked but was
+(see [`../flash-lessons.md`](../flash-lessons.md), where 144 MHz worked but was
 out of spec) does not arise for *configuration*.
 
 `--freq` writes one field at bitstream offset `0x38`, inside control register 0,

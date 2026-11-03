@@ -98,7 +98,7 @@ able to speak first; it runs at 230400 and has its own analysis in
 host.** One response-requiring vendor transfer costs **3.00 ms** measured, and
 that is what paces `apollo flash-program`: 58,940 bytes took 3.33 s of which the
 flash itself needed ≈0.53 s. TCK does not appear in that arithmetic at all —
-see [`w25q32-config-flash.md`](w25q32-config-flash.md) §4.
+see [`w25q32-config-flash.md`](w25q32-config-flash.md#paths-to-the-flash).
 
 ### 3. Measured
 

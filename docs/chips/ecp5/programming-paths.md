@@ -72,7 +72,7 @@ from it — see [staging](#5-staging-into-hyperram).
   `tmp/logs/dev.log` 2026-08-06T22:21:34 and 2026-08-07T11:04:53+10:00.
 * Of that, **≈0.53 s is the W25Q32JV** and the rest is USB round trips at
   3.00 ms each. The arithmetic, and what would close it, is in
-  [`../w25q32-config-flash.md`](../w25q32-config-flash.md) §Performance — do
+  [`../w25q32-config-flash.md`](../w25q32-config-flash.md#paths-to-the-flash) — do
   not re-derive it here. [#100](https://github.com/awtoau/cynthion-workspace/issues/100).
 * Leaves the FPGA unconfigured. [`scripts/soc_run.py`](../../../scripts/soc_run.py) follows every flash write
   with a full `apollo configure`.
@@ -212,7 +212,7 @@ never reach the part underneath it.
 * It also bounds the read side — no `ODDRX1F` at that site, so SCK ≤ the fabric
   clock of the domain that generates it, never 2×. The full argument, and what
   a board revision would buy, is
-  [`../w25q32-config-flash.md`](../w25q32-config-flash.md) §2.
+  [`../w25q32-config-flash.md`](../w25q32-config-flash.md#usrmclk-sck).
 * [#234](https://github.com/awtoau/cynthion-workspace/issues/234) is the issue: preload the next bitstream and switch, instead of a full
   configure every time.
 

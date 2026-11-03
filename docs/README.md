@@ -105,8 +105,8 @@ in its §13 got there in the first place.
 * [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) — USB3343 ×3 — the ULPI PHYs
 * **[`chips/bus-speed-audit.md`](chips/bus-speed-audit.md) — every interface: what the part supports, what this board allows, what we configure**
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
-* [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
-* [`chips/hyperram/`](chips/hyperram/README.md) — Winbond W956A8MBYA — the HyperRAM: part facts, #581 baseline, SoC peripheral (#588)
+* [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32JVSSIQ — the configuration flash; lessons from the old flash work: [`chips/flash-lessons.md`](chips/flash-lessons.md)
+* [`chips/hyperram/`](chips/hyperram/README.md) — Winbond W956A8MBYA — the HyperRAM: part facts, #581 baseline, SoC peripheral (#588), lessons from the old stack
 
 ### The ECP5, beyond the part itself
 

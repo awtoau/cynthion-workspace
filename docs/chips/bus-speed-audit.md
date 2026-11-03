@@ -134,7 +134,7 @@ further: only five resources in
 carry `SLEWRATE="FAST"` (the three ULPI PHYs, the HyperRAM, the mezzanine
 header). The QSPI flash pins do **not**, and the datasheet gives no figure at all
 for LVCMOS33 at slow slew — so the 144 MHz SCK measured in
-[`w25q32-config-flash.md`](w25q32-config-flash.md) has no published number to be
+[`flash-lessons.md`](flash-lessons.md) has no published number to be
 inside or outside of.
 
 Fuller treatment in [`ecp5/lfe5u-12f.md`](ecp5/lfe5u-12f.md) §2.
