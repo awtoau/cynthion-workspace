@@ -22,6 +22,7 @@
 - Expected = spec-legal `kinds` set, optional length/data/info; `pin` = exact LUNA-model behaviour (sim profile only).
 - Result kinds (driver level, what `usb <port> ...` prints): ack, nak (retry window spent), stall, timeout (handshake 4), crc (5), overflow (6), dropped, hang, noreset.
 - Profiles: `model` (HS), `model_fs`, `aoa_phone` (pre-AOA 18d1:4ee2), `generic` (any device: structure only).
+- `generic` (Dan, #572): a `ctrl` step that may STALL also passes on NAK-until-limit; the case ends there and the bus is reset before the next (the Pixel's EP0 stays wedged until a reset). `nak_is_refusal` in the cases file.
 
 ## Board shell verbs used
 - Existing: `role`, `reset`, `setup`, `in`, `out`, `addr`, `aoa`, `desc`.

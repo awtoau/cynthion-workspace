@@ -154,6 +154,13 @@ def verify(exp, res, prof):
     return None
 
 
+def nak_is_refusal(step, res, prof):
+    """`generic` only (Dan, #572): a control request that may STALL may also NAK until the
+    limit; the case ends there as a pass and the bus is reset before the next one."""
+    return (prof.name == "generic" and step.op == "ctrl" and step.exp is not None
+            and "stall" in step.exp.kinds and res.kind == "nak")
+
+
 def sp(bm, req, val=0, idx=0, length=0):
     return bytes([bm, req, val & 255, val >> 8, idx & 255, idx >> 8, length & 255, length >> 8])
 
@@ -621,6 +628,9 @@ async def run_case(backend, case, prof, emit):
             res = await backend.op(step.op, **step.args)
             if step.exp is None:
                 continue
+            if nak_is_refusal(step, res, prof):
+                backend.invalidate()        # EP0 stays wedged until a bus reset (#572)
+                return "PASS", f"step {n}: NAK until limit, accepted as a refusal on {prof.name}; bus reset next"
             problem = verify(step.exp, res, prof)
             if problem:
                 trail = ""
@@ -885,6 +895,15 @@ def selftest():
     expect("bulk_in", (link.sent[-1], r.data), ("usb target_a in 1 64", b"\x01\x02"))
     r = loop.run_until_complete(b.op("link"))
     expect("link", r.info, {"connected": True, "speed": "HS", "reset_done": True, "ls": 1})
+    unhandled = Case("t", "t", [S("ctrl", E("stall"), bm=0xC0, req=1, val=0, idx=0, len=2)], needs=NONE)
+    for name, reply, want in (("generic", "timeout: control data in limit 500000 us elapsed 500100 us",
+                               ("PASS", NONE)), ("model", "timeout: control data in limit 1 us elapsed 2 us",
+                                                 ("FAIL", None))):
+        link = FakeLink({"ctrl": reply})
+        b = BoardBackend(link, "target_a", get_profile(name), print)
+        b.level = CONFIGURED
+        status, _ = loop.run_until_complete(run_case(b, unhandled, get_profile(name), print))
+        expect(f"NAK refusal on {name}", (status, b.level if status == "PASS" else None), want)
     emit = print
     for line in bad:
         emit("FAIL " + line)
