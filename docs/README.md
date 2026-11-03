@@ -119,6 +119,7 @@ in its §13 got there in the first place.
 * [`chips/ecp5/peripheral-clock-audit.md`](chips/ecp5/peripheral-clock-audit.md) — every peripheral against the new clock topology, now that `sync` and `usb` are not the same
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — RV32 Equivalence and Variation Report (2026-07-22)
 * [`usb-performance.md`](usb-performance.md) — LUNA USB gateware: measured performance
+* [`ulpi-bridge.md`](ulpi-bridge.md) — 60 MHz ULPI byte stream to/from a 120 MHz word stream: async vs 2:1 crossing, depth
 * [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) — Where the ECP5 findings live
 
 ### Apollo, SAMD11 firmware
