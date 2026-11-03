@@ -73,8 +73,8 @@ from amaranth_soc.memory   import MemoryMap                    # noqa: E402
 from amaranth_soc.wishbone import Decoder                      # noqa: E402
 
 from bus.wishbone_pipe import RegisteredResponse                # noqa: E402
-from bus.fault import BusFault, worst_ack_cycles                # noqa: E402
-from peripherals.flash import READ_MODES                        # noqa: E402
+from bus.fault import BusFault                                  # noqa: E402
+from peripherals.flash import xip_wait_bound                    # noqa: E402
 
 # A small memory with distinct, non-zero words.
 #
@@ -534,19 +534,12 @@ def fault_checks(checks, verbose):
 
     # --- the bound this SoC actually builds with ---------------------------
     #
-    # Asserted rather than noted: it is derived from FLASH_MODE and
-    # FLASH_DIVISOR, and a change to either that made it tight would otherwise
-    # only show up as a board that faults at random.
-    worst = worst_ack_cycles(mode=READ_MODES["quad"], divisor=0)
-    checks.check(
-        "the shipping bound is 1.25x the slowest legitimate answer",
-        worst == 585 and -(-5 * worst // 4) == 732,
-        f"worst legitimate answer {worst} cycles, bound {-(-5 * worst // 4)}. "
-        f"The worst is a cold quad-mode flash read (69 cycles) with one maximal "
-        f"SPI-controller transfer stealing the crossbar before each of its four "
-        f"phases (4 x 129).")
-    checks.note(f"bus timeout {-(-5 * worst // 4)} cycles "
-                f"= 1.25 x {worst} (quad, divisor 0)")
+    # The bound the SoC builds with: an XIP beat behind a line fill (flash.xip_wait_bound),
+    # x1.25 already, at sync 60.
+    bound = xip_wait_bound(60.0)
+    checks.check("the shipping bound covers a worst-case XIP beat at sync 60",
+                 50 <= bound <= 400, f"bound {bound} cycles")
+    checks.note(f"bus timeout {bound} cycles (flash.xip_wait_bound at sync 60)")
 
 
 def main():

@@ -53,16 +53,15 @@ LEDS = (
 # Derived, so the resource and the table cannot disagree about a ball.
 LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 
-# Config-flash pin electricals, stated not inherited. Values are what nextpnr
-# applied when they were omitted (read from top.config), so behaviour is
-# unchanged. Sweep axes: CYNTHION_FLASH_DRIVE/_SLEWRATE. #459.
-FLASH_DRIVE    = "8"      # unset in .config; the pad bits decode as 8 mA
-FLASH_SLEWRATE = "SLOW"   # unset = SLOW
+# Config-flash pin electricals: the #590 baseline's (16 mA FAST, clean at SCK 190; 8 mA SLOW
+# also passed there, eye 8 either way). Design choice, not a board fact. #459, #593.
+FLASH_DRIVE    = "16"
+FLASH_SLEWRATE = "FAST"
 FLASH_PULLMODE = "NONE"
 
 
-def flash_attrs(drive=FLASH_DRIVE, slewrate=FLASH_SLEWRATE):
-    return Attrs(IO_TYPE="LVCMOS33", DRIVE=drive, SLEWRATE=slewrate,
+def flash_attrs():
+    return Attrs(IO_TYPE="LVCMOS33", DRIVE=FLASH_DRIVE, SLEWRATE=FLASH_SLEWRATE,
                  PULLMODE=FLASH_PULLMODE)
 
 
@@ -123,12 +122,14 @@ class CynthionPlatformRev1D4(CynthionPlatform):
             flash_attrs()
         ),
 
-        # Connection to our SPI flash but using quad mode (QSPI)
+        # The flash in quad mode: one output enable per line (the engine drives IO2/IO3
+        # high as /WP and /HOLD while IO1 is the part's output). SCK is MCLK (N9), reached
+        # only through USRMCLK (gateware/soc/peripherals/flash.py).
         Resource("qspi_flash", 0,
-            # SCK is on pin 9; but doesn't have a traditional I/O buffer.
-            # Instead, we'll need to drive a clock into a USRMCLK instance.
-            # See interfaces/flash.py for more information.
-            Subsignal("dq",  Pins("T8 T7 M7 N7",  dir="io")),
+            Subsignal("io0", Pins("T8", dir="io")),
+            Subsignal("io1", Pins("T7", dir="io")),
+            Subsignal("io2", Pins("M7", dir="io")),
+            Subsignal("io3", Pins("N7", dir="io")),
             Subsignal("cs",  PinsN("N8", dir="o")),
             flash_attrs()
         ),
@@ -261,9 +262,5 @@ class CynthionPlatformRev1D4(CynthionPlatform):
 
     apollo_port_sharing = {'control_phy': 'advertising'}
 
-    def __init__(self, *, flash_drive=FLASH_DRIVE, flash_slewrate=FLASH_SLEWRATE):
-        attrs = flash_attrs(flash_drive, flash_slewrate)
-        self.resources = [
-            Resource(r.name, r.number, *r.ios, attrs) if r.name in ("spi_flash", "qspi_flash") else r
-            for r in type(self).resources]
+    def __init__(self):
         super().__init__()

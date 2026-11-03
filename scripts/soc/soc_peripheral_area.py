@@ -117,13 +117,9 @@ def _peripherals():
                                   granularity=8,
                                   features={"cti", "bte", "err"})
 
-    def flash_probe():
-        from peripherals.flash import FlashPinProbe
-        return FlashPinProbe()
-
-    def flash_ila():
-        from peripherals.flash import FlashILA
-        return FlashILA(sample_depth=1024)
+    def flash():
+        from peripherals.flash import Flash
+        return Flash(sim=True)
 
     def hyperram():
         from peripherals.hyperram import HyperRAM
@@ -144,8 +140,7 @@ def _peripherals():
         ("stream_buffer_sync", stream_buffer_sync, "depth 64"),
         ("stream_buffer_async", stream_buffer_async, "depth 16, CDC"),
         ("wishbone_pipe",      wishbone_pipe,      ""),
-        ("flash_probe",        flash_probe,        "instrumentation"),
-        ("flash_ila",          flash_ila,          "instrumentation, 1 DP16KD"),
+        ("flash",              flash,              "#593, no PLL/pads (sim build)"),
         ("hyperram",           hyperram,           "#588, no PLL/PHY (sim build)"),
     ]
 

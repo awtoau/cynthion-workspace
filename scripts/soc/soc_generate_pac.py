@@ -492,8 +492,8 @@ def cross_check(peripherals, emit):
         "SPIFLASH": soc_module.FLASH_BASE,
         "HYPERRAM": soc_module.HYPERRAM_BASE,
         "HYPERRAM_WINDOW": soc_module.HYPERRAM_WINDOW_BASE,
-        "SPI0": soc_module.FLASH_CSR_BASE,
-        "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
+        "FLASH": soc_module.FLASH_CSR_BASE,
+        "FLASH_BUF": soc_module.FLASH_BUF_BASE,
     }
 
     ok = True
@@ -657,7 +657,8 @@ def variant_constants():
     from clocks import SocClocks
     from peripherals.i2c_master import prescale_for
 
-    sync_hz = round(SocClocks(sync_mhz=soc_module.SYNC_MHZ).actual_sync_mhz * 1e6)
+    sync_hz = round(SocClocks(sync_mhz=soc_module.SYNC_MHZ,
+                                hr_mhz=soc_module.HYPERRAM_CK_MHZ).actual_sync_mhz * 1e6)
     return sync_hz, prescale_for(sync_hz, soc_module.I2C_SCL_HZ), soc_module.I2C_SCL_HZ
 
 
