@@ -3,7 +3,7 @@
 
 - Clocks: one EHXPLLL from the 60 MHz pin. CLKOP = `sck` (engine, pin registers),
   CLKOS = `cap` (read capture, runtime phase via PHASESTEP), CLKOS2 = +180 degrees, driven
-  to MCLK through USRMCLK (FPGA-TN-02039 6.1.2). One SCK per bitstream.
+  to MCLK through a DCCA gate and USRMCLK (FPGA-TN-02039 6.1.2). One SCK per bitstream.
 - Registers: LUNA's public JTAGRegisterInterface in `sync` (the 60 MHz pin), read by
   `apollo_fpga` over Apollo's JTAG (same pattern as gateware/hyperram_baseline/top.py).
 - Controls are static while an op runs; `go` crosses by PulseSynchronizer, results are read
@@ -143,18 +143,23 @@ class FlashBaselineTop(Elaboratable):
         # ---- flash pins, USRMCLK ---------------------------------------------------
         bus = platform.request("flash", 0)
         ios = [bus.io0, bus.io1, bus.io2, bus.io3]
-        pad_o, pad_oe, pad_i, pad_cs = Signal(4), Signal(4), Signal(4), Signal()
+        pad_o, pad_oe, pad_i, pad_cs, pad_ck_en = Signal(4), Signal(4), Signal(4), Signal(), Signal()
         for n, io in enumerate(ios):
             m.d.comb += [io.o.eq(pad_o[n]), io.oe.eq(pad_oe[n]), pad_i[n].eq(io.i)]
         m.d.comb += bus.cs.o.eq(pad_cs)
         ts = rw("TS")
-        m.submodules.usrmclk = Instance("USRMCLK", i_USRMCLKI=pll.clk_flash,
-                                        i_USRMCLKTS=ts[0])
+        # MCLK gate: CE changes on `sck` edges = CLKOS2 falling, i.e. while the gated clock
+        # is low, so no runt pulse.
+        clk_mclk = Signal()
+        m.submodules.mclk_gate = Instance("DCCA", i_CLKI=pll.clk_flash, i_CE=pad_ck_en,
+                                          o_CLKO=clk_mclk)
+        m.submodules.usrmclk = Instance("USRMCLK", i_USRMCLKI=clk_mclk, i_USRMCLKTS=ts[0])
 
         pins = FlashPins()
         tx = TxEngine(pins)
         eng = OpEngine(tx)
-        phy = FlashPHY(pins, pad_o=pad_o, pad_oe=pad_oe, pad_i=pad_i, pad_cs=pad_cs)
+        phy = FlashPHY(pins, pad_o=pad_o, pad_oe=pad_oe, pad_i=pad_i, pad_cs=pad_cs,
+                       pad_ck_en=pad_ck_en)
         # ABORT: a write that changes ABORT[0] resets the engine (a hung BUSY poll would
         # otherwise hold it for the rest of the load).
         abort = rw("ABORT")

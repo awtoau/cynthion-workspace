@@ -9,9 +9,9 @@ Lattice FPGA-TN-02039 / TN-02200 / TN-02035 only. No repo or upstream SPI code w
   (datasheet 9.8: inputs sampled on CLK rising).
 - Reads are captured in `cap` (same PLL, runtime phase) and moved back; `lat` delays the
   per-cycle sample token to match the round trip. Both are calibrated by the harness.
-- /CS edges come from `sync` edges = MCLK falling: setup and hold to MCLK rising are T/2 each
-  by construction (minus pad skew); the datasheet's 3 ns tSLCH/tCHSH sets a ceiling near
-  160 MHz.
+- MCLK is gated (`ck_en`, a DCCA in the top): /CS falls one cycle before the first MCLK
+  edge and rises one cycle after the last (SETUP/HOLD), so tSLCH/tCHSH (3 ns) get a full
+  period instead of T/2.
 - One transaction: CMD, ADDR (+ mode byte), DUMMY, DATA, TAIL with /CS low, then GAP.
 """
 
@@ -27,7 +27,7 @@ OP_RAW, OP_READ, OP_WLOOP = 1, 2, 3
 CHECK_NONE, CHECK_PATTERN, CHECK_BLANK = 0, 1, 2
 LAT_MAX = 15
 
-(P_IDLE, P_LOAD, P_CMD, P_ADDR, P_DUMMY, P_DATA, P_TAIL, P_GAP) = range(8)
+(P_IDLE, P_LOAD, P_CMD, P_ADDR, P_DUMMY, P_DATA, P_TAIL, P_GAP, P_SETUP, P_HOLD) = range(10)
 
 
 def desc(cmd, *, abits=0, aw=W1, dummy=0, dw=W1, read=False, poll=False, cmd_w4=False,
@@ -77,6 +77,7 @@ class FlashPins:
         self.cs = Signal()
         self.o = Signal(4)
         self.oe = Signal(4)
+        self.ck_en = Signal()    # MCLK runs this cycle
         # Sampled data, back in the engine domain: [0:4] at the `cap` rising edge,
         # [4:8] at the `cap` falling edge before it.
         self.i = Signal(8)
@@ -100,7 +101,7 @@ class TxEngine(Elaboratable):
         self.wnext = Signal()         # wbyte consumed this cycle
         self.rx_valid = Signal()
         self.rx_byte = Signal(8)
-        self.phase = Signal(3)
+        self.phase = Signal(4)
 
     def elaborate(self, platform):
         m = Module()
@@ -143,8 +144,7 @@ class TxEngine(Elaboratable):
         ]
 
         def enter_gap():
-            # GAP also outlasts the token line, so `done` follows the last received byte.
-            m.d.sync += [phase.eq(P_GAP), cyc.eq(Mux(csh > self.lat + 2, csh, self.lat + 2))]
+            m.d.sync += phase.eq(P_HOLD)
 
         def enter_tail():
             with m.If(read & (tail != 0)):
@@ -185,13 +185,17 @@ class TxEngine(Elaboratable):
                     m.d.sync += [d.eq(self.desc), a.eq(self.addr), left.eq(self.length),
                                  csh.eq(self.csh), stop.eq(0), phase.eq(P_LOAD)]
             with m.Case(P_LOAD):
+                m.d.sync += phase.eq(P_SETUP)
+            with m.Case(P_SETUP):
+                # /CS low, MCLK stopped: a full cycle of setup before the first edge.
+                m.d.comb += p.cs.eq(1)
                 with m.If(cmd_en):
                     m.d.sync += [phase.eq(P_CMD), sr.eq(cmd << 24), w.eq(Mux(cmd_w4, W4, W1)),
                                  cyc.eq(Mux(cmd_w4, 1, 7))]
                 with m.Else():
                     enter_addr()
             with m.Case(P_CMD, P_ADDR):
-                m.d.comb += [p.cs.eq(1), p.o.eq(out_o), p.oe.eq(out_oe)]
+                m.d.comb += [p.cs.eq(1), p.ck_en.eq(1), p.o.eq(out_o), p.oe.eq(out_oe)]
                 m.d.sync += [sr.eq(shifted(w)), cyc.eq(cyc - 1)]
                 with m.If(cyc == 0):
                     with m.If(phase == P_CMD):
@@ -199,12 +203,12 @@ class TxEngine(Elaboratable):
                     with m.Else():
                         enter_dummy()
             with m.Case(P_DUMMY):
-                m.d.comb += [p.cs.eq(1), p.o.eq(rd_o), p.oe.eq(rd_oe)]
+                m.d.comb += [p.cs.eq(1), p.ck_en.eq(1), p.o.eq(rd_o), p.oe.eq(rd_oe)]
                 m.d.sync += cyc.eq(cyc - 1)
                 with m.If(cyc == 0):
                     enter_data()
             with m.Case(P_DATA):
-                m.d.comb += p.cs.eq(1)
+                m.d.comb += [p.cs.eq(1), p.ck_en.eq(1)]
                 with m.If(read):
                     m.d.comb += [p.o.eq(rd_o), p.oe.eq(rd_oe), tok.eq(1)]
                 with m.Else():
@@ -218,10 +222,16 @@ class TxEngine(Elaboratable):
                     with m.Elif(~read):
                         load_wbyte()
             with m.Case(P_TAIL):
-                m.d.comb += [p.cs.eq(1), p.o.eq(rd_o), p.oe.eq(rd_oe)]
+                m.d.comb += [p.cs.eq(1), p.ck_en.eq(1), p.o.eq(rd_o), p.oe.eq(rd_oe)]
                 m.d.sync += cyc.eq(cyc - 1)
                 with m.If(cyc == 0):
                     enter_gap()
+            with m.Case(P_HOLD):
+                # /CS still low, MCLK stopped: a full cycle of hold after the last edge.
+                # GAP then also outlasts the token line, so `done` follows the last byte.
+                m.d.comb += p.cs.eq(1)
+                m.d.sync += [phase.eq(P_GAP),
+                             cyc.eq(Mux(csh > self.lat + 2, csh, self.lat + 2))]
             with m.Case(P_GAP):
                 m.d.sync += cyc.eq(cyc - 1)
                 with m.If(cyc == 0):
@@ -481,15 +491,17 @@ class FlashPHY(Elaboratable):
       that does not race the `sync` edge at the current capture phase.
     """
 
-    def __init__(self, pins, *, pad_o, pad_oe, pad_i, pad_cs):
+    def __init__(self, pins, *, pad_o, pad_oe, pad_i, pad_cs, pad_ck_en):
         self.pins = pins
         self.pad_o, self.pad_oe, self.pad_i, self.pad_cs = pad_o, pad_oe, pad_i, pad_cs
+        self.pad_ck_en = pad_ck_en
         self.xfer = Signal()
 
     def elaborate(self, platform):
         m = Module()
         p = self.pins
-        m.d.sync += [self.pad_cs.eq(p.cs), self.pad_o.eq(p.o), self.pad_oe.eq(p.oe)]
+        m.d.sync += [self.pad_cs.eq(p.cs), self.pad_o.eq(p.o), self.pad_oe.eq(p.oe),
+                     self.pad_ck_en.eq(p.ck_en)]
         q_c, q_f, q_fr, q_cn = Signal(4), Signal(4), Signal(4), Signal(8)
         m.d.cap += [q_c.eq(self.pad_i), q_fr.eq(q_f)]
         m.d.capn += [q_f.eq(self.pad_i), q_cn.eq(Cat(q_c, q_fr))]
