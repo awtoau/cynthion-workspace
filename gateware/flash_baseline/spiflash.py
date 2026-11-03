@@ -9,6 +9,9 @@ Lattice FPGA-TN-02039 / TN-02200 / TN-02035 only. No repo or upstream SPI code w
   (datasheet 9.8: inputs sampled on CLK rising).
 - Reads are captured in `cap` (same PLL, runtime phase) and moved back; `lat` delays the
   per-cycle sample token to match the round trip. Both are calibrated by the harness.
+- /CS edges come from `sync` edges = MCLK falling: setup and hold to MCLK rising are T/2 each
+  by construction (minus pad skew); the datasheet's 3 ns tSLCH/tCHSH sets a ceiling near
+  160 MHz.
 - One transaction: CMD, ADDR (+ mode byte), DUMMY, DATA, TAIL with /CS low, then GAP.
 """
 
@@ -36,7 +39,7 @@ def desc(cmd, *, abits=0, aw=W1, dummy=0, dw=W1, read=False, poll=False, cmd_w4=
 
 
 # Read modes the board wires (datasheet Instruction Set Tables 1/2, Figs 16-24).
-# abits 32 = address + mode byte M7-0 = Fxh (JV-IQ documents no continuous read mode).
+# abits 32 = address + mode byte M7-0 = Fxh: continuous read (M5-4 = 10, rev G) not used.
 READ_MODES = {
     "0Bh 1-1-1": desc(0x0B, abits=24, aw=W1, dummy=8, dw=W1, read=True, tail=1),
     "3Bh 1-1-2": desc(0x3B, abits=24, aw=W1, dummy=8, dw=W2, read=True, tail=1),

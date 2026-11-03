@@ -11,7 +11,7 @@
 """
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, DomainRenamer, Elaboratable,
-                      Instance, Module, ResetSignal, Signal)
+                      Instance, Module, ResetInserter, ResetSignal, Signal)
 from amaranth.lib.cdc import FFSynchronizer, PulseSynchronizer
 
 from spiflash import FlashPHY, FlashPins, OpEngine, TxEngine
@@ -20,7 +20,7 @@ APPLET_ID = 0x464C4231   # "FLB1"
 
 REG = dict(ID=1, GO=2, OP=3, DESC=4, MBYTE=5, ADDR=6, LENGTH=7, BURST=8, COUNT=9, STRIDE=10,
            CSH=11, LAT=12, XFER=13, XOR=14, SEED=15, CHECK=16, WDATA=17, PHASE_STEP=18,
-           BITMAP_IDX=19, TS=20, CHK_LO=21, CHK_HI=22,
+           BITMAP_IDX=19, TS=20, CHK_LO=21, CHK_HI=22, ABORT=23,
            STATUS=32, CK_KHZ=33, PLL_DIV=34, CK_COUNT=35, RUN_CYCLES=36, BYTES=37, TXS=38,
            CHECKED=39, ERRORS=40, BAD_INDEX=41, BAD_GOT_WANT=42, BAD_BITS=43, RESULT=44,
            BUSY_MIN=45, BUSY_MAX=46, BUSY_SUM=47, BUSY_N=48, STATE=49, PHASE_POS=50,
@@ -120,7 +120,16 @@ class FlashBaselineTop(Elaboratable):
         m.domains.sck = ClockDomain("sck")
         m.domains.cap = ClockDomain("cap", reset_less=True)
         m.domains.capn = ClockDomain("capn", clk_edge="neg", reset_less=True)
-        m.d.comb += [ClockSignal("sck").eq(pll.clk), ResetSignal("sck").eq(~pll.locked),
+        # LOCK is asynchronous to both domains: synchronised before it resets `sck`; a
+        # sticky `lock_lost` (STATUS[3]) records any drop after the first lock.
+        lock_sck, lock_sync, locked_once, lock_lost = Signal(), Signal(), Signal(), Signal()
+        m.submodules.lock_sck = FFSynchronizer(pll.locked, lock_sck, o_domain="sck")
+        m.submodules.lock_sync = FFSynchronizer(pll.locked, lock_sync, o_domain="sync")
+        with m.If(lock_sync):
+            m.d.sync += locked_once.eq(1)
+        with m.Elif(locked_once):
+            m.d.sync += lock_lost.eq(1)
+        m.d.comb += [ClockSignal("sck").eq(pll.clk), ResetSignal("sck").eq(~lock_sck),
                      ClockSignal("cap").eq(pll.clk_cap), ClockSignal("capn").eq(pll.clk_cap)]
 
         regs = JTAGRegisterInterface(default_read_value=0xDEADBEEF)
@@ -146,8 +155,15 @@ class FlashBaselineTop(Elaboratable):
         tx = TxEngine(pins)
         eng = OpEngine(tx)
         phy = FlashPHY(pins, pad_o=pad_o, pad_oe=pad_oe, pad_i=pad_i, pad_cs=pad_cs)
-        m.submodules.tx = DomainRenamer({"sync": "sck"})(tx)
-        m.submodules.eng = DomainRenamer({"sync": "sck"})(eng)
+        # ABORT: a write that changes ABORT[0] resets the engine (a hung BUSY poll would
+        # otherwise hold it for the rest of the load).
+        abort = rw("ABORT")
+        abort_prev = Signal()
+        m.d.sync += abort_prev.eq(abort[0])
+        m.submodules.abort_ps = abort_ps = PulseSynchronizer(i_domain="sync", o_domain="sck")
+        m.d.comb += abort_ps.i.eq(abort[0] != abort_prev)
+        m.submodules.tx = ResetInserter({"sck": abort_ps.o})(DomainRenamer({"sync": "sck"})(tx))
+        m.submodules.eng = ResetInserter({"sck": abort_ps.o})(DomainRenamer({"sync": "sck"})(eng))
         m.submodules.phy = DomainRenamer({"sync": "sck"})(phy)
 
         go = rw("GO")
@@ -184,21 +200,21 @@ class FlashBaselineTop(Elaboratable):
 
         # ---- PHASESTEP pulses: [15:0] count, applied on a write that changes [31] -------
         # Low 2 / high 2 cycles of 60 MHz = 33 ns each, above 4 VCO cycles (<= 10 ns).
+        # Registered: the PLL latches on the falling edge (TN-02200 18.4.1), so no glitch.
         pstep = rw("PHASE_STEP")
         p_prev = Signal()
         p_left = Signal(16)
         p_cnt = Signal(2)
         p_pos = Signal(32)
-        m.d.sync += p_prev.eq(pstep[31])
+        p_out = Signal(init=1)
+        m.d.comb += pll.phasestep.eq(p_out)
+        m.d.sync += [p_prev.eq(pstep[31]), p_out.eq(1)]
         with m.If(pstep[31] != p_prev):
             m.d.sync += [p_left.eq(pstep[:16]), p_cnt.eq(0)]
         with m.Elif(p_left != 0):
-            m.d.sync += p_cnt.eq(p_cnt + 1)
-            m.d.comb += pll.phasestep.eq(p_cnt[1])
+            m.d.sync += [p_cnt.eq(p_cnt + 1), p_out.eq(p_cnt[1])]
             with m.If(p_cnt == 3):
                 m.d.sync += [p_left.eq(p_left - 1), p_pos.eq(p_pos + 1)]
-        with m.Else():
-            m.d.comb += pll.phasestep.eq(1)
         regs.add_read_only_register(REG["PHASE_POS"], read=p_pos)
 
         # ---- CK meter: sck cycles over 2**CK_WINDOW_BITS cycles of the 60 MHz pin ----
@@ -214,7 +230,7 @@ class FlashBaselineTop(Elaboratable):
             m.d.sck += [ck_count.eq(sck_cnt), sck_cnt.eq(0)]
         regs.add_read_only_register(REG["CK_COUNT"], read=ck_count)
 
-        status = Cat(done, pll.locked, p_left != 0)
+        status = Cat(done, lock_sync, p_left != 0, lock_lost)
         regs.add_read_only_register(REG["ID"], read=APPLET_ID)
         regs.add_read_only_register(REG["STATUS"], read=status)
         regs.add_read_only_register(REG["CK_KHZ"], read=int(round(self.sck_mhz * 1000)))

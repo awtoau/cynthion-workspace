@@ -7,8 +7,9 @@
 
 - Model: W25Q32JV-IQ, datasheet rev G only: instruction tables 1/2, Figs 16-24 bit order,
   data out after CLK falling (tCLQV), QE=1 fixed, JEDEC EF 4016, WEL/BUSY, page wrap,
-  program clears bits only, erase sets 0xFF, commands executed on /CS rising, QPI (38h)
-  ignored (IQ part). BUSY lasts a scaled cycle count.
+  program clears bits only, erase sets 0xFF, commands executed on /CS rising. QPI is
+  not modelled: 38h is ignored as rev G (IQ) says, but the board part answers QPI (#590);
+  QPI is covered only by the board's seeded check. BUSY lasts a scaled cycle count.
 - Clocks: engine `sync` at phase 0, flash CLK at +180 degrees, `cap` at a swept phase.
 - Checks: ID/SR reads, erase + blank check, page program, every read mode, short bursts,
   measured BUSY vs the model, no bus contention, /CS high time, sector bitmap.
