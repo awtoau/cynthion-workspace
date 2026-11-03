@@ -123,7 +123,7 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 - `--background` (`ecppack.cpp:158-165`, `Bitstream.cpp:34,917-921`) keeps pins live for an external master doing partial reconfig over JTAG; FPGA-TN-02039 §6.2: Background mode supports only read commands.
 - Exits from user mode (FPGA-TN-02039 §5.5): PROGRAMN (input only), REFRESH on JTAG / slave SPI, power cycle. `BOOTADDR` fixed at pack time (`ecppack.cpp:167-194`).
 - Only route from fabric: soft SPI master writes flash, something external reboots; that is the existing `FlashBridge` / `flash-fast`.
-- FPGA-side transfer is not the cost: `gateware/probes/loader/bitstream_sink.py` (bulk OUT on TARGET-C, 110 MHz vs 60 MHz constraint, `1209:000e`) took 304726 B in 7.89 ms (38.6 MB/s) vs 2746 ms over the JTAG path.
+- FPGA-side transfer is not the cost: a bulk-OUT sink bitstream (TARGET-C, 110 MHz vs 60 MHz constraint, `1209:000e`) took 304726 B in 7.89 ms (38.6 MB/s) vs 2746 ms over the JTAG path.
 
 ### Early decomposition (304726 B image, stock-era firmware)
 - Apollo enumerates 12 Mbps full-speed, EP0 64 B (`CFG_TUD_ENDPOINT0_SIZE 64`); raw ceiling 1.5 MB/s. The 388 Mbps in #100 is the FPGA PHY on another port.

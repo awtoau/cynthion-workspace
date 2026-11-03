@@ -23,7 +23,7 @@ root. `generate(output=...)` copies it to the caller's path; `top.py` passes
 `tmp/awto_soc/build/<variant>/VexiiRiscv.v`, and that copy is what synthesis
 reads.
 
-`gateware/probes/cpu_matrix/soc-cpu/VexiiRiscv.v` is a checked-in copy that
+`gateware/soc/vexii/VexiiRiscv_memmap.v` is a checked-in copy that
 `scripts/soc/soc_generate_pac.py` uses for its metadata-only walk, so the memory map
 can be regenerated without sbt.
 

@@ -66,17 +66,6 @@ PRODUCTS = {
     "riscv_console":     (0x6180, "VexiiRiscv console",   "AUX"),
     "riscv_vex_console": (0x6186, "VexRiscv console",      "TARGET"),
     "riscv_bench":       (0x6187, "RISC-V benchmark",      "TARGET"),
-
-    # USB test gateware. usb_bulk, usb_oneway and usb_timing all claimed LUNA's 1d50:615b.
-    "usb_serial":        (0x6181, "USB serial terminal",  "AUX"),
-    "usb_bulk":          (0x6182, "USB bulk loopback",     "AUX"),
-    "usb_oneway":        (0x6188, "USB one-way sink",      "AUX"),
-    "usb_timing":        (0x6183, "USB timing",            "AUX"),
-
-    # Loader and LED bring-up. The two LED bitstreams shared 1209:0001.
-    "bitstream_sink":    (0x6184, "bitstream sink",       "TARGET"),
-    "led_patterns":      (0x6185, "LED patterns",         "AUX"),
-    "led_gateware":      (0x6189, "LED gateware",         "TARGET"),
 }
 
 

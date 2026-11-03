@@ -22,8 +22,7 @@ microframe. That matches the commonly cited `1000 × 8 × 512 × 13 ≈ 53 MB/s`
 
 ## The device is not the constraint
 
-Instrumented in gateware over **284,306 transactions** at 388 Mbps
-(`gateware/probes/usb_bulk/usb_timing.py`):
+Instrumented in gateware over **284,306 transactions** at 388 Mbps:
 
 | measurement | value | what it means |
 |---|---|---|
@@ -108,10 +107,6 @@ Recorded so they are not re-investigated:
 
 | path | purpose |
 |---|---|
-| `gateware/probes/usb_serial/usb_serial.py` | CDC-ACM device, host sees a tty |
-| `gateware/probes/usb_bulk/usb_bulk.py` | bulk loopback, with and without a FIFO |
-| `gateware/probes/usb_bulk/usb_oneway.py` | one direction at a time, selectable PHY |
-| `gateware/probes/usb_bulk/usb_timing.py` | per-transaction timing from inside the FPGA |
 | `scripts/usb_serial_speed.py` | CDC throughput, payload and bus columns |
 | `scripts/usb_oneway_speed.py` | one-way throughput, verification after timing |
 | `scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
