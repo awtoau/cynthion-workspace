@@ -182,7 +182,8 @@ controller driver that nobody has written; 12 Mbps costs nothing.** There is no 
 EHCI RTL anywhere (§4 below), so there is no third option.
 
 And for a first demonstration, neither is needed. **An initramfs needs no block
-device**: the kernel and rootfs come from the 4 MiB flash. USB host is the *second* demonstration.
+device**: the kernel and rootfs come from the 4 MiB flash or are staged over JTAG the
+way firmware already is. USB host is the *second* demonstration.
 
 Part II of this document is the full-speed route in detail — where it attaches, what
 the USB3343's 6-pin serial mode gives for free, and the M0–M5 ladder to first light.

@@ -4240,7 +4240,9 @@ Structurally this is the closest match to work we have already done, because the
   design at all.
 - **The transport is the real difference.** Upstream reaches the registers over a
   JTAG-tunnelled debug interface; we reach ours over the CPU's CSR bus, and we have a third
-  option — the sideband link — that upstream does not use for this.
+  option — the sideband link — that upstream does not use for this. We have
+  `gateware/soc/bus/jtag_stage.py` and a `soc_jtag_stage_sim`, so JTAG is not foreign here
+  either.
 
 The question this scenario really asks is not "can we port it" but **"do we want upstream's
 self-test, or is our board test suite already it?"** We have
@@ -4324,7 +4326,7 @@ So this is **not a port**. What it is worth is an **audit**: three specific ques
 
 ## How it would be tested
 
-- **QEMU: partially.** Flash *contents* handling — image layout and the
+- **QEMU: partially.** Flash *contents* handling — image layout, staging offsets, the
   bootloader's read path — is firmware logic. `./dev.py test` already boots the firmware
   under `-M virt`.
 - **Simulation: yes, and already done.** `qspi_burst_sim` covers the QSPI burst path and

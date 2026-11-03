@@ -403,13 +403,13 @@ python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> help   # the Apol
 | `phy` | TARGET USB3343 ULPI registers, walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | `typec [init]` | both FUSB302B: CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
-| `reset` | reboot into the image in flash | — |
+| `load <hex>`, `reset` | stage an image and boot into it | — |
 
 ### `info`
 
 - Eight lines: image (git hash, branch, dirty flag, build time); compiler and target triple; section sizes and what is left of the image region; boot status left by the bootloader; `misa` decoded; `mstatus`/`mtvec`; controller pending/enables; gateware.
 - Image region and linker layout: [`firmware/cynthion-soc/memory.x`](../firmware/cynthion-soc/memory.x) (RAM 31 KiB at `0x400`, above the 492-byte bootloader; `.text`/`.rodata` in flash at `0x100B0000`). `.stack` is whatever RAM nothing else claimed; check headroom after any firmware change: `llvm-objdump -h firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/cynthion-soc`.
-- Firmware and bitstream are built separately (`./dev.py fw` rewrites the flash image without a bitstream rebuild). Which pair runs is the HOST's question: identity is the ECP5 USERCODE, readable only over JTAG.
+- Firmware and bitstream are built separately (`load` replaces firmware without a bitstream rebuild). Which pair runs is the HOST's question: identity is the ECP5 USERCODE, readable only over JTAG.
   - [`gateware/build_helpers.py`](../gateware/build_helpers.py) stamps it at pack time (`ecppack --usercode`): short hash, bit 31 set for a dirty tree.
   - [`gateware/usercode_map.py`](../gateware/usercode_map.py) resolves the 32 bits to commit, variant, source digest, part, declared clocks, cache and ISA. One record per bitstream, one index across all.
   - `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names `stale-bitstream`, `wrong-part`, `declared-clock`; `scripts/soc/soc_probe.py` asserts the same two.

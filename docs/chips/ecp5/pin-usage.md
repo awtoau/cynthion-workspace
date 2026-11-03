@@ -402,7 +402,7 @@ resource on an ECP5.
 | ball | net | how it is driven | why it is not in the pin map |
 |---|---|---|---|
 | N9 | `FPGA_FLASH_CLK` (W25Q32 `U7` pin 6) | the `USRMCLK` macro, instantiated in [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) | the configuration clock has no user I/O buffer; the macro is the only route. The pin map says so in the `spi_flash` comment |
-| R11, T10, T11, M10 | `FPGA_JTAG.TDI` / `.TCK` / `.TMS` / `.TDO` | the die's single `JTAGG` primitive (`UserJTAG`: ER2 to the CPU debug module) | dedicated JTAG pins, not fabric I/O |
+| R11, T10, T11, M10 | `FPGA_JTAG.TDI` / `.TCK` / `.TMS` / `.TDO` | the die's single `JTAGG` primitive, via [`gateware/soc/bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | dedicated JTAG pins, not fabric I/O |
 
 Note the overlap that *is* declared: **R14 and R11 are the same net**, and **T14
 and T11 are the same net** — confirmed in the netlist, not merely asserted by the

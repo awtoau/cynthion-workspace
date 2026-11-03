@@ -34,20 +34,21 @@ against; the order of work is at the end.
 | a second CDC | LUNA's `USBSerialDevice` is single-function; a new descriptor set and endpoint pair. Worth doing *after* the format has a consumer |
 | USB bulk from the SoC | there is no USB device controller — `firmware/cynthion-soc/src/usb.rs:14-18` |
 | FPGA_ADV sideband | Apollo is master and the FPGA cannot initiate ([#176](https://github.com/awtoau/cynthion-workspace/issues/176)). Fixed-length CRC-8 commands, no push path |
-| JTAG | ER2 is the CPU debug module; no stream path into running firmware |
+| JTAG | ER1's `JTAGStager` holds the CPU in reset (`gateware/soc/top.py:1456`); it cannot observe a running board |
 
 Two rules protect the one diagnostic path a person has:
 
 * **Records only in binary mode**, entered by a text command and left by one
-  byte.
+  byte. Precedent: `load <hex>` (`firmware/cynthion-soc/src/staging.rs:26-91`).
 * **No interleaving with text.** `tio_user.py:293` writes the same bytes to the
   operator's terminal with `decode("ascii", "replace")`, so a record on the wire
   is replacement characters on their screen. Async log lines that must escape
   during a stream go out as `TEXT` records instead.
 
-A binary-mode loop needs a **timeout and an abort**, and must not hold RTIC's
-`devices` lock throughout. The stream loop polls `irq::pop` non-blockingly
-between records, so a host that stops reading does not wedge it.
+Two defects in `load` not to repeat, both at `staging.rs:42-72`: it spins for
+`len` bytes with **no timeout and no abort**, and it holds RTIC's `devices` lock
+throughout (`rtic_app.rs:319-321`). The stream loop polls `irq::pop`
+non-blockingly between records, so a host that stops reading does not wedge it.
 
 ## The frame
 
@@ -61,7 +62,7 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 * **SLIP framing**, RFC 1055: `END = 0xC0`, `ESC = 0xDB`, `ESC END = 0xDC`,
   `ESC ESC = 0xDD`. Escaping applies to header, body and CRC alike.
 * Minimum frame is 16 bytes unescaped (12 + 4); an empty body is legal.
-* `MAX_BODY = 256`. Fixes the firmware's frame buffer — there is no allocator.
+* `MAX_BODY = 256`. Fixes the firmware's staging array — there is no allocator.
   A host refuses a longer `len` rather than growing to meet it.
 
 ### Why SLIP
@@ -265,7 +266,7 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
 ## Cost
 
 * **On the board today: zero.** Nothing here is implemented in firmware.
-* The CRC is a bitwise CRC-32 loop on the board, `zlib.crc32` on the host.
+* The CRC is free — already linked (`hyperram.rs:100`, used by `staging::load`).
 * The only measurement that exists is [#250](https://github.com/awtoau/cynthion-workspace/issues/250)'s prototype: **1,382 B `.text`, 372 B
   `.rodata`**, `riscv32imac-unknown-none-elf`, `opt-level = "z"`, `lto = true`,
   `codegen-units = 1`. It used different framing and a different CRC from this

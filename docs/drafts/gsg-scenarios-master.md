@@ -97,7 +97,7 @@ Nothing on the device: same bitstream/firmware as 3. Host side `facedancer: face
 CONTROL only, one cable. Tests are register reads over a debug transport.
 
 - PHY tests read USB3343 ID registers: `ulpi_window.py` does this for `target_phy` (four-phase handshake, bounded wait); extending to `aux_phy` and `control_phy` is a resource-request change (taking `control_phy` off Apollo needs the port request, built). HyperRAM test: ID registers. Debug-connection test: Apollo JTAG, no FPGA design.
-- Transport differs: upstream JTAG-tunnelled; ours CPU CSR bus (plus sideband).
+- Transport differs: upstream JTAG-tunnelled; ours CPU CSR bus (plus sideband; `gateware/soc/bus/jtag_stage.py`, `soc_jtag_stage_sim`).
 - Compare first: `soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim`, `./dev.py test-board` may already cover upstream's five cases (`test_debug_connection`, `test_host_phy`, `test_target_phy`, `test_sideband_phy`, `test_hyperram`).
 - Tests: QEMU no. Sim yes for register paths (`ulpi_window` handshake has no pysim test; worth closing regardless). Hardware: run against a board believed good first; a diagnostic's first run is the control.
 
@@ -106,7 +106,7 @@ CONTROL only, one cable. Tests are register reads over a debug transport.
 Ours: `./dev.py run` (build + configure), `fw` (flash + reconfigure, no resynthesis), `stage` (firmware over JTAG), `flash` (read + verify SPI flash); `scripts/fast_loader.py`; `gateware/soc/peripherals/flash.py`; `scripts/flash_backup.py`. SPI flash at `0x1000_0000` like upstream.
 
 - Audit: (1) does `apollo flash-fast`'s bridge bitstream beat `fast_loader.py` (measurable); (2) Moondancer lives at `0x000b_0000`: that offset is the contract if `cynthion flash --soc-firmware` should work against our bitstream; (3) should `cynthion run|flash <name>` reach our bitstreams, or only `./dev.py` (audience not asked).
-- Tests: QEMU partially (flash layout); sim done (`qspi_burst_sim`, `soc_bus_sim`); hardware done (`./dev.py flash`). Flash erase/program are authorised; Apollo recovers over JTAG.
+- Tests: QEMU partially (flash layout/staging); sim done (`qspi_burst_sim`, `soc_bus_sim`); hardware done (`./dev.py flash`). Flash erase/program are authorised; Apollo recovers over JTAG.
 
 ### 8. MCU firmware (done; no SoC involvement)
 

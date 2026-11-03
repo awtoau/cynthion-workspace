@@ -9,7 +9,7 @@
 3. **`usb` has no reset.** `ResetSignal("usb")` is tied to 0 — the oscillator
    runs before any PLL is asked for anything, so there is nothing to gate on.
 
-Peripheral-by-peripheral review for [#229](https://github.com/awtoau/cynthion-workspace/issues/229): 19 modules and boundaries, eight findings; sound modules are recorded with the reason.
+Peripheral-by-peripheral review for [#229](https://github.com/awtoau/cynthion-workspace/issues/229): 20 modules and boundaries, eight findings; sound modules are recorded with the reason.
 
 Related: [`../../soc-clocking.md`](../../soc-clocking.md) §2, the withdrawn
 "CPU corrupts above 60 MHz" result whose signature was a `SyncFIFOBuffered`
@@ -41,6 +41,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | `flash.py` `ObservablePHY` | `domain` param, honoured | one flop on `dq.i` (upstream) | SCK = `f_domain / 2(1+divisor)` | **sound** |
 | `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 7** — latent |
 | `flash.py` `FlashILA` | hardcoded `sync` | incidental 2-stage, per bit | `sample_rate=60e6`, cosmetic | **DEFECT 7** — latent, already documented |
+| [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
 | [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 8** |
 | [`cpu/intc.py`](../../../gateware/soc/cpu/intc.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |
 | console / USB boundary in [`top.py`](../../../gateware/soc/top.py) | `sync` + `usb` | `StreamBuffer` async both ways, `FFSynchronizer` on `usb_took` | — | **sound** data path, **DEFECTS 2 and 3** |
@@ -345,6 +346,11 @@ output mux into the PHY's carry chain) and for the depth, plus an
 `FFSynchronizer` on `cs` with an explicit statement of when queuing it instead
 would be required.
 
+**`jtag_stage.py`** builds a local `jtck` domain on the falling TCK edge, crosses
+the payload with an `AsyncFIFO` and both status levels with `FFSynchronizer`s,
+and asynchronously resets `jtck` from `sync` so `cpu_hold` is known clear at
+power-up with no JTAG attached.
+
 **`intc.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`,
 `sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
@@ -396,8 +402,8 @@ would mislead a reader:
 
 | | count |
 |---|---|
-| modules and boundaries audited | 19 |
-| sound as written | 11 |
+| modules and boundaries audited | 20 |
+| sound as written | 12 |
 | with a named defect | 8 |
 | defects that are live today | 3 (1, 2, 3) |
 | defects that are latent until a flag flips | 3 (6, 7, 8) |

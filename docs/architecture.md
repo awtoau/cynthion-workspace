@@ -78,9 +78,9 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 
 | | what | provenance | detail |
 |---|---|---|---|
-| at `0x0` | **the bootloader** — `firmware/cynthion-boot`, a block RAM stub that jumps straight to the image in flash | written | [`hardware.md`](hardware.md), [#138](https://github.com/awtoau/cynthion-workspace/issues/138) |
-| the firmware | `firmware/cynthion-soc` — `.text`/`.rodata` execute from flash | written | too large to be resident |
-| firmware load | flash write by `scripts/soc_run.py`; no staging | written | |
+| at `0x0` | **the bootloader** — `firmware/cynthion-boot`, 492 bytes | written | [`hardware.md`](hardware.md), [#138](https://github.com/awtoau/cynthion-workspace/issues/138) |
+| the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads | written | too large to be resident |
+| firmware load | JTAG stream, and USB bulk. Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path. | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
 | memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
 
 ## Dependencies and verification

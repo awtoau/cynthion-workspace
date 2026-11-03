@@ -104,6 +104,7 @@ see [`w25q32-config-flash.md`](w25q32-config-flash.md) §4.
 
 | path | conditions | figure | source |
 |---|---|---|---|
+| JTAG shift | TCK 12 MHz, DMA-driven SPI | **750 kword/s** | [`../../gateware/soc/bus/jtag_stage.py`](../../gateware/soc/bus/jtag_stage.py) |
 | JTAG shift | polled path, 1024 bytes | ~700 µs, during which `tud_task()` cannot run | this file, *Links to the FPGA* |
 | USB vendor round trip | one response-requiring transfer | **3.00 ms** | `repos/apollo` `90c8b7b` |
 | host → flash program | 58,940 B at `0xb0000` | 3.33 s = 17.3 KiB/s | `scripts/soc_run.py`, 2026-08-06 |
