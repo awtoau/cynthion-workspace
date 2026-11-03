@@ -410,10 +410,32 @@ def eye(fl, probe, label, stride, lats=LAT_RANGE, halves=(0,)):
             + "".join("." if grid[(s, lat, h)] else "X" for s in steps) for lat, h in rows]
     say(f"  eye {label} (phase steps 0..{fl.n_steps - 1} by {stride}):\n    " + "\n    ".join(text))
     say(f"  {label}: best {best}, widest clean run {width} points")
+    placed = None if best is None else seek(fl, probe, best, grid, steps, stride)
+    say(f"  {label}: placed at {placed}" if placed else f"  {label}: NOT placed")
     record(dict(label=f"eye {label}", sck=fl.sck, sck_meas=fl.f, n_steps=fl.n_steps,
-                stride=stride, best=best, width=width,
+                stride=stride, best=best, width=width, placed=placed,
                 grid=[[*k, int(ok)] for k, ok in grid.items()]))
-    return best, width
+    return placed, width
+
+
+def seek(fl, probe, best, grid, steps, stride):
+    """Return to the eye's best point by probing, not by counting steps: after a full turn
+    of 8 x DIV PHASESTEPs the capture is not back where it started (board, #590), so a
+    step count names a different phase once the eye has wrapped. Steps forward in `stride`
+    at best's (lat, half) until half the row's clean run has been seen clean in a row."""
+    _, lat, h = best
+    row = [grid[(s, lat, h)] for s in steps]
+    run = cur = 0
+    for ok in row + row:
+        cur = cur + 1 if ok else 0
+        run = max(run, min(cur, len(row)))
+    need, seen = max(1, run // 2), 0
+    for _ in range(2 * len(row)):
+        fl.set_capture((fl.phase() + stride) % fl.n_steps, lat, h)
+        seen = seen + 1 if probe() else 0
+        if seen >= need:
+            return (fl.phase(), lat, h)
+    return None
 
 
 def jedec_ok(fl):
@@ -488,73 +510,87 @@ def scan(fl, label="scan"):
     return r, words, ranges
 
 
+def first_point(fl, sck, state):
+    """Once per sweep (device-limited or SCK-independent): ID/QPI/DTR probe, whole-part
+    scan, then erase/blank/program the test region with this run's seed. The stale-seed
+    control uses the previous run's seed from results.jsonl."""
+    ident = identify(fl)
+    sr, words, ranges = scan(fl)
+    record(dict(label="scan", sck=sck, sck_meas=fl.f, ident=ident, mb_s=sr["mb_s"],
+                errors=sr["errors"], checked=sr["checked"], done=sr["done"], bitmap=words,
+                ranges=ranges, test=[TEST_BASE, TEST_BASE + TEST_SIZE]))
+    prev = last_seed()
+    seed = new_seed(prev)
+    state.update(seed=seed, stale=prev)
+    er = [fl.wloop(0x20, TEST_BASE, 8, 4096, label="erase 4K (20h)"),
+          fl.wloop(0x52, TEST_BASE + 0x8000, 1, 0x8000, label="erase 32K (52h)"),
+          fl.wloop(0xD8, TEST_BASE + 0x10000, TEST_SIZE // 0x10000 - 1, 0x10000,
+                   label="erase 64K (D8h)")]
+    blank = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, check=CHECK_BLANK, label="blank check")
+    half = TEST_SIZE // 2
+    pg = [fl.wloop(0x02, TEST_BASE, half // 256, 256, burst=256, dw=W1, seed=seed,
+                   label="program 02h"),
+          fl.wloop(0x32, TEST_BASE + half, half // 256, 256, burst=256, dw=W4, seed=seed,
+                   label="program 32h")]
+    for r in er + pg:
+        say(f"  {r['label']:<18} n {r['busy_n']:>5} min {r['t_min_ms'] or 0:9.3f} "
+            f"avg {r['t_avg_ms']:9.3f} max {r['t_max_ms']:9.3f} ms"
+            + ("" if r["done"] else " HUNG"))
+        record(dict(r, kind="write"))
+    if not all(r["done"] for r in er + pg):
+        # A BUSY poll that never ends holds the engine: nothing more runs on this load.
+        raise Hung("program/erase poll never finished")
+    say(f"  blank check: errors {blank['errors']} / {blank['checked']}"
+        + ("" if blank["done"] else " HUNG"))
+    record(dict(blank, kind="blank"))
+
+
+def last_seed():
+    """Seed of the last programmed test region (results.jsonl), or a random stand-in."""
+    if RESULTS.exists():
+        for line in reversed(RESULTS.read_text().splitlines()):
+            r = json.loads(line)
+            if r.get("label") == "program 02h" and r.get("done"):
+                return r["seed"]
+    return new_seed(0)
+
+
 def measure(sck, state):
     fl = open_board(sck)
     if fl is None:
         return 1
     fl.qpi(False)   # a run killed inside a QPI read leaves the part in QPI until power-off
     # 1. capture from the JEDEC ID (x1 on IO1): enough for status polls and the scan.
-    best, width = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 16))
+    # Coarse: only the lat (round trip in cycles) is wanted here; EBh refines the phase.
+    best, width = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
+                      lats=range(0, 8))
     if best is None:
         record(dict(label="point", sck=sck, sck_meas=fl.f, ok=False, why="no JEDEC eye"))
         say(f"sck{sck:g}: no capture setting reads the JEDEC ID; point abandoned")
         return 0
     state["jedec_best"] = best
-    fl.set_capture(*best)
-    ident = identify(fl)
     try:
-        sr, words, ranges = scan(fl)
-        record(dict(label="scan", sck=sck, sck_meas=fl.f, ident=ident, mb_s=sr["mb_s"],
-                    errors=sr["errors"], checked=sr["checked"], done=sr["done"], bitmap=words,
-                    ranges=ranges, test=[TEST_BASE, TEST_BASE + TEST_SIZE]))
-        # 2. fresh seed: erase (4K x8, 32K x1, 64K x rest), blank check, program (x1 half,
-        #    quad half). Every case is one pass.
-        seed = new_seed(state["seed"])
-        stale = state["seed"]
-        state["seed"] = seed
-        er = [fl.wloop(0x20, TEST_BASE, 8, 4096, label="erase 4K (20h)"),
-              fl.wloop(0x52, TEST_BASE + 0x8000, 1, 0x8000, label="erase 32K (52h)"),
-              fl.wloop(0xD8, TEST_BASE + 0x10000, TEST_SIZE // 0x10000 - 1, 0x10000,
-                       label="erase 64K (D8h)")]
-        blank = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, check=CHECK_BLANK, label="blank check")
-        half = TEST_SIZE // 2
-        pg = [fl.wloop(0x02, TEST_BASE, half // 256, 256, burst=256, dw=W1, seed=seed,
-                       label="program 02h"),
-              fl.wloop(0x32, TEST_BASE + half, half // 256, 256, burst=256, dw=W4, seed=seed,
-                       label="program 32h")]
-        for r in er + pg:
-            say(f"  {r['label']:<18} n {r['busy_n']:>5} min {r['t_min_ms'] or 0:9.3f} "
-                f"avg {r['t_avg_ms']:9.3f} max {r['t_max_ms']:9.3f} ms"
-                + ("" if r["done"] else " HUNG"))
-            record(dict(r, kind="write"))
-        if not all(r["done"] for r in er + pg):
-            # A BUSY poll that never ends holds the engine: nothing more runs on this load.
-            raise Hung("program/erase poll never finished")
-        say(f"  blank check: errors {blank['errors']} / {blank['checked']}"
-            + ("" if blank["done"] else " HUNG"))
-        record(dict(blank, kind="blank"))
-        if state.get("dtr_only"):
-            state["ebh_best"] = state["jedec_best"]
-            measure_dtr(fl, seed, stale, state)
-            return 0
-        # 3. capture from the seeded EBh read (all four IO, both directions).
+        if state.get("seed") is None:
+            first_point(fl, sck, state)
+        seed, stale = state["seed"], state["stale"]
+        # 2. capture from the seeded EBh read (all four IO, both directions).
         def probe():
             r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
                       burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
                       expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="eye")
             return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
         lat0 = state["jedec_best"][1]
-        best, width = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 32),
-                          lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 3)))
+        best, width = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 16),
+                          lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 2)))
         if best is None:
-            say(f"sck{sck:g}: no clean EBh capture; measuring at the JEDEC setting")
-            best = state["jedec_best"]
+            say(f"sck{sck:g}: no clean EBh capture; measuring at the last probed phase")
+            best = (fl.phase(), *state["jedec_best"][1:])
         state["ebh_best"] = best
         fl.set_capture(*best)
         ok = probe()
         say(f"  capture {best}: eye probe repeated after placing: {'clean' if ok else 'FAILS'}")
         record(dict(label="capture verify", sck=sck, sck_meas=fl.f, best=best, ok=ok))
-        # 4. every mode, whole test region in one transaction, then 32-byte bursts.
+        # 3. every mode, whole test region in one transaction, then 32-byte bursts.
         for mode in MODES:
             r = fl.read(mode, TEST_BASE, TEST_SIZE, seed=seed, label=f"{mode} region")
             report(fl, r)
@@ -589,16 +625,15 @@ def measure_dtr(fl, seed, stale, state):
         r = dtr_read(TEST_BASE + EYE_BYTES, probe_win, seed, "eye DTR", quick=True)
         return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
     # The DTR window sits ~1 lat later than the SDR one at 80 MHz and moves out with SCK.
-    best, width = eye(fl, probe, "DTR seeded", max(1, fl.n_steps // 16),
-                      lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 4)), halves=(0, 1))
+    best, width = eye(fl, probe, "DTR seeded", max(1, fl.n_steps // 8),
+                      lats=range(lat0, min(LAT_RANGE.stop, lat0 + 4)), halves=(0, 1))
     if best is None:
         say(f"  {DTR_MODE}: no clean capture")
-        best = state["jedec_best"]
+        best = (fl.phase(), *state["jedec_best"][1:])
     fl.set_capture(*best)
     win = (TEST_BASE, TEST_BASE + TEST_SIZE)
     report(fl, dtr_read(TEST_BASE + TEST_SIZE, win, seed, f"{DTR_MODE} region"))
     report(fl, dtr_read(TEST_BASE + TEST_SIZE, win, stale, "ctl DTR stale seed"))
-    fl.set_capture(*state["ebh_best"])
 
 
 def report(fl, r):
@@ -620,7 +655,7 @@ def sweep(args):
     say(f"sweep {RUN_ID}: SCK {args.sck}; test region {TEST_BASE:#x}+{TEST_SIZE:#x}")
     if not build_cached(args.sck):
         return 1
-    state = dict(seed=new_seed(0), dtr_only=args.dtr_only)
+    state = dict(seed=None)
     rc = 0
     for sck in args.sck:
         if not configure(sck):
@@ -710,8 +745,6 @@ def main():
     pb.add_argument("--sck", type=float, nargs="+", required=True)
     pw = sub.add_parser("sweep")
     pw.add_argument("--sck", type=float, nargs="+", default=SWEEP_SCK)
-    pw.add_argument("--dtr-only", action="store_true",
-                    help="erase/program with a fresh seed, then only the DTR eye and read")
     ps = sub.add_parser("scan", help="read-only: ID, status registers, sector map")
     ps.add_argument("--sck", type=float, default=20)
     sub.add_parser("clocks")
