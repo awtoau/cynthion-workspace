@@ -269,8 +269,17 @@ class TxEngine(Elaboratable):
                 m.d.sync += [self.rx_valid.eq(1), self.rx_byte.eq(new_acc), nbits.eq(0)]
             with m.Else():
                 m.d.sync += [acc.eq(new_acc), nbits.eq(new_bits)]
-        with m.If(self.rx_valid & poll & ~self.rx_byte[0] & (phase == P_DATA)):
-            m.d.sync += stop.eq(1)
+        # Poll ends on two consecutive BUSY=0 bytes: one misread 0x00 must not end it.
+        ready_seen = Signal()
+        with m.If(self.rx_valid & poll & (phase == P_DATA)):
+            with m.If(~self.rx_byte[0]):
+                m.d.sync += ready_seen.eq(1)
+                with m.If(ready_seen):
+                    m.d.sync += stop.eq(1)
+            with m.Else():
+                m.d.sync += ready_seen.eq(0)
+        with m.If(phase == P_IDLE):
+            m.d.sync += ready_seen.eq(0)
         return m
 
 
