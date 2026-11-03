@@ -206,8 +206,8 @@ def build(phase_ns):
     pins = FlashPins()
     tx = TxEngine(pins)
     eng = OpEngine(tx)
-    pad_o, pad_oe, pad_i, pad_cs = Signal(4), Signal(4), Signal(4), Signal()
-    phy = FlashPHY(pins, pad_o=pad_o, pad_oe=pad_oe, pad_i=pad_i, pad_cs=pad_cs)
+    pad_o, pad_oe, pad_i, pad_cs, pad_ck = Signal(4), Signal(4), Signal(4), Signal(), Signal()
+    phy = FlashPHY(pins, pad_o=pad_o, pad_oe=pad_oe, pad_i=pad_i, pad_cs=pad_cs, pad_ck_en=pad_ck)
     m = Module()
     m.submodules += [tx, eng, phy]
     m.domains.cap = ClockDomain("cap", reset_less=True)
@@ -223,7 +223,7 @@ def build(phase_ns):
     sim.add_clock(T_NS * 1e-9, phase=T_NS / 2 * 1e-9, domain="sync")
     sim.add_clock(T_NS * 1e-9, phase=(T_NS / 2 + phase_ns) * 1e-9, domain="cap")
     sim.add_clock(T_NS * 1e-9, phase=T_NS * 1e-9, domain="fclk")
-    return sim, dict(tx=tx, eng=eng, phy=phy, pad_o=pad_o, pad_oe=pad_oe, pad_cs=pad_cs,
+    return sim, dict(tx=tx, eng=eng, phy=phy, pad_o=pad_o, pad_oe=pad_oe, pad_cs=pad_cs, pad_ck=pad_ck,
                      f_val=f_val, f_oe=f_oe, fclk=fclk)
 
 
@@ -232,6 +232,7 @@ def run(phase_ns, xfer, script):
     sim, h = build(phase_ns)
     dev = W25Q32JV()
     cs_high = {"run": 0, "min": None}
+    gated = {"run": 0, "no_setup": 0}
 
     def apply(ctx, drive):
         if drive is None:
@@ -254,6 +255,13 @@ def run(phase_ns, xfer, script):
             rise = None
             dev.clk += 1
             cs = ctx.get(h["pad_cs"])
+            if cs and not ctx.get(h["pad_ck"]):
+                # MCLK gated: no edge this cycle; /CS low with the clock stopped.
+                gated["run"] += 1
+                continue
+            if cs and gated["run"] == 0 and dev.gen is None:
+                gated["no_setup"] += 1          # first edge without a stopped-clock cycle
+            gated["run"] = 0
             if not cs:
                 if dev.gen is not None:
                     dev.cs_rise()
@@ -330,6 +338,7 @@ def run(phase_ns, xfer, script):
     sim.add_testbench(flash, background=True)
     sim.add_testbench(control)
     sim.run()
+    dev.no_setup = gated["no_setup"]
     return dev, results, cs_high
 
 
@@ -478,6 +487,8 @@ def main():
 
         dev, results, cs_high = run(ph, xfer, cases)
         check(all(r["done"] for r in results), "every op finished in bound")
+        check(dev.no_setup == 0, f"every transaction has a stopped-clock /CS setup cycle "
+              f"({dev.no_setup} without)")
         check(dev.contention == 0, f"no bus contention ({dev.contention}, commands "
               f"{sorted(hex(c) for c in dev.contended)})")
         check(cs_high["min"] is not None and cs_high["min"] >= CSH_R + 2,
