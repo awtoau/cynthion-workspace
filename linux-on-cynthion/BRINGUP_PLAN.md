@@ -35,7 +35,7 @@ storage on AUX.
 
 - Validate Linux image, DTB, and bootargs in QEMU before FPGA attempts.
 - Keep the SoC and its peripherals minimal.
-- Boot kernel and DTB from flash; HyperRAM as system RAM.
+- Boot kernel and DTB from flash. System RAM needs a HyperRAM memory window; none exists (HyperRAM is register-only on the #581 core, #588).
 - USB network gadget + host NFS root for userspace.
 
 Not in scope for first boot: USB mass-storage host stack on AUX,
@@ -68,7 +68,7 @@ recorded before any FPGA integration.
 
 1. Fork the current SoC top into a new RISC-V-specific top module.
 2. Keep only CPU, bus, interrupt controller, timer, UART, SPI flash mmap,
-   HyperRAM. Drop non-essential USB endpoints and optional peripherals.
+   a HyperRAM memory window (none exists; #588 is register-only). Drop non-essential USB endpoints and optional peripherals.
 3. Preserve deterministic reset and boot address behaviour.
 
 Exit: synthesis completes; post-PnR timing and utilisation report generated;
@@ -131,7 +131,7 @@ Exit: another developer reproduces first boot from a clean checkout.
 ## Risks
 
 1. Area overflow on the 12F once Linux-required core features are enabled.
-2. Timing closure on HyperRAM or bus paths.
+2. No HyperRAM memory window: register-only (#588).
 3. Boot-chain complexity within the 4 MiB flash budget.
 4. USB gadget networking integration overhead.
 5. Toolchain mismatch across Yosys/nextpnr/ecppack or the core generators.

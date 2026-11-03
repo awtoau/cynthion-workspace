@@ -4,7 +4,7 @@
 Submit a job.
 
 ```bash
-./dev.py board run --variant ck80-sync60 "bist smoke"
+./dev.py board run --variant <slug> "info"
 ./dev.py board status
 ```
 
@@ -20,8 +20,8 @@ Submit a job.
 
 Agents coordinated for the board in prose and reflashed each other's
 measurements ([#430](https://github.com/awtoau/cynthion-workspace/issues/430)): rows attributed to an unknown build, firmware 109 commits
-stale while measurements were taken against it, `hyperram_verify` resolving one
-variant's bitstream while the board ran another ([#367](https://github.com/awtoau/cynthion-workspace/issues/367)).
+stale while measurements were taken against it, one variant's bitstream
+resolved while the board ran another ([#367](https://github.com/awtoau/cynthion-workspace/issues/367)).
 
 The board is not just a tty. It is the tty **plus** Apollo JTAG **plus** the
 state of what is configured. Nothing owned all three.
@@ -104,17 +104,14 @@ each leg to a failure.
 submission** — abandoned mid-sweep. Nothing depends on it finishing.
 
 ```bash
-./dev.py board idle --variant ck80-sync60 \
-                    --repeat 200 --budget 6 "bist all 8"
+./dev.py board idle --variant <slug> --repeat 200 --budget 6 "selftest"
 ```
 
 **Idle results are not measurements and cannot be made into one.** Three
 barriers, because a caveat beside a number is read as the number:
 
-1. separate directory — `tmp/board-arbiter/idle/`, never `results/hyperram/`
-2. separate schema — `board-idle-observation`, which
-   [`hyperram_matrix_diff.py`](../scripts/hyperram/hyperram_matrix_diff.py) `load()`
-   refuses, by schema **and** by path
+1. separate directory — `tmp/board-arbiter/idle/`
+2. separate schema — `board-idle-observation`
 3. none of a matrix run's keys — no `failures`, no `summary`, no `pins`
 
 They earn their board time with **events**, never rows:
@@ -139,12 +136,10 @@ They earn their board time with **events**, never rows:
   the next `run` configures (that is the reset), and a `shell` job is refused
   until something does. The cost of a preemption is one configure, ~2.5 s.
 
-## Timing, measured on this board (2026-08-12, `bist1-ck120`, image `80a242f`)
+## Timing, measured on this board (2026-08-12, image `80a242f`)
 
 | operation | measured |
 |---|---|
-| `info`, `bist status`, `bist smoke`, `bist latency 8` | 0.04–0.07 s |
-| `bist all 1` / `bist all 8` (4096 cells) | 4.39 s / 4.59 s |
 | configure + confirm | ~2.5 s |
 | AUX console re-enumeration after a configure | 0.41 s ([#419](https://github.com/awtoau/cynthion-workspace/issues/419)) |
 | a job on an already-loaded variant, end to end | 0.27 s |

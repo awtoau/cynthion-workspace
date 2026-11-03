@@ -2368,9 +2368,7 @@ as of `923c8490`. It would attach to our arbiter as a fourth master alongside
 at 0x0.
 
 Its cost is its staging FIFO: `_DATA_FIFO_WORDS` defaults to 8 KiB, which is
-about 4 of the 14 free BRAMs, and it is a tunable. Target block RAM first —
-HyperRAM is the obvious destination for large buffers but has no Wishbone
-adapter ([#90] (https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92] (https://github.com/awtoau/cynthion-workspace/issues/92)).
+about 4 of the 14 free BRAMs, and it is a tunable. Target block RAM.
 
 **Do not build tier two first.** It is only worth it once a measured PIO number
 proves it necessary, and §15.3's estimate is not that measurement.
@@ -2920,8 +2918,7 @@ conditions it was measured under.
 
 ### The floor: a COMB delta under ~200 is the mapper
 
-- Null control, 2026-08-12, `432d29b`, `bist0-ck160-dqs1-merge0-sync60`,
-  `--no-parallel-refine`: one 32-bit identity constant given a different value,
+- Null control, 2026-08-12, `432d29b`, `--no-parallel-refine`: one 32-bit identity constant given a different value,
   no logic touched → **TRELLIS_COMB +194, TRELLIS_FF +1**
   ([`soc_trim_delta.py --trim null-constant`] (../scripts/soc_trim_delta.py)).
 - Global, not local folding: the whole `gateware_id` block is 153 COMB, and the
@@ -2946,7 +2943,6 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 
 | module | LUT4 eq | DFF | DP16KD | |
 |---|---:|---:|---:|---|
-| `hyperram_probe` | 750 | 289 | — | instrumentation |
 | `clint` | 400 | 137 | — | |
 | `plic` (5 sources, retired) | 286 | 52 | — | |
 | `uart16550` | 231 | 118 | — | **×2 in the SoC** |
@@ -2964,28 +2960,10 @@ Out of context, so upper bounds. `./scripts/soc_peripheral_area.py`.
 | `i2c_mux` | 9 | 20 | — | |
 | `wishbone_pipe` | 9 | 34 | — | |
 
-Two things stand out. `hyperram_probe` is the **largest peripheral in the SoC**
-— larger than the CLINT, larger than the interrupt controller, larger than either console — and
-it is instrumentation. And `wishbone_pipe`, which recovered the design's timing
-margin, costs nine LUT4 and 34 flops.
+`wishbone_pipe` costs nine LUT4 and 34 flops.
 
 ## 4. What the instrumentation costs, in context
 
-`FlashILA`, `FlashPinProbe` and `HyperRAMProbe`, built into the real SoC and then
-built again with their logic removed and their CSR bridges kept:
-
-| cell | with | without | delta | share of the design |
-|---|---:|---:|---:|---:|
-| TRELLIS_COMB | 14,476 | 13,402 | **1,074** | 7.4% |
-| TRELLIS_FF | 7,472 | 7,016 | **456** | 6.1% |
-| DP16KD | 44 | 43 | **1** | |
-
-**This understates a deletion.** Each stub keeps the CSR bridge that answers at
-its address, so a real removal recovers this plus three bridges and three
-decoder windows.
-
-The measurement that made the three worth counting together: they exist to
-answer questions, and two of those questions are answered.
 `peripherals/flash.py`'s own docstring says the ILA "was built to find the JEDEC read
 fault, which is fixed", and `peripherals/flash_cdc.py` records that once the PHY moves to
 its own domain the ILA's captures cross a clock boundary unsynchronised and are
@@ -3022,7 +3000,7 @@ By module, attributing every `.text` symbol (`llvm-nm --print-size`):
 **`run` is 41% of `.text` in a single symbol.** It is a 25-arm `match` on the
 command word, and `opt-level = "z"` with `lto = true` still inlines a function
 called from exactly one place — so `map_command`, `board_led`, `board_i2c`,
-`board_power`, `board_sideband`, `vbus_command`, `hyperram_command`, `help`,
+`board_power`, `board_sideband`, `vbus_command`, `help`,
 `load` and the rest are all absorbed into it. 17,044 bytes is 266 cache lines
 against 64 sets.
 
@@ -3142,18 +3120,13 @@ VexRiscv against VexiiRiscv, a settled choice, and they were the only importers
 of `luna_soc.gateware.cpu.VexRiscv` in the tree.
 
 **Three doc references in `gateware/` point at files that do not exist** —
-`docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`),
-`docs/luna_ecp5_fpga/hyperram-speed.md` (`hyperram/hyperram_identify.py:11,80`,
-`hyperram/hyperram_fifo.py:109`) and
-`docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`).
+`docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`)
+and `docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`).
 `./dev.py docs` checks links in Markdown and nothing checks them in source
 comments, which is why these survived. A fourth, in `cpu/clint.py`, is fixed
 in §7.
 
 **`vbus::discharge()` has no caller** (`firmware/cynthion-soc/src/vbus.rs:305`).
-Two other functions reported as dead in the same survey — `hyperram::seek_word`
-and `hyperram::write_word_pub` — are called eleven times between them from
-`bench.rs`, so this list is only the ones checked against the whole tree.
 
 ## 9. Two claims in the tree that measurement did not support
 
@@ -3274,7 +3247,6 @@ Order, cheapest and most-load-bearing first:
 1. **I2C master, multiplexed** ([#98] (https://github.com/awtoau/cynthion-workspace/issues/98)) -- unblocks FUSB302B and PAC1954 together.
 2. **LEDs** as a CSR register with the existing override/release semantics.
 3. **Flash** (QSPI) -- already has the most bus-shaped interface of the group.
-4. **HyperRAM** ([#90] (https://github.com/awtoau/cynthion-workspace/issues/90)) -- the largest, and the one with a real timing question.
 
 ## Confirmed scope
 
@@ -3285,26 +3257,20 @@ device stacks against 24288 LUTs with a CPU wanting ~6000 -- and the shipping
 bitstream will configure the ports differently. The point is proving all three
 *can* come up, not that one image uses them that way.
 
-**HyperRAM ID and serial readback.** Small, and closes a real gap: DEVICES
-currently reports `hyperram absent` as a presence bit with no identity behind it.
-The registers themselves are already read and decoded from a standalone bitstream
-— [`chips/hyperram/w956a8.md`] (chips/hyperram/w956a8.md) — so what is missing is
-the CPU-side path, not the knowledge.
-
 **FUSB302B and die temperature over the sideband.** Small, because the gateware
 exists -- `gateware/probes/pins/fusb302_id.py` already reads both controllers. What is
 missing is sideband *commands*, not blocks; the opcode map and what adding to it
 costs are in [`chips/cynone-sideband.md`] (chips/cynone-sideband.md#4-commands). Temperature needs the `DTR`
 primitive instantiated, which it currently is not anywhere.
 
-**Flash and HyperRAM benchmarking driven by the CPU.** The measurements that
+**Flash benchmarking driven by the CPU.** The measurements that
 motivated the RISC-V work. **Blocked** on the silent-SoC problem: both CPUs
 enumerate and neither prints, cause not established
 ([#209] (https://github.com/awtoau/cynthion-workspace/issues/209)).
 
 ## What this does not resolve
 
-**Whether it all fits.** Three USB stacks plus a CPU plus caches plus HyperRAM on
+**Whether it all fits.** Three USB stacks plus a CPU plus caches on
 an LFE5U-12F is not obviously feasible, and nothing here has been synthesised
 together. The area numbers to beat: best CPU config measured at 6342 LUT and
 14 of 56 BRAM; the sideband test bitstream at 123920 bytes builds today with the
@@ -3416,17 +3382,7 @@ zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
 `--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
 FSM are all still there. Only the count is free. [#471] (https://github.com/awtoau/cynthion-workspace/issues/471).
 
-**Why this file exists.** Chasing a HyperRAM performance question, five gateware
-probes were built and five readings of the source produced five wrong
-explanations — sixteen transactions per line, 316 CK inside the burst, a
-non-streaming data phase, slow plumbing, and a benchmark bounded by instruction
-fetch. Every one was refuted by measurement. The counters settled it in one
-build, and had been available in the core the entire time:
-
-    front-stall 7   back-stall 294   dcache-waiting 79   dcache-miss 1
-
-Seven cycles of fetch stall and zero I-cache misses killed the "bounded by flash"
-theory outright. **Ask the CPU before instrumenting the fabric.**
+**Ask the CPU before instrumenting the fabric.**
 
 ## What regeneration costs
 
@@ -3461,7 +3417,7 @@ of an argument.
 Submit a job.
 
 ```bash
-./dev.py board run --variant bist1-ck120-dqs1-mirror0-mirrordiv4 "bist smoke"
+./dev.py board run "info"
 ./dev.py board status
 ```
 
@@ -3477,8 +3433,8 @@ Submit a job.
 
 Agents coordinated for the board in prose and reflashed each other's
 measurements ([#430] (https://github.com/awtoau/cynthion-workspace/issues/430)): rows attributed to an unknown build, firmware 109 commits
-stale while measurements were taken against it, `hyperram_verify` resolving one
-variant's bitstream while the board ran another ([#367] (https://github.com/awtoau/cynthion-workspace/issues/367)).
+stale while measurements were taken against it, one variant's bitstream resolved
+while the board ran another ([#367] (https://github.com/awtoau/cynthion-workspace/issues/367)).
 
 The board is not just a tty. It is the tty **plus** Apollo JTAG **plus** the
 state of what is configured. Nothing owned all three.
@@ -3560,18 +3516,12 @@ each leg to a failure.
 `priority=idle` runs when nothing else is queued and is **preempted by a real
 submission** — abandoned mid-sweep. Nothing depends on it finishing.
 
-```bash
-./dev.py board idle --variant bist1-ck120-dqs1-mirror0-mirrordiv4 \
-                    --repeat 200 --budget 6 "bist all 8"
-```
 
 **Idle results are not measurements and cannot be made into one.** Three
 barriers, because a caveat beside a number is read as the number:
 
-1. separate directory — `tmp/board-arbiter/idle/`, never `results/hyperram/`
-2. separate schema — `board-idle-observation`, which
-   [`hyperram_matrix_diff.py`] (../scripts/hyperram_matrix_diff.py) `load()`
-   refuses, by schema **and** by path
+1. separate directory — `tmp/board-arbiter/idle/`
+2. separate schema — `board-idle-observation`
 3. none of a matrix run's keys — no `failures`, no `summary`, no `pins`
 
 They earn their board time with **events**, never rows:
@@ -3596,12 +3546,10 @@ They earn their board time with **events**, never rows:
   the next `run` configures (that is the reset), and a `shell` job is refused
   until something does. The cost of a preemption is one configure, ~2.5 s.
 
-## Timing, measured on this board (2026-08-12, `bist1-ck120`, image `80a242f`)
+## Timing, measured on this board (2026-08-12, image `80a242f`)
 
 | operation | measured |
 |---|---|
-| `info`, `bist status`, `bist smoke`, `bist latency 8` | 0.04–0.07 s |
-| `bist all 1` / `bist all 8` (4096 cells) | 4.39 s / 4.59 s |
 | configure + confirm | ~2.5 s |
 | AUX console re-enumeration after a configure | 0.41 s ([#419] (https://github.com/awtoau/cynthion-workspace/issues/419)) |
 | a job on an already-loaded variant, end to end | 0.27 s |
@@ -3625,7 +3573,7 @@ arbiter's refusal rules and `board_arbiter_proof.py`.
 
 ---
 
-## usb-performance.md: narrative sections and the HyperRAM 220.2 MB/s figure (HyperRAM speeds live in chips/hyperram/w956a8.md)
+## usb-performance.md: narrative sections
 
 ### Source: docs/usb-performance.md
 
@@ -3768,17 +3716,6 @@ surprises, suspect the instrument before the device.
 | `scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
 | `debris/scripts/usb_speed_native.c` | native C, to rule out the host language |
 
-## In context
-
-The capture path is bounded by the slower of USB and HyperRAM:
-
-| | MB/s |
-|---|---|
-| HyperRAM, FIFO access at 512-byte granularity | 220.2 |
-| USB bulk, direct port | 48.5 |
-
-4.5× headroom. USB is the constraint.
-
 
 ---
 
@@ -3803,7 +3740,7 @@ would be tested.
 TARGET port.**
 
 The peripherals are: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`,
-`i2c_mux`, `vbus`, `fabric_status`, `plic`, `clint`, `spiflash`, `bootram`, `hyperram`.
+`i2c_mux`, `vbus`, `fabric_status`, `plic`, `clint`, `spiflash`.
 `gateware/soc/peripherals/ulpi_window.py` reads and writes a USB3343's PHY registers over
 `target_phy` and cannot send or receive a single packet. Moondancer's firmware expects
 three sets of `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none of
@@ -3820,7 +3757,6 @@ or adopt a USB packet path. The children differ in how much they need on top of 
 | A working luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, instantiated in the SoC at `gateware/soc/top.py` | `USBSerialDevice` enumerates at high speed and loops back at 195.4 Mbps. luna's USB device gateware **builds and runs on our platform today** — the question is never "can luna's USB stack work here", only "is it wired to the right PHY with the right endpoints" |
 | CONTROL port handover | `gateware/probes/sideband/sideband_advertise.py`, `docs/sideband.md`, frame-exact sim `scripts/sideband_advertise_sim.py` | Upstream's `ApolloAdvertiser` prerequisite is already solved on our side |
 | VBUS switch control | `gateware/soc/peripherals/vbus_csr.py` | The analyzer's pass-through and port-power control has a CPU-visible home already |
-| HyperRAM | `gateware/soc/peripherals/hyperram_dqs_phy.py`, mapped at `0x2000_0000` | The analyzer's 8 MiB capture buffer needs exactly this |
 | PAC generated from the SoC's own map | `./dev.py pac` | A new peripheral gets Rust accessors without hand-transcription |
 | `smolusb::control::Control` | upstream, trait-based over `D: UsbDriver` | The control-transfer state machine is hardware-independent and ports verbatim. It is the one part that is portable today |
 
@@ -3939,11 +3875,7 @@ Needed, and not present:
    dependency. It should port more or less as-is; the question is whether we take it or
    write our own.
 3. **A HyperRAM stream port.** Upstream's `HyperRAMPacketFIFO` instantiates luna's
-   `HyperRAMInterface`/`HyperRAMPHY` directly. We have our own DQS PHY
-   (`gateware/soc/peripherals/hyperram_dqs_phy.py`) behind a Wishbone map at `0x2000_0000`, tuned
-   and measured. Reusing ours means writing a streaming front end for it; using luna's
-   means two HyperRAM controllers in one repo. **This is the one real design decision in
-   this scenario** and it should be settled before any code is written.
+   `HyperRAMInterface`/`HyperRAMPHY` directly.
 4. **A bulk IN endpoint on CONTROL**, plus the vendor request handler for the five
    control requests, plus the descriptors.
 5. **The port request.** Already solved — `gateware/probes/sideband/sideband_advertise.py`.
@@ -3967,8 +3899,7 @@ State byte: capture-enable bit plus a 2-bit speed selector.
 - **Simulation: yes, and this is where the coverage has to live.** A bus-functional ULPI
   model driving known packet sequences into the capture engine, asserting the byte stream
   that comes out the other end, is a pure-`pysim` test that would sit in
-  `scripts/soc_sims.py`. It needs P2 built first. The HyperRAM FIFO can be simulated
-  against the existing HyperRAM model separately.
+  `scripts/soc_sims.py`. It needs P2 built first.
 - **Hardware: required for the end-to-end claim.** Packetry connecting, negotiating speed,
   and decoding a real enumeration is not simulatable. That test belongs in
   `./dev.py test-board`, gated on hardware, not in `gate`.
@@ -3978,8 +3909,7 @@ against a real chirp, and Packetry interop, cannot.
 
 ## Verdict
 
-**Hard.** The largest gateware build of any child, and it carries the repo's only genuine
-architectural decision (whose HyperRAM controller). But it needs no firmware, no PAC and
+**Hard.** The largest gateware build of any child. But it needs no firmware, no PAC and
 no host tooling, and its wire contract is completely specified by Packetry's source.
 
 ### Source: docs/drafts/gsg-scenario-analyzer-test-device.md
@@ -4305,9 +4235,7 @@ Structurally this is the closest match to work we have already done, because the
   documented four-phase clock-domain handshake and a bounded wait. Extending it to
   `aux_phy` and `control_phy` is a resource-request change, and it is the only new gateware
   the PHY tests need.
-- **The HyperRAM test** reads the identification registers. We have a HyperRAM controller,
-  a probe peripheral (`peripherals/hyperram_probe.py`) and an identify script
-  (`scripts/hyperram_identify.py`). This is already covered by our own tooling, differently.
+- **The HyperRAM test** reads the identification registers.
 - **The debug-connection test** is an Apollo JTAG check that does not involve the FPGA
   design at all.
 - **The transport is the real difference.** Upstream reaches the registers over a
@@ -4317,7 +4245,7 @@ Structurally this is the closest match to work we have already done, because the
   either.
 
 The question this scenario really asks is not "can we port it" but **"do we want upstream's
-self-test, or is our board test suite already it?"** We have `soc_hyperram_sim`,
+self-test, or is our board test suite already it?"** We have
 `soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim` and `./dev.py test-board`. Upstream's
 five cases may already be a subset of what we check. That comparison should be done before
 any porting, because the likely outcome is "we already have this, under different names".

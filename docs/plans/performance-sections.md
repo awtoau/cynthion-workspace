@@ -14,7 +14,7 @@ Headline of each part's doc: ceiling, distance below it, what closes the gap. `#
      - IO standard / drive strength (bitstream attributes, bound edge rate);
      - hard DDR register vs fabric.
    - If a pin binds: which pin, which primitive, what the part would do if wired differently (tells whether a board revision is worth it).
-3. **Measured.** Conditions attached: clock, mode, width, burst length, driver. No trustworthy measurement: one line saying so, not a figure of unknown provenance (cost: `chips/hyperram/bist-plan.md`).
+3. **Measured.** Conditions attached: clock, mode, width, burst length, driver. No trustworthy measurement: one line saying so, not a figure of unknown provenance.
 4. **The gap, and what closes it.** Ranked with estimates. "Unknown" is legitimate; a guess dressed as an estimate is not.
 
 Every section ends with:
@@ -26,7 +26,7 @@ Every section ends with:
 
 | part | axes that must appear |
 |---|---|
-| W956A8 HyperRAM | read vs write; non-DQS vs DQS; burst length vs tCSM; CK; latency mode |
+| W956A8 HyperRAM | read vs write; burst length vs tCSM; CK; latency mode |
 | W25Q32 flash | 1-lane vs quad; read vs page program vs erase; continuous-read; SCK; host->flash programming (different path from CPU reads, 30x slower than the chip) |
 | ECP5 LFE5U-12F/25F | fmax by design; block RAM; LUT; DDR pin rate; PLL range; what the 25F die gives over the 12F marking |
 | VexiiRiscv | IPC; CPI; cache hit/miss cost; fetch vs data stalls (perf counters exist) |

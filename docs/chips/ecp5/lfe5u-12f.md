@@ -131,28 +131,9 @@ both permanent:
   port timing table, a different path — see the section further down, which
   retires that figure.
 
-**The HyperRAM DQS group fits, and this was checked rather than assumed.**
-`scripts/hyperram/hyperram_dqs_pins.py` reads prjtrellis's `iodb.json` and reports, for
-`LFE5U-12F` `CABGA256`:
-
-| pin | ball | bank | DQS tag |
-|---|---|---|---|
-| RWDS | D1 | 7 | **`LDQS8`** — the group's strobe |
-| DQ0–4, DQ6, DQ7 | F2 B1 C2 E1 E3 F3 G4 | 7 | `LDQ8` |
-| DQ5 | E2 | 7 | **`LDQSN8`** — the group's complement pin |
-| CK_P / CK_N | C3 / D3 | 7 | `LDQ8` |
-
-`DQSBUFM` is not a fabric block: it sits at a fixed place in the I/O ring and its
-`DQSI` input is hard-wired to one pin. **Had RWDS landed anywhere else, the DQS
-PHY would be impossible rather than merely difficult** — no gateware change could
-reach it. Two costs the wiring does impose: DQ5 sits on the group's `DQSN` pin
-and is only usable because HyperBus's RWDS is single-ended, and the CK pair
-spends two more of the group's pins.
-
-**Hard DDR registers exist for the HyperRAM and are used.** `HyperRAMPHY` gears
-2:1 through `ODDRX1F`/`IDDRX1F` in `sync`; `HyperRAMDQSPHY` gears 4:1 through
-`ODDRX2F`/`IDDRX2DQA`/`ODDRX2DQSB`/`TSHX2DQA` in `fast` at 2× `sync`. Nothing
-here is geared in fabric. `USRMCLK` above is the one place where it cannot be.
+**Hard DDR registers exist for the HyperRAM and are used.** The #581 core
+(`gateware/hyperram_baseline/hyperbus.py`) gears 2:1 through `ODDRX1F`/`IDDRX1F`,
+read data through `DELAYF`. `USRMCLK` above is the one place where DDR cannot be used.
 
 **R11/T11 and R14/T14 are the same wires, so the console's rate is arbitration.**
 The ECP5's JTAG TDI/TMS pads are the Apollo UART's rx/tx pads, and on the MCU
@@ -166,8 +147,7 @@ transmitting unbidden rather than a faster link. See the pin-sharing section of
 
 **Two PLLs on this die, not four** (Table 1.1, and the 25F die does not add any).
 One is `SocClocks` in `gateware/soc/clocks.py`, giving `sync` and `fast`; the
-second is what `hyperram_clocks.HyperRAMDomains` needs to make CK sweepable
-without moving the CPU clock. There is no third, so any future independent domain
+second clocks the HyperRAM core (`hr`, `hr90`, CK 180, #588). There is no third, so any future independent domain
 displaces one of those two.
 
 **The PLL's reachable set is wider than this tree says, and out of spec for most
@@ -216,14 +196,8 @@ between runs:
 | SoC, BTB relaxed + relaxed branch (ships) | 12,903 | 6,942 | 44 | 64.23 / **71.81** / 72.88 MHz |
 | fabric test, 20,143 LUT4 | — | — | — | 86.43 MHz, one run |
 
-**DDR pin rate on the HyperRAM DQ lines**, from
-[`../hyperram/w956a8.md`](../hyperram/w956a8.md). Per-pin rate is 2 × CK:
-
-**No measured DQ rate is quoted here.** Every HyperRAM figure this project
-produced is void and was deleted — see
-[`../hyperram/bist-plan.md`](../hyperram/bist-plan.md). The published *limit*
-above stands on the datasheet; what this board achieves against it is unmeasured
-([#230](https://github.com/awtoau/cynthion-workspace/issues/230)).
+**HyperRAM DQ rate:** the #581 reference measurement is
+[`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md).
 
 **Flash SCK: 144 MHz measured**, `0xEB` continuous, 71.70 MB/s — through
 `USRMCLK`, with the design closing at 149 MHz. The instrument ran out before the
@@ -238,7 +212,7 @@ most pins carry.
    out against 800 for GDDRX2 is the I/O standard, and the standard is set by the
    3.3 V parts on the other end. Worth 2.7× on paper and unavailable in practice.
 2. **Block RAM is the binding resource, at 78.6%.** Moving the 64 KiB of firmware
-   out of block RAM — execute in place from flash, or from HyperRAM — frees about
+   out of block RAM — execute in place from flash — frees about
    32 blocks, which is more than the entire USB analyzer design uses. Worth: it
    is the only thing that makes 16 KiB caches fit. Cost: fetch latency, which is
    what the I-cache exists to hide. See
@@ -262,7 +236,7 @@ most pins carry.
 | LUT4 | 24,288 on the die (12,288 by the marking) | 24,288 — the marking is enforced nowhere in the flow | 14,755 in the SoC; 20,143 placed and verified once | 61% / 83% | nothing; not the binding resource |
 | block RAM | 56 × 18 Kb = 1,008 Kb (32 by the marking) | 56 | **44** (`top.config`, all EBR modes) | 79% | firmware out of block RAM: ~32 blocks |
 | fabric fmax | 441 MHz, 16-bit adder (Table 3.20) | 370 MHz, primary clock tree | 71.81 MHz median, 3 P&R runs, SoC netlist | 19% | design, not placement — see the CPU page |
-| DDR, DQ pin | 800 Mb/s (`fDATA_GDDRX2`, −8) | **300 Mb/s out / 400 in** (LVCMOS33, Table 3.21 + note 6) | 280 Mb/s at CK 140, negative-control verified | 93% of the output figure | an I/O standard the DDR tables cover — board revision |
+| DDR, DQ pin | 800 Mb/s (`fDATA_GDDRX2`, −8) | **300 Mb/s out / 400 in** (LVCMOS33, Table 3.21 + note 6) | [`sequential-baseline.md`](../hyperram/sequential-baseline.md) (#581) | — | an I/O standard the DDR tables cover — board revision |
 | flash SCK | no vendor figure for user-mode `USRMCLK` | the design's own fmax, because SCK is fabric-rate | 144 MHz, `0xEB` continuous | — | raise design fmax, or SCK from a 2× domain |
 | PLL `sync` | 400 MHz `fOUT` | 130 MHz solved; **13 of 68** integer points keep `fPFD` ≥ 10 MHz | 60 MHz | 46% of the solved range | measure the CPU's real ceiling |
 | console | — | 115200 baud on pins shared with JTAG | 11.52 kB/s | 100% | a different transport, not a faster pin |
@@ -399,285 +373,7 @@ board index. This note covers the silicon, not the gateware running on it.
 Generic ECP5/toolchain findings live in pluribus (`docs/ecp5/`), not here — the
 test is whether a finding would be useful to someone with a different ECP5 board.
 
-## Getting DDR data in and out at speed
-
-The HyperRAM side of the same problem is in
-[`hyperram/w956a8.md`](../hyperram/w956a8.md).
-
-### The clock structure is not the canonical ECP5 one, and that is the leading hypothesis
-
-`hyperram_ceiling_top.py` takes `sync` from **`CLKOP`** and `fast` from
-**`CLKOS2`** — two independent PLL outputs at a 2:1 ratio, each with its own
-clock buffer. `CLKDIVF` usage in every built design is **0 of 4**.
-
-The Lattice-canonical structure for a `DQSBUFM` interface is
-**PLL → ECLK → `CLKDIVF` (÷2) → SCLK**, with `ECLKSYNCB` in the path. That
-matters for two reasons:
-
-- With `CLKDIVF`, SCLK is *derived from* ECLK, so their phase relationship is
-  structural. With two PLL outputs it is only nominal — the PLL guarantees
-  frequency, and each output has its own buffer and its own insertion delay.
-- **`CLKDIVF` has an `ALIGNWD` port whose entire purpose is to slip the divided
-  clock by one fast-clock cycle.** That is the standard mechanism for correcting
-  exactly the fault we see: a word-boundary slip in 4:1 gearing, where the data
-  is right but arrives in the wrong half.
-
-Our CK 200 failure — *"the two 16-bit halves are transposed and one of them
-belongs to a neighbouring word"* — is a textbook description of what `ALIGNWD`
-exists to fix, and this design has no `ALIGNWD` because it has no `CLKDIVF`.
-
-**There is no `ECLKSYNCB` either**, in ours or upstream's. The PLL's `CLKOS2`
-goes straight to `ClockSignal("fast")` and nextpnr promotes it to an edge clock
-by itself. `ECLKSYNCB` exists to gate ECLK so it *starts* in a known
-relationship to SCLK; without it, the phase at which the two domains come out of
-reset is whatever the PLL and the routing happen to give on that
-place-and-route. Both `CPHASE` values are set to `div - 1` — the
-no-shift convention — which makes them nominally aligned and specifies nothing
-about the alignment that actually results.
-
-**Upstream has the same structure**, so this is not a local mistake:
-`repos/luna/luna/gateware/architecture/car.py` takes 240/120/60 MHz from
-`CLKOP`/`CLKOS`/`CLKOS2` with hand-set `CPHASE` values of 1/3/7 and no
-`CLKDIVF`. Upstream at least tuned those phases; ours are formulaic. **That is
-the cheapest experiment in this section** — sweeping `CLKOS2_CPHASE` and
-`CLKOS2_FPHASE` at CK 200 costs bitstreams and no design change, and if the
-failure moves with phase it is confirmed as an alignment fault before anyone
-commits to the `CLKDIVF` restructure.
-
-**Cost:** restructuring the clock domain generator, which is not small, and it
-changes every HyperRAM bitstream. **Value:** it is the only candidate on this
-page that addresses the failure's actual signature rather than its
-circumstances.
-
-### `READCLKSEL` — and it does not do what this workspace assumed
-
-`psram.py:779-782` hardcodes `READCLKSEL0=0, READCLKSEL1=1, READCLKSEL2=0` with
-upstream's *"TODO: may need to tune at runtime by trying different values &
-checking for BURSTDET high"*. It was swept on the parked DQS PHY and the
-result was negative (below); the semantics also matter, and they are not what
-"read clock select" suggests.
-
-**Swept result (DQS PHY, removed in `c3388ef`):** all eight taps showed the same
-read skew (address A returned `[A+1, A+2]`), which separates a phase error from a
-capture-point error. Source:
-[`hyperram_dqs_phy.py:244-253`](https://github.com/awtoau/cynthion-workspace/blob/8005a3be6aa293ab1258c10471b327dfeee63a70/gateware/soc/peripherals/hyperram_dqs_phy.py#L244-L253)
-at `c3388ef^`.
-- Cause: the device's fixed latency is an odd number of CK; the controller counts
-  whole `sync` cycles of 2 CK at 4:1 gearing, so one CK is not expressible.
-- Failed corrections: odd start address hangs the read path; even, two words back,
-  needs re-assembly across beats. Fix was moving the read window (`read_phase`).
-- Not established: whether a gating-pulse sweep with `PAUSE` and the
-  outer `READ1`/`READ0` loop below changes this.
-
-**Lattice FPGA-TN-02035-1.3, "ECP5 and ECP5-5G High-Speed I/O Interface", §6.2.4**
-([mirror](https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02035-1-3-ECP5-ECP5-5G-HighSpeed-IO-Interface.pdf)):
-
-> Once READ1/0 positions the READ pulse, READCLKSEL2/1/0 can be used to **shift
-> the READ pulse by 1/4T per step**. With the total eight possible combinations
-> from 000 to 111, READCLKSEL2/1/0 covers the READ pulse shift up to a **whole 2T
-> timing window**. If BURSTDET is asserted with a certain READCLKSEL2/1/0 value,
-> it indicates that the READ pulse has been located to the optimal position. **If
-> no BURSTDET is asserted during this step, the READ pulse needs to be moved to
-> the next timing window.**
-
-So `READCLKSEL` positions the **READ gating pulse**, not a phase-shifted capture
-clock. The 90° shift comes from `DDRDLL`/`DDRDEL` into `DQSR90`; the fine delay
-is a third mechanism (`RDMOVE`). Three separate knobs, and this workspace had
-conflated the first two.
-
-**Three consequences for the sweep:**
-
-1. **Eight values span only 2T.** If the round-trip DQS delay lands outside that
-   window, no `READCLKSEL` value works, and the fix is to move `READ1`/`READ0` to
-   the next cycle — an *outer* loop the existing harness has no notion of. The
-   same section warns that **moving `READ1` alone gives "two short pulses in wrong
-   timing"**; both must move together.
-2. **`PAUSE` is mandatory around the change**, not optional: *"the PAUSE input to
-   DQSBUFM must be asserted before 4T of the change and remain asserted for
-   another 4T after the change"*. LiteX hit this the hard way — litedram#103, two
-   of six OrangeCrabs failing memtest after a successful read-levelling, fixed by
-   strobing `PAUSE` afterwards.
-3. **The ECP5 datasheet's port table is wrong.** It lists `READCLKSEL[1:0]` — two
-   bits. The technical note, the primitive and prjtrellis all have three.
-
-**The port table discrepancy is a datasheet error, not a silicon limit** —
-TN-02035 settles it at eight values.
-
-### Tiliqua has already implemented LUNA's TODO, and it is a drop-in
-
-`apfaudio/tiliqua` vendors LUNA's `psram.py` split across three files and changed
-**exactly one thing that matters**. Where LUNA hardcodes `READCLKSEL = 0b010`,
-Tiliqua drives it from a runtime register with the mandatory `PAUSE`-before /
-`PAUSE`-after sequence, and runs a training FSM (`periph/psram.py:198-223`):
-
-    with m.If(timeout == 127):
-        m.d.sync += counter.eq(counter + 1)
-        with m.If(counter == 127):
-            m.next = "IDLE"
-        with m.If(~psram.phy.burstdet):
-            m.d.sync += readclksel.eq(readclksel + 1)
-            m.d.sync += counter.eq(0)
-
-Dummy read, wait, check `BURSTDET`; if low, increment `READCLKSEL` (wrapping
-0→7) and restart. It requires **128 consecutive bursts with `BURSTDET` high**
-before releasing — matching TN-02035's recommendation exactly. Commit
-`37180a74`, September 2024.
-
-**This is the single most reusable thing found.** Same file lineage, same
-primitive, proven on real ECP5 HyperRAM silicon — and it establishes that
-`BURSTDET` *does* assert on a HyperBus part, which was the open question.
-
-Two caveats before copying it wholesale:
-
-- **Tiliqua runs at CK 120 MHz**, 40% below where we already are, so it is not
-  evidence about 192 or 200.
-- **First-pass-wins is the wrong policy.** It stops at the first `READCLKSEL`
-  that works, which may be the edge of the eye. `jeanthom/gram`
-  (`libgram/src/calibration.c`) does it properly: sweep 0..7, find the **minimum**
-  and **maximum** values that assert, and program the **midpoint**. LiteX's BIOS
-  does the same with `delay_mid = (delay_min + delay_max) / 2` and a comment
-  worth keeping — `delay_min = delay - 1; // delay on edges can be spotty`.
-
-Everything else in Tiliqua is unchanged from LUNA, including
-`LOW/HIGH_LATENCY_CLOCKS = 3/5`, the `extra_latency | 1`, and the tied-off margin
-control. **Neither LUNA nor Tiliqua writes CR0 at all**, so every option in the
-
-### `BURSTDET` — four specific reasons ours may be staying low
-
-TN-02035 §6.2.4 imposes conditions this design does not obviously meet:
-
-> **A minimum burst length of eight on the memory bus must be used in the training
-> process.** … The BURSTDET signal is asserted **after the last DQS transition is
-> completed** … the memory controller should **wait until the DATAVALID signal
-> from DQSBUFM is asserted and then sample the BURSTDET signal at the next
-> cycle**. … It is recommended that **at least 128 read operations** be performed
-> repetitively at a READ pulse position.
-
-Table 6.3, for X2 gearing: initial `READ` assertion **"at least 5.5T before
-preamble"**, `READ` width **"Total Burst Length / 4"** SCLK cycles.
-
-Against that, in likely order:
-
-1. **`READ0`/`READ1` windowing.** LUNA drives them straight from `phy.read`,
-   raised in `READ_DATA`. If that is not ≥5.5T before the strobe and held for
-   burst/4 SCLK cycles, `BURSTDET` cannot assert **at any `READCLKSEL` value** —
-   which would make a sweep of the inner loop alone come back empty and prove
-   nothing.
-2. **Sampling method.** `burstdet_seen` is latched from a level. gram's commit
-   `0cd69420` is titled *"Detect burstdet on rising edge, not by logic level"*,
-   and exists because level-sampling misleads.
-3. **`READCLKSEL` fixed at one point in a 2T span**, per above.
-4. **RWDS is not DQS.** `DQSBUFM`'s burst detector is built for DDR3's
-   preamble/postamble, which HyperBus does not have. Tiliqua's simulation path
-   force-ties `burstdet.eq(1)` for want of a model — **but Tiliqua gets real
-   assertions on hardware at CK 120**, so it is achievable on HyperRAM and this
-   is the least likely of the four.
-
-### `RDLOADN` / `RDMOVE` — tied off, and that is correct
-
-`psram.py` sets `RDLOADN=0, RDMOVE=0, RDDIRECTION=1`. **Sweeping them is not a
-cheap experiment**, which is the opposite of what the port names suggest.
-
-TN-02035 §8.10.1: *"If margin control is not used, then LOADN should be low to
-**continuously get code from DDRDLL**."* `RDLOADN=0` is the setting that keeps the
-delay line tracking process, voltage and temperature automatically. Raising it
-hands **you** responsibility for tracking PVT via `DCNTL[7:0]`. LiteDRAM ties them
-off identically.
-
-So this is a real knob, but it is not free and it is not first: it converts an
-automatic delay into a manual one. Do it only after `BURSTDET` works, when there
-is something to centre against.
-
-### The ECP5 is not the limit on paper — but nothing on paper covers this bus
-
-Speed grade **8**, the fastest ECP5 bin. From the family datasheet:
-
-| spec | -8 | our worst case |
-|---|---|---|
-| `fMAX_GDDRX2` (ECLK), generic DDR | 400 MHz | 200 MHz at CK 200 |
-| `fMAX_DDR3` (ECLK) | 400 MHz | 200 MHz at CK 200 |
-| `tDWDQ`, DQ input valid window required | 0.519 ns | part gives 1.45 ns of `tDV` |
-
-**Twice the headroom on ECLK.** The ECP5's published DDR limits do not explain a
-failure at CK 200.
-
-**The eye comparison is not as comfortable as it looks**, though, and the first
-draft of this page overstated it. `tDV` is data valid relative to *CK*;
-`tDWDQ` is the window the FPGA needs relative to *DQS*. Closing the gap between
-them costs `tDSS`/`tDSH` — **±0.8 ns on our bin** — so the figure that accounts for it is
-1.45 − 2 × 0.8 = **−0.15 ns** in the worst case, i.e. the strobe-relative eye is
-not guaranteed open at all at CK 200 on a 166 MHz part. The CK 192 result that
-this paragraph once cited as evidence the part sits inside its guardband is
-**withdrawn** — CK 180 fails in bulk. Nothing here says there is margin.
-
-**Except that none of those numbers were characterised on our I/O standard.** The
-datasheet's own notes: *"Generic DDR timing numbers based on LVDS I/O"*, *"DDR3
-timing numbers based on SSTL15"*, *"General I/O timing numbers based on
-LVCMOS 2.5, 12 mA, Fast Slew Rate, 0 pF load"*. **This bus is LVCMOS33** —
-a higher-swing, higher-capacitance buffer that appears in none of them.
-
-So the correct statement is not "the FPGA has margin" but that **no vendor
-*source-synchronous* number covers this bus**: the DDR capture and launch tables
-were characterised on standards this board does not use, so nothing published
-tells you whether the strobe-relative eye is open at CK 192 on LVCMOS33.
-
-**Amended: there IS a per-buffer number, and it is much lower than 400 Mb/s.**
-Table 3.21, Maximum I/O Buffer Speed, does cover LVCMOS33 — 150 MHz output and
-200 MHz input, "for all drives" — and its note 6 says the maximum data rate is
-twice the clock rate under DDR. That is **300 Mb/s per pin out, 400 Mb/s in**.
-Our 384 Mb/s per pin at CK 192 is therefore **28% past the published output
-figure**, not merely unpublished. See the [Performance](#performance) section
-above; that number, not `fMAX_GDDRX2`, is the one to compare against.
-
-### `ALIGNWD` is the published fix for our exact failure, and there is firmware to port
-
-Lattice FPGA-TN-02200-1.3, the sysCLOCK PLL/DLL guide, Table 13.1:
-
-> **ALIGNWD** | I | Signal is used for word alignment. **When enabled it slips the
-> output one cycle relative to the input clock.** The ALIGNWD input is intended
-> for use with high-speed data interfaces such as DDR or 7:1 LVDS Video.
-
-The ecosystem splits two ways, and the split is informative:
-
-- **LiteDRAM ties `ALIGNWD = 0` everywhere** and does word alignment in fabric
-  with a soft `BitSlip(4)` on a CSR — deliberately separate from the
-  `READCLKSEL` read delay.
-- **Every Davill-lineage ECP5 HyperRAM controller drives `CLKDIVF.ALIGNWD` from a
-  CSR.** `orbtrace/orbtrace/crg_ecp5.py:41-59`, and identically in `boson-sd` and
-  `DiVA`:
-
-      self._slip_hr2x   = CSRStorage()
-      self._slip_hr2x90 = CSRStorage()
-      ...
-      i_ALIGNWD = self._slip_hr2x.storage,
-
-**The firmware is the part to steal** —
-`boson-sd/firmware/main_fw_bootstrap/hyperram.c:80-113`, two nested loops:
-
-- **outer:** `clk_del` 0..3, the two `ALIGNWD` bits giving four coarse
-  word-boundary positions, applied as **one-shot pulses, not levels**;
-- **inner:** sweep the PLL's dynamic phase steps, memtest at each, look for a
-  passing window of ≥5–6 steps, then centre by stepping up `window/2`;
-- if no window at this slip, bump `clk_del` and slip again. It prints a
-  pass/fail map as it goes.
-
-That is Lattice's own documented 7:1-LVDS word-alignment pattern (TN-02035
-§9.1.4: *"Each pulse on ALIGNWD rotates the 7-bit bus by 2 bits"*) applied to
-HyperRAM. **It is the only published open-source fix for a word-boundary slip on
-ECP5**, and its shape — a coarse word slip crossed with a fine phase sweep — is
-what our CK 200 failure calls for.
-
-**One gotcha:** attach `ALIGNWD` to **`CLKDIVF`**, not `IDDRX2F`. Glasgow leaves
-`IDDRX2F.ALIGNWD` unconnected with a comment pointing at nextpnr#1749; `CLKDIVF`
-is the well-trodden path. This is a second, independent reason the
-`CLKDIVF` restructure is the right move — it is not only the canonical clock
-structure, it is where the fix attaches.
-
-**Probable root cause, from the same survey:** `ECLKSYNCB.STOP` → `CLKDIVF`/IDDR
-reset skew gives a *random word-boundary phase at power-up*. Lattice's own answer
-is the GDDRX_SYNC soft IP for deterministic ECLK restart, which TN-02035 requires
-for every GDDRX2 interface. None of the open HyperRAM designs use it — which is
-precisely why they all need a firmware slip sweep instead.
+## Flash clock (`USRMCLK`)
 
 ### There is no `USRMCLK` maximum to violate
 

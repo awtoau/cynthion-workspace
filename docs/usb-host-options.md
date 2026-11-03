@@ -155,7 +155,7 @@ Proposed window `usb_host` at 0xf0001000, size 0x100 (free, aligned, inside the 
 
 - Estimates unmeasured (VexiiRiscv stall on an uncached `iobus` load unknown; firmware loop against the CLINT tick, needs the board).
 - Register port fits control transfers, enumeration, HID/interrupt endpoints, all FS. Sustained HS bulk reaches about a third of line rate.
-- Tier two: `guh/periph/dma.py` (Wishbone initiator, `cti`/`bte` bursts, BSD-3 since `923c8490`) as a fourth arbiter master into the 64 KiB block RAM at 0x0. Staging FIFO `_DATA_FIFO_WORDS` default 8 KiB ~ 4 BRAM (tunable). HyperRAM has no Wishbone adapter ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) and an unfinished DQS path ([#92](https://github.com/awtoau/cynthion-workspace/issues/92)). Build only after a measured PIO number proves it necessary.
+- Tier two: `guh/periph/dma.py` (Wishbone initiator, `cti`/`bte` bursts, BSD-3 since `923c8490`) as a fourth arbiter master into the 64 KiB block RAM at 0x0. Staging FIFO `_DATA_FIFO_WORDS` default 8 KiB ~ 4 BRAM (tunable). Build only after a measured PIO number proves it necessary.
 
 ### 7.5 Enumeration in firmware
 

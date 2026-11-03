@@ -26,13 +26,13 @@ All built for r1.4, same device, package and speed grade.
 ## Capture work barely touches block RAM
 
 - Analyzer buffers into HyperRAM via `HyperRAMPacketFIFO`; block RAM holds only small FIFOs: `out_fifo_depth=128` out, a 4-deep async FIFO into the `usb` domain.
-- HyperRAM streams at 220 MB/s, USB caps at 48.5 MB/s: no block RAM needed for bulk buffering.
+- USB caps at 48.5 MB/s, far below the HyperRAM bus ([`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md), #581): no block RAM needed for bulk buffering.
 
 ## Firmware, not buffers, consumes it
 
 - Both heavy designs are soft-CPU systems with block-RAM program memory: 64 KiB is 32 blocks before anything else.
 - A 16 KiB-cache configuration reached 32/56 in the RISC-V sweep ("nearly full" only because 64 KiB of firmware is assumed alongside).
-- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through `SPIFlashMemoryMap`, freeing block RAM. Firmware in HyperRAM is untried and unnecessary.
+- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through `SPIFlashMemoryMap`, freeing block RAM.
 - Cost of flash execution: flash fetch costs many cycles against block RAM's one, which the I-cache hides; with a too-small cache the stall is measurable: [`../../rtic.md`](../../rtic.md) ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)): RTIC's extra 1,700 bytes of `.text` moved frontend stalls from 44 to **452 per 1,000 cycles** through a 4 KiB direct-mapped I-cache.
 
 ## Cache geometry

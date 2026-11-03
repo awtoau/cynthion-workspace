@@ -1,5 +1,7 @@
 # HyperRAM sequential baseline (non-RV path)
 
+Reference measurement for the clean-room core (`gateware/hyperram_baseline/`); not the SoC driver ([soc-peripheral.md](soc-peripheral.md), #588).
+
 Issue: [#581](https://github.com/awtoau/cynthion-workspace/issues/581).
 
 **Rule (Dan, 2026-11-03):** this baseline is designed from public designs and the datasheet only. From this repo it takes board facts (pinout, 60 MHz oscillator pin, bank voltage) and nothing else: no repo controller, PHY, clocking, constants, timing values, script parameters or doc numbers. The review of the repo's own HyperRAM code is separate ([#582](https://github.com/awtoau/cynthion-workspace/issues/582), [#427 comment](https://github.com/awtoau/cynthion-workspace/issues/427)) and did not feed this design.

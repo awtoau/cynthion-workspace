@@ -263,11 +263,7 @@ same route — byte-identical, so the URLs are stable and serve the same file.
   *"must not be used in violation of the tCSM limit"* and *"it is recommended not to
   stop the clock during register access"*. That last sentence **replaces**, rather
   than adds to, the datasheet's §10.2.2 *"recommended to stop the clock when it is in
-  Low state"* — see [`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
-
-Full readings, with the places the four documents contradict each other and the
-datasheet, are in
-[`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
+  Low state"*.
 
 ### Vendor models — the Verilog one is encrypted, the HSPICE and IBIS are not
 
@@ -284,10 +280,6 @@ including a **250 MHz** block the datasheet has no column for (`tCSHI` 6 ns, `tR
 28 ns, `tACC` 28 ns, `tIS`/`tIH` 0.5 ns, `tDSS`/`tDSH` ±0.4 ns), a package default of
 200 MHz against a KGD default of 250 MHz, and `tCSM` as **4000 ns below 85 °C, 1000 ns
 above** — the temperature dependence that `` `define LA_85C `` switches.
-
-Code references for this part — RTL controllers, software and SoC drivers, and
-simulation models — are surveyed in
-[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
 
 ### Note on fetching from ISSI
 
@@ -325,8 +317,7 @@ Four files that were in this directory but not in this manifest until 2026-08-10
 `HyperBus_Spec_infineon.pdf` is the one to reach for when the question is "what does
 the *bus* require", and the Winbond datasheet when it is "what does *this device* do".
 §5 is explicit that the register map is device-dependent, which is why the same
-numeral means different registers across vendors — see the byte-vs-word trap in
-[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
+numeral means different registers across vendors.
 
 ## Configuration flash
 

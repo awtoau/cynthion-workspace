@@ -8,7 +8,7 @@
 
 This SoC has no USB device controller and no USB packet path on the TARGET port.
 
-- Peripherals: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`, `i2c_mux`, `vbus`, `fabric_status`, interrupt controller (`gateware/soc/cpu/intc.py`), `clint`, `spiflash`, `bootram`, `hyperram`.
+- Peripherals: `ram`, two 16550 consoles, `gpio`, `i2c`, `sideband`, `target_ulpi`, `i2c_mux`, `vbus`, `fabric_status`, interrupt controller (`gateware/soc/cpu/intc.py`), `clint`, `spiflash`; HyperRAM register peripheral at `0xf0000800` (#588).
 - `gateware/soc/peripherals/ulpi_window.py` reads/writes USB3343 registers over `target_phy`; it cannot send or receive a packet.
 - Moondancer expects `usb{0,1,2}` + `ep_control` + `ep_in` + `ep_out` CSR peripherals; none exist here.
 
@@ -20,7 +20,7 @@ This SoC has no USB device controller and no USB packet path on the TARGET port.
 | luna USB device on AUX | `gateware/probes/usb_serial/usb_serial.py`, in `gateware/soc/top.py` | `USBSerialDevice` enumerates at high speed; luna's USB gateware builds and runs here ([usb-performance.md](../usb-performance.md)) |
 | CONTROL port handover | `gateware/probes/sideband/sideband_advertise.py`, [sideband](../chips/cynone-sideband.md), `scripts/sideband_advertise_sim.py` | upstream's `ApolloAdvertiser` prerequisite solved |
 | VBUS switch control | `gateware/soc/peripherals/vbus_csr.py` | CPU-visible home for pass-through / port power |
-| HyperRAM | `gateware/soc/peripherals/hyperram_dqs_phy.py` at `0x2000_0000` | analyzer's 8 MiB capture buffer |
+| HyperRAM | register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](../chips/hyperram/soc-peripheral.md) (#588) | analyzer's 8 MiB capture buffer |
 | PAC from the SoC's own map | `./dev.py pac` | new peripherals get Rust accessors |
 | `smolusb::control::Control` | upstream, trait-based over `D: UsbDriver` | hardware-independent control-transfer state machine; ports verbatim |
 
@@ -58,9 +58,9 @@ This SoC has no USB device controller and no USB packet path on the TARGET port.
 Ports: TARGET carries the traffic, CONTROL carries the stream (two cables). No firmware, PAC or libgreat; pure gateware.
 
 - Needed: P1; the capture engine (`USBAnalyzer` ~400 lines Amaranth, no luna-soc dependency: take or rewrite); a HyperRAM stream port; a bulk IN endpoint on CONTROL with the five vendor requests and descriptors; port request (solved); VBUS switching driven from gateware state (analyzer has no CPU; `vbus_csr.py` is CPU-driven).
-- The one real design decision: upstream's `HyperRAMPacketFIFO` instantiates luna's `HyperRAMInterface`/`HyperRAMPHY`; we have our own DQS PHY behind Wishbone at `0x2000_0000`. Reusing ours needs a streaming front end; luna's means two HyperRAM controllers. Settle before code.
+- Upstream's `HyperRAMPacketFIFO` instantiates luna's `HyperRAMInterface`/`HyperRAMPHY`; ours is the #581 core behind a register interface (#588), so the stream port is new work on that core.
 - Wire contract: VID:PID `1d50:615b`; interface class `0xff`, subclass `0x10`, protocol `0x01`; capture stream bulk IN `0x81`, 16 KiB reads, 4 in flight; vendor requests `0` get state, `1` set state, `2` get speeds, `3` set test-device config, `4` get protocol minor version; state byte = capture-enable bit + 2-bit speed selector.
-- Tests: QEMU no. Sim yes (capture engine + FIFO in `gate`, needs P2; HyperRAM FIFO against the existing HyperRAM model). Hardware required for Packetry interop and real-chirp speed detection (`test-board`, not `gate`).
+- Tests: QEMU no. Sim yes (capture engine + FIFO in `gate`, needs P2). Hardware required for Packetry interop and real-chirp speed detection (`test-board`, not `gate`).
 
 ### 2. Analyzer test device (Portable)
 
@@ -96,9 +96,9 @@ Nothing on the device: same bitstream/firmware as 3. Host side `facedancer: face
 
 CONTROL only, one cable. Tests are register reads over a debug transport.
 
-- PHY tests read USB3343 ID registers: `ulpi_window.py` does this for `target_phy` (four-phase handshake, bounded wait); extending to `aux_phy` and `control_phy` is a resource-request change (taking `control_phy` off Apollo needs the port request, built). HyperRAM test: covered by our controller, `peripherals/hyperram_probe.py`, `scripts/hyperram_identify.py`. Debug-connection test: Apollo JTAG, no FPGA design.
+- PHY tests read USB3343 ID registers: `ulpi_window.py` does this for `target_phy` (four-phase handshake, bounded wait); extending to `aux_phy` and `control_phy` is a resource-request change (taking `control_phy` off Apollo needs the port request, built). HyperRAM test: ID registers. Debug-connection test: Apollo JTAG, no FPGA design.
 - Transport differs: upstream JTAG-tunnelled; ours CPU CSR bus (plus sideband; `gateware/soc/bus/jtag_stage.py`, `soc_jtag_stage_sim`).
-- Compare first: `soc_hyperram_sim`, `soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim`, `./dev.py test-board` may already cover upstream's five cases (`test_debug_connection`, `test_host_phy`, `test_target_phy`, `test_sideband_phy`, `test_hyperram`).
+- Compare first: `soc_i2c_owner_sim`, `soc_typec_sim`, `soc_board_sim`, `./dev.py test-board` may already cover upstream's five cases (`test_debug_connection`, `test_host_phy`, `test_target_phy`, `test_sideband_phy`, `test_hyperram`).
 - Tests: QEMU no. Sim yes for register paths (`ulpi_window` handshake has no pysim test; worth closing regardless). Hardware: run against a board believed good first; a diagnostic's first run is the control.
 
 ### 7. Flashing (done, differently; audit)
