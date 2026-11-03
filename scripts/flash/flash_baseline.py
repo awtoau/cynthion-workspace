@@ -259,9 +259,10 @@ class Flash:
         else:
             if delta:
                 raise Hung(f"PHASESTEP to {step} never finished")
-        frac = step / self.n_steps
-        self.b.wr("XFER", int(frac < 0.25 or frac >= 0.75))
-        self.b.wr("LAT", lat | half << 8)
+        # `half` bit 0: DDR pairing; bit 1: XFER (the capn path). XFER is probed, not
+        # derived from the step count: the count does not name the phase (diag, #590).
+        self.b.wr("XFER", half >> 1 & 1)
+        self.b.wr("LAT", lat | (half & 1) << 8)
 
     # -- ops -------------------------------------------------------------------------
     def op(self, kind, *, d=0, addr=0, length=0, burst=0, count=0, stride=0, check=0, seed=0,
@@ -386,8 +387,7 @@ def open_board(sck):
 def eye_key(fl, step, lat, half=0):
     """Capture time in phase steps: past 3/4 T the xfer path adds an engine cycle. DDR
     pairings (`half`) are separate rows."""
-    extra = 1 if step / fl.n_steps >= 0.75 else 0
-    return (half, (lat - extra) * fl.n_steps + step)
+    return (half, lat * fl.n_steps + step)
 
 
 def pick(fl, grid):
@@ -417,7 +417,7 @@ def eye(fl, probe, label, stride, lats=LAT_RANGE, halves=(0,)):
             fl.set_capture(step, lat, h)
             grid[(step, lat, h)] = probe()
     best, width = pick(fl, grid)
-    text = [f"lat {lat:>2}{'' if halves == (0,) else f' half {h}'} "
+    text = [f"lat {lat:>2} xfer {h >> 1}{'' if max(halves) < 2 and len(halves) == 1 else f' half {h & 1}'} "
             + "".join("." if grid[(s, lat, h)] else "X" for s in steps) for lat, h in rows]
     say(f"  eye {label} (phase steps 0..{fl.n_steps - 1} by {stride}):\n    " + "\n    ".join(text))
     say(f"  {label}: best {best}, widest clean run {width} points")
@@ -574,7 +574,7 @@ def measure(sck, state):
     # 1. capture from the JEDEC ID (x1 on IO1): enough for status polls and the scan.
     # Coarse: only the lat (round trip in cycles) is wanted here; EBh refines the phase.
     best, width = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
-                      lats=range(0, 8))
+                      lats=range(0, 8), halves=(0, 2))
     if best is None:
         record(dict(label="point", sck=sck, sck_meas=fl.f, ok=False, why="no JEDEC eye"))
         say(f"sck{sck:g}: no capture setting reads the JEDEC ID; point abandoned")
@@ -592,7 +592,8 @@ def measure(sck, state):
             return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
         lat0 = state["jedec_best"][1]
         best, width = eye(fl, probe, "EBh seeded", max(1, fl.n_steps // 16),
-                          lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 2)))
+                          lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 2)),
+                          halves=(0, 2))
         if best is None:
             say(f"sck{sck:g}: no clean EBh capture; measuring at the last probed phase")
             best = (fl.phase(), *state["jedec_best"][1:])
@@ -637,7 +638,7 @@ def measure_dtr(fl, seed, stale, state):
         return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
     # The DTR window sits ~1 lat later than the SDR one at 80 MHz and moves out with SCK.
     best, width = eye(fl, probe, "DTR seeded", max(1, fl.n_steps // 8),
-                      lats=range(lat0, min(LAT_RANGE.stop, lat0 + 4)), halves=(0, 1))
+                      lats=range(lat0, min(LAT_RANGE.stop, lat0 + 3)), halves=(0, 1, 2, 3))
     if best is None:
         say(f"  {DTR_MODE}: no clean capture")
         best = (fl.phase(), *state["jedec_best"][1:])
