@@ -44,7 +44,7 @@ rather than trusted on its own.
 
 Output goes to the console and to tmp/logs/dev.log. Each simulation's own full
 output lands in the same file, tagged with the module and function that wrote
-it -- this reports only the tail of a failing one.
+it -- this reports every FAIL line, group summaries and the tail of a failing one.
 """
 
 import argparse
@@ -135,6 +135,20 @@ def takes_soak(name):
     return '"--soak"' in source
 
 
+def failure_report(out):
+    """Every FAIL line in full, per-group summary lines, then the last 12 lines (#592)."""
+    lines = out.strip().splitlines()
+    keep = []
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith("FAIL"):
+            keep.append(l)
+            if i + 1 < len(lines) and not RESULT.match(lines[i + 1]):
+                keep.append(lines[i + 1])      # the message sits on the next line
+        elif re.search(r"\bprofile \w+, \d+ cases\b|\d+ checks?\b", l):
+            keep.append(l)
+    return keep + ["--- last 12 lines ---"] + lines[-12:]
+
+
 def run_one(name, python, soak=False):
     """Run one simulation. Returns (name, ok, passed, failed, seconds, tail)."""
     started = time.monotonic()
@@ -155,7 +169,7 @@ def run_one(name, python, soak=False):
     passed = results.count("PASS")
     failed = results.count("FAIL")
     ok = proc.returncode == 0 and failed == 0 and passed > 0
-    tail = out.strip().splitlines()[-12:] if not ok else []
+    tail = failure_report(out) if not ok else []
     return name, ok, passed, failed, time.monotonic() - started, tail
 
 
