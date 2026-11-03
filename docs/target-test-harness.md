@@ -38,8 +38,9 @@
 ## Driver/engine findings from this harness
 - `Host::control` took the direction bit as the data stage: wLength 0 with bmRequestType IN sent an OUT status stage. Fixed (status is IN when wLength is 0).
 - `Host::control` now restarts toggles after SET_CONFIGURATION and after CLEAR_FEATURE(ENDPOINT_HALT).
-- OUT payload over 512 B: no EV_DONE, and a bus reset does not recover it (role cycle does). Case `bulk_out_mps_plus_1` is an expected failure (`known`) until the engine refuses it.
+- OUT payload over 512 B (#572): the shim's DRAIN waited for its TX FIFO to empty into a full SIE FIFO, forever; nothing but leaving host ended it. Fixed: refused at `start` (`tx_overflow` + `done`, both FIFOs emptied); a bus reset ends any transfer and empties TX. Cases `bulk_out_mps_plus_1`, `bulk_out_oversize_then_bus_reset`.
 - OUT payloads up to 512 B pass (the 128-entry TX FIFO is not the limit in host role).
+- Pixel EP0 wedge after NAKed requests (#572): device-side. `ctrl_nak_forever_then_good` abandons four NAK-forever requests on the model (vendor 0x5A) and the next SETUPs are ACKed.
 
 ## Waits
 - Sim: every wait is a poll count with a stated bound (`usb_target_sim.py` constants); a case over 60 s wall fails ("stall guard").
