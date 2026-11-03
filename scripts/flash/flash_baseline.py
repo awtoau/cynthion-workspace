@@ -122,20 +122,32 @@ sys.path.insert(0, {board!r})
 sys.path.insert(0, {gw!r})
 from board_r14 import CynthionR14Baseline
 from top import FlashBaselineTop
-CynthionR14Baseline().build(FlashBaselineTop(sck_mhz={sck!r}), build_dir={out!r}, do_program=False)
+plat = CynthionR14Baseline()
+if {io!r}:
+    plat.resources["flash", 0].attrs.update({io!r})
+plat.build(FlashBaselineTop(sck_mhz={sck!r}), build_dir={out!r}, do_program=False)
 print("BUILD OK")
 """
 
 
-def build_one(sck):
-    out = OUT / f"sck{sck:g}"
+# Pin variants: the default is board_r14's 16 mA FAST; 8 mA SLOW is the other corner.
+IO_VARIANTS = {"": None, "io8slow": {"DRIVE": "8", "SLEWRATE": "SLOW"}}
+
+
+def bdir(sck, io=""):
+    return OUT / (f"sck{sck:g}" + (f"-{io}" if io else ""))
+
+
+def build_one(sck, io=""):
+    out = bdir(sck, io)
     out.mkdir(parents=True, exist_ok=True)
     blog = out / "build.log"
     env = dict(os.environ)
     # The board judges, not the placer: a missed constraint must still yield a bitstream.
     env["AMARANTH_nextpnr_opts"] = "--timing-allow-fail"
     env["AMARANTH_ecppack_opts"] = "--compress --freq 38.8"
-    code = BUILD_PY.format(board=str(BOARD), gw=str(GW), sck=float(sck), out=str(out))
+    code = BUILD_PY.format(board=str(BOARD), gw=str(GW), sck=float(sck), out=str(out),
+                           io=IO_VARIANTS[io])
     cmd = ["bash", "-c", f'source "{OSS_CAD_ENV}" && exec "{sys.executable}" -c "$0"', code]
     start = time.monotonic()
     with blog.open("w") as f:
@@ -161,30 +173,30 @@ def build_one(sck):
     return ok
 
 
-def build_cached(scks):
+def build_cached(scks, io=""):
     rev = gateware_rev()
 
     def cached(sck):
-        stamp = OUT / f"sck{sck:g}" / "gateware_rev"
-        return ((OUT / f"sck{sck:g}" / "top.bit").exists() and stamp.exists()
+        stamp = bdir(sck, io) / "gateware_rev"
+        return ((bdir(sck, io) / "top.bit").exists() and stamp.exists()
                 and stamp.read_text().strip() == rev)
 
     stale = [s for s in scks if not cached(s)]
     say(f"gateware {rev}; building {stale or 'nothing (cached)'}")
     with ThreadPoolExecutor(max_workers=6) as ex:
-        for sck, ok in zip(stale, ex.map(build_one, stale)):
+        for sck, ok in zip(stale, ex.map(lambda f: build_one(f, io), stale)):
             if not ok:
                 return False
-            (OUT / f"sck{sck:g}" / "gateware_rev").write_text(rev + "\n")
+            (bdir(sck, io) / "gateware_rev").write_text(rev + "\n")
     return True
 
 
 # ---- board -------------------------------------------------------------------
 
-def configure(sck):
+def configure(sck, io=""):
     sys.path.insert(0, str(ROOT / "scripts"))
     from soc_confirm import configure_and_confirm
-    rc = configure_and_confirm(OUT / f"sck{sck:g}" / "top.bit", expect="design")
+    rc = configure_and_confirm(bdir(sck, io) / "top.bit", expect="design")
     say(f"configure sck{sck:g}: rc {rc}")
     return rc == 0
 
@@ -327,7 +339,15 @@ class Flash:
             self.raw(desc(0xC0, cmd_w4=True, dw=W4), length=1, wdata=0x30 << 24,
                      label="QPI set read parameters")
         else:
-            self.raw(desc(0xFF, cmd_w4=True), label="QPI exit")
+            self.reset_part()
+
+    def reset_part(self):
+        """66h + 99h on 4 lines (QPI) then on 1 line (SPI): clears QPI, C0h read parameters,
+        continuous read and volatile SR bits a reconfigure leaves in the part. tRST 30 us
+        (datasheet 9.6) is shorter than the next JTAG op."""
+        for w4 in (True, False):
+            self.raw(desc(0x66, cmd_w4=w4), label="enable reset")
+            self.raw(desc(0x99, cmd_w4=w4), label="reset device")
 
     def read(self, mode, addr, length, burst=None, check=CHECK_PATTERN, seed=0, xor=0, label=""):
         burst = burst or length
@@ -479,6 +499,10 @@ def identify(fl):
         f"SR3 {out['sr3']:#04x}; QPI 9Fh -> {out['qpi_jedec']:#08x}, "
         f"SPI after {out['jedec_after']:#08x}")
     out["dtr"] = dtr_probe(fl)
+    # SFDP header (5Ah, 8 dummy): "SFDP" = 0x50444653 little-endian, a second fixed pattern.
+    out["sfdp"] = fl.raw(desc(0x5A, abits=24, dummy=8, dw=W1, read=True), length=4,
+                         label="SFDP")["result"]
+    say(f"  SFDP header {out['sfdp']:#010x} ({'ok' if out['sfdp'] == 0x53464450 else 'WRONG'})")
     return out
 
 
@@ -539,7 +563,6 @@ def first_point(fl, sck, state):
                 ranges=ranges, test=[TEST_BASE, TEST_BASE + TEST_SIZE]))
     prev = last_seed()
     seed = new_seed(prev)
-    state.update(seed=seed, stale=prev)
     er = [fl.wloop(0x20, TEST_BASE, 8, 4096, label="erase 4K (20h)"),
           fl.wloop(0x52, TEST_BASE + 0x8000, 1, 0x8000, label="erase 32K (52h)"),
           fl.wloop(0xD8, TEST_BASE + 0x10000, TEST_SIZE // 0x10000 - 1, 0x10000,
@@ -561,6 +584,9 @@ def first_point(fl, sck, state):
     say(f"  blank check: errors {blank['errors']} / {blank['checked']}"
         + ("" if blank["done"] else " HUNG"))
     record(dict(blank, kind="blank"))
+    # Only now is the region this seed's: a hang above leaves state unset, so the next
+    # point programs again instead of reading a region never written.
+    state.update(seed=seed, stale=prev)
 
 
 def last_seed():
@@ -577,7 +603,7 @@ def measure(sck, state):
     fl = open_board(sck)
     if fl is None:
         return 1
-    fl.qpi(False)   # a run killed inside a QPI read leaves the part in QPI until power-off
+    fl.reset_part()   # sticky part state (QPI, C0h, continuous read) survives a reconfigure
     # 1. capture from the JEDEC ID (x1 on IO1): enough for status polls and the scan.
     # Coarse: only the lat (round trip in cycles) is wanted here; EBh refines the phase.
     best, width = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
@@ -801,16 +827,16 @@ def set_drive(fl, sr3):
     return fl.raw(desc(0x15, dw=W1, read=True), length=1, label="SR3")["result"] & 0xFF
 
 
-def climb_point(sck, seed, stale, drive_check=False):
+def climb_point(sck, seed, stale, drive_check=False, io=""):
     """One quick pass on the programmed region: eyes, EBh region + burst32, 0Bh, QPI,
     controls (asserted), DTR. Returns (pass, summary dict)."""
-    if not configure(sck):
+    if not configure(sck, io):
         return False, dict(why="configure failed")
     fl = open_board(sck)
     if fl is None:
         return False, dict(why="wrong applet")
-    fl.qpi(False)
-    out = dict(sck=sck, sck_meas=fl.f)
+    fl.reset_part()
+    out = dict(sck=sck, sck_meas=fl.f, io=io or "16mA-fast")
     best, w = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
                   lats=range(0, 8), halves=(0, 2))
     out.update(jedec=best, jedec_width=w)
@@ -853,6 +879,8 @@ def climb_point(sck, seed, stale, drive_check=False):
         r = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, label=lbl, **kw)
         report(fl, r)
         rows[lbl] = r
+    r = fl.read("QPI EBh 4-4-4", TEST_BASE, TEST_SIZE, seed=stale, label="ctl QPI stale seed")
+    report(fl, r)
     measure_dtr(fl, seed, stale, dict(jedec_best=out["jedec"]))
     reg = rows["EBh 1-4-4 region"]
     ok = (reg["done"] and reg["seq_ok"] and reg["checked"] == TEST_SIZE and reg["errors"] == 0
@@ -901,6 +929,11 @@ def climb(args):
             ok, out = climb_point(sck, seed, stale, drive_check=True)
             record(dict(label="climb drive", **out))
             say(f"climb drive {sck:g}: {'PASS' if ok else 'FAIL'} {out}")
+        # The other pin corner once at the limit (old work ran 8 mA SLOW).
+        if build_cached([last_pass], io="io8slow"):
+            ok, out = climb_point(last_pass, seed, stale, io="io8slow")
+            record(dict(label="climb io8slow", **out))
+            say(f"climb io8slow {last_pass:g}: {'PASS' if ok else 'FAIL'} {out}")
     say(f"climb {RUN_ID} done: last pass {last_pass}")
     return 0
 
