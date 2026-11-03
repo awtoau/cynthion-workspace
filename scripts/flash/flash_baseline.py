@@ -3,15 +3,17 @@
 # Build, load and measure the config-flash baseline (reference test gateware).
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Config flash (W25Q32JV) read/program/erase baseline on Cynthion r1.4, no CPU.
+"""Reference test (not product): config flash (W25Q32JV) read/program/erase baseline on
+Cynthion r1.4, no CPU.
 
-    ./scripts/flash/flash_baseline.py sweep              # every SCK, one table (normal use)
+    ./scripts/flash/flash_baseline.py sweep              # 190 MHz default; --sck F ... for others
+    ./scripts/flash/flash_baseline.py climb --start 100  # 10 MHz steps up, reads only
     ./scripts/flash/flash_baseline.py scan --sck 20      # read-only: ID, SRs, sector map
     ./scripts/flash/flash_baseline.py build --sck 50 100
     ./scripts/flash/flash_baseline.py table
 
 - Gateware: `gateware/flash_baseline/` (datasheet + Lattice docs only; see
-  docs/chips/w25q32-flash-baseline.md). One SCK per bitstream.
+  docs/chips/flash-baseline.md). One SCK per bitstream.
 - Load: `apollo configure` via scripts/soc_confirm.py (volatile; soc_run.py restores the SoC).
 - Erase/program touch only [TEST_BASE, TEST_BASE + TEST_SIZE); reads cover the whole part.
 - Log: tmp/logs/flash_baseline.log; results: tmp/flash-baseline/results.jsonl.
@@ -57,10 +59,12 @@ from top import APPLET_ID, CK_WINDOW_BITS, REG, reachable  # noqa: E402
 
 PART_BYTES = 4 << 20
 # Test region: 1 MiB of erased blocks between 0x263000 and 0x3FF000, the nearest used
-# sectors in the map `scan` found (docs/chips/w25q32-flash-baseline.md).
+# sectors in the map `scan` found (docs/chips/flash-baseline.md).
 TEST_BASE, TEST_SIZE = 0x280000, 0x100000
 # Rated 133 MHz (datasheet 9.6 FR); reachable rungs from 60 MHz, then past the rating.
-SWEEP_SCK = [20, 50, 80, 100, 120, 132, 140, 150, 160, 180, 200, 240]
+# Default: 190 MHz, the highest clean point in the 10 MHz climb (#590; Dan, 2026-11-03).
+DEFAULT_SCK = 190
+SWEEP_SCK = [DEFAULT_SCK]
 # Datasheet 9.6 maxima (s): what each WLOOP opcode may take per unit.
 T_MAX = {0x02: 3e-3, 0x32: 3e-3, 0x20: 0.4, 0x52: 1.6, 0xD8: 2.0}
 # QPI: present on this board's IQ part though its datasheet omits it (probe, #590); timing
@@ -1098,7 +1102,7 @@ def main():
     ps = sub.add_parser("scan", help="read-only: ID, status registers, sector map")
     ps.add_argument("--sck", type=float, default=20)
     pd = sub.add_parser("diag", help="readout, op freshness and PHASESTEP repeatability")
-    pd.add_argument("--sck", type=float, default=100)
+    pd.add_argument("--sck", type=float, default=DEFAULT_SCK)
     pd.add_argument("--n", type=int, default=300)
     pd.add_argument("--ops", type=int, default=100)
     pd.add_argument("--drv", action="store_true", help="eye width at SR3 drive 25%% vs 100%%")

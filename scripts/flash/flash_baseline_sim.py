@@ -3,7 +3,7 @@
 # Simulate the config-flash baseline against a W25Q32JV model written from the datasheet.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Reference test: `gateware/flash_baseline` (tx engine, op engine, PHY) against a model.
+"""Reference test (not product): `gateware/flash_baseline` (tx engine, op engine, PHY) against a model.
 
 - Model: W25Q32JV-IQ, datasheet rev G only: instruction tables 1/2, Figs 16-24 bit order,
   data out after CLK falling (tCLQV), QE=1 fixed, JEDEC EF 4016, WEL/BUSY, page wrap,

@@ -1,6 +1,10 @@
 # Config flash baseline (W25Q32JV, gateware only)
 
-Issue: [#590](https://github.com/awtoau/cynthion-workspace/issues/590). Reference test gateware, not product gateware. Fixed reference for [#589](https://github.com/awtoau/cynthion-workspace/issues/589) (flash XIP).
+Reference test gateware, not product gateware: `gateware/flash_baseline/`, `scripts/flash/flash_baseline{,_sim}.py`.
+
+**Operating point: 190 MHz SCK** (harness default; Dan, 2026-11-03): EBh 1-4-4 95.00 MB/s, 0 errors.
+
+Issue: [#590](https://github.com/awtoau/cynthion-workspace/issues/590). Fixed reference for [#589](https://github.com/awtoau/cynthion-workspace/issues/589) (flash XIP).
 
 **Rule (Dan, 2026-11-03):** clean room. Designed from the flash datasheets and Lattice ECP5 docs only. From the repo: pinout, the 60 MHz oscillator pin, bank voltage. No repo or upstream SPI/QSPI code was read.
 
@@ -97,12 +101,21 @@ Climb (runs 20261103-172252, -175223; `climb-table`). Every row: SEQ fresh, ever
 
 - Run 20261103-170624 at 100 MHz; earlier runs at 20-160 MHz agree within a few %. tBE1/tBE2 are 1.3x/1.6x datasheet typical; tSE 1.2x; tPP 0.9x. All far under max.
 
-### Bugs found and fixed on the way (details on #590)
+### PHASESTEP bug and other fixes (details on #590)
 
 - GO used a rising-edge detector while the harness toggled it: every other op never ran.
 - Capture phase was counted, not measured; PHASESTEP was combinational and glitched, so the count drifted ~6-8 steps per 64-step turn at div 8. Placement after a wrap was a cycle off (the 100/132 MHz "failures"). Fixed: registered PHASESTEP (drift 0 at div 5/6/10), probed placement and XFER.
 - /CS setup/hold was T/2 with a free-running MCLK; now a gated MCLK gives a full cycle.
 - A hung BUSY poll held the engine for the rest of the load (now ABORT); a single misread ready byte could end a poll (now two); LOCK reached the reset unsynchronised.
+
+## Ruled out
+
+- JTAG readout (LUNA register interface): 0 wrong in 300 + 3x100 write/read-backs and ID reads, 0 SEQ mismatches over every op since SEQ was added.
+- Stale results: SEQ per op, `done` masked until the engine clears it, controls fail every byte.
+- PLL lock loss: sticky bit never set at 80-260 MHz.
+- Engine/fabric at 200-260 MHz: every op completes, STATE idle; the failure is the flash not decoding commands.
+- Output drive / slew as the 190 MHz limit: DRV 25% vs 100% and 16 mA FAST vs 8 mA SLOW change the eye by at most one point; nothing opens 200.
+- /CS setup/hold: full cycle since the gated MCLK.
 
 ## Gap vs rated
 
