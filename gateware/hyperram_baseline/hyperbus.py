@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""HyperBus x8 controller for the sequential baseline (#581), written from the datasheet.
+"""HyperBus x8 controller for the sequential baseline (#581), written from the datasheet. REFERENCE core (README.md here); the SoC peripheral (#588) reuses it.
 
 Sources (full citations in docs/chips/hyperram/sequential-baseline.md):
 - W956A8MBYA datasheet rev A01-006: CA layout (Tables 1/2), data placement
