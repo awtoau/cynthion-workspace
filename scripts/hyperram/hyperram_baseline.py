@@ -211,7 +211,8 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
     for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
                  "MISSING", "STRADDLED", "CHECKED", "ERRORS", "BAD_INDEX", "BAD_GOT_WANT",
                  "GENERATED", "REG_VALUE", "BAD_BITS"):
-        row[name.lower()] = b.rd_stable(name)
+        # A run that never finished leaves counters moving: one read, flagged HUNG.
+        row[name.lower()] = b.rd_stable(name) if done else b.rd(name)
     moved = row["words_w"] + row["words_r"]
     clock = ck_meas or ck
     row["mb_s"] = (2 * moved / (row["run_cycles"] / (clock * 1e6)) / 1e6) if row["run_cycles"] else 0
@@ -263,7 +264,8 @@ def sweep_eye(b, ck, max_burst, ck_meas, args):
         set_delay(b, taps, args.direction)
         r = run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=probe, label=f"tap {taps}",
                      ck_meas=ck_meas)
-        eye.append((taps, r["errors"] + r["missing"], r["bad_bits"]))
+        eye.append((taps, r["errors"] + r["missing"] + (0 if r["done"] else probe),
+                    r["bad_bits"]))
     say(f"  eye ck{ck:g}: " + " ".join(f"{t}:{'.' if e == 0 else 'X'}" for t, e, _ in eye))
     clean = [t for t, e, _ in eye if e == 0]
     if not clean:
@@ -287,14 +289,16 @@ def measure(ck, args):
     b, max_burst, ck_meas = open_board(ck)
     if b is None:
         return 1
-    cr0 = run_case(b, ck, mode=MODE_REG, burst=2, total=2, label="CR0 read")["reg_value"]
-    say(f"  CR0 reads {cr0:#06x} (datasheet default 0x8f2f)")
+    cr0_raw = run_case(b, ck, mode=MODE_REG, burst=2, total=2, label="CR0 read")["reg_value"]
     best, width, eye = sweep_eye(b, ck, max_burst, ck_meas, args)
     set_delay(b, best, args.direction)
-    say(f"  ck{ck:g}: measuring at tap {best}; widest clean run {width} taps")
+    cr0 = run_case(b, ck, mode=MODE_REG, burst=2, total=2, label="CR0 read")["reg_value"]
+    say(f"  ck{ck:g}: measuring at tap {best}; widest clean run {width} taps; CR0 "
+        f"{cr0_raw:#06x} at tap 0, {cr0:#06x} at tap {best} (default 0x8f2f)")
     with RESULTS.open("a") as f:
-        f.write(json.dumps(dict(run_id=RUN_ID, label="eye", ck_mhz=ck, ck_meas_mhz=ck_meas, tap=best,
-                                width=width, step=args.tap_step, eye=eye, commit=commit())) + "\n")
+        f.write(json.dumps(dict(run_id=RUN_ID, label="eye", ck_mhz=ck, ck_meas_mhz=ck_meas,
+                                tap=best, width=width, step=args.tap_step, eye=eye,
+                                cr0_tap0=cr0_raw, cr0=cr0, commit=commit())) + "\n")
     kw = dict(burst=max_burst, total=WORDS_ALL, ck_meas=ck_meas)
     run_case(b, ck, mode=MODE_WRITE, label="write all", **kw)
     run_case(b, ck, mode=MODE_READ, label="read all", **kw)
@@ -368,21 +372,26 @@ def table(run_id=None):
     cks = sorted({k[0] for k in keep if (k[0], "read all") in keep})
 
     def err(r):
+        if not r["done"]:
+            return "HUNG"
         return f"{r['errors']}" + (f" (bits {r['bad_bits']:#06x})" if r["errors"] else "")
 
-    print("| CK req MHz | CK meas MHz | burst | eye taps (step) | tap | write MB/s | read MB/s | "
-          "write+read MB/s | read errors | write+read errors | missing (r, w+r) | "
+    def rate(r):
+        return f"{r['mb_s']:.1f}" if r["done"] else "HUNG"
+
+    print("| CK req MHz | CK meas MHz | burst | eye taps (step) | tap | CR0 at tap | write MB/s | "
+          "read MB/s | write+read MB/s | read errors | write+read errors | missing (r, w+r) | "
           "xor ctl errors | stale-seed ctl errors | read % of pin (meas) | commit |")
-    print("|" + "---|" * 15)
+    print("|" + "---|" * 16)
     for ck in cks:
         w, r, b, x, s, e = (keep[(ck, k)] for k in (
             "write all", "read all", "write+read", "neg control xor", "neg control stale seed",
             "eye"))
         meas = r["ck_meas_mhz"]
+        pct = f"{100 * r['mb_s'] / (2 * meas):.1f}" if r["done"] else "-"
         print(f"| {ck:g} | {meas:.4f} | {w['burst']} | {e['width']} ({e['step']}) | {e['tap']} | "
-              f"{w['mb_s']:.1f} | {r['mb_s']:.1f} | {b['mb_s']:.1f} | {err(r)} | {err(b)} | "
-              f"{r['missing']}, {b['missing']} | {x['errors']} | {s['errors']} | "
-              f"{100 * r['mb_s'] / (2 * meas):.1f} | {r['commit']} |")
+              f"{e.get('cr0', 0):#06x} | {rate(w)} | {rate(r)} | {rate(b)} | {err(r)} | {err(b)} | "
+              f"{r['missing']}, {b['missing']} | {err(x)} | {err(s)} | {pct} | {r['commit']} |")
     print("\nWords per case: 4194304 (whole array); controls must equal it.\n")
     for ck in cks:
         e = keep[(ck, "eye")]
