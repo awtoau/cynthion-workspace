@@ -263,10 +263,16 @@ pub mod backend {
         5 * (ticks_from_us(15_004) + CAL_TICKS) / 4
     }
 
-    fn wait(mask: u16, want: u16, ticks: u32) -> Option<u16> {
+    /// Poll the 16-bit status CSR at `addr` (this peripheral's, or the flash's for the
+    /// bootloader) until `s & mask == want`, within `ticks`.
+    pub fn wait_at(addr: usize, mask: u16, want: u16, ticks: u32) -> Option<u16> {
         let start = now();
         loop {
-            let s = status();
+            // SAFETY: a status CSR in the uncached peripheral region.
+            let s = unsafe {
+                read_volatile(addr as *const u8) as u16
+                    | (read_volatile((addr + 1) as *const u8) as u16) << 8
+            };
             if s & mask == want {
                 return Some(s);
             }
@@ -279,13 +285,13 @@ pub mod backend {
     /// Ready, idle and calibrated, within `boot_ticks`.
     pub fn wait_ready() -> bool {
         let all = STATUS_READY | STATUS_CAL | STATUS_BUSY | STATUS_HR_BUSY;
-        wait(all, STATUS_READY | STATUS_CAL, boot_ticks()).is_some()
+        wait_at(BASE + offset::STATUS, all, STATUS_READY | STATUS_CAL, boot_ticks()).is_some()
     }
 
     /// Start `op` with whatever operands are already written; its code, or CODE_TIMEOUT.
     pub fn run(op: u8, ticks: u32) -> u8 {
         w8(offset::CMD, op);
-        match wait(STATUS_BUSY, 0, ticks) {
+        match wait_at(BASE + offset::STATUS, STATUS_BUSY, 0, ticks) {
             Some(s) => ((s >> 8) & 0xf) as u8,
             None => CODE_TIMEOUT,
         }

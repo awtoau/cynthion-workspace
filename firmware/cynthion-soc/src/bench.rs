@@ -440,6 +440,17 @@ pub(crate) mod hpm {
         }
     }
 
+    /// D-cache waiting cycles and load misses, low words: `(waiting, misses)`.
+    pub fn dcache() -> (u32, u32) {
+        let (waiting, misses): (u32, u32);
+        // SAFETY: reads of implemented machine CSRs (mhpmcounter5/6).
+        unsafe {
+            core::arch::asm!("csrr {0}, 0xb05", out(reg) waiting, options(nomem, nostack));
+            core::arch::asm!("csrr {0}, 0xb06", out(reg) misses, options(nomem, nostack));
+        }
+        (waiting, misses)
+    }
+
     /// The two stall counters, low words: `(frontend, backend)`.
     ///
     /// A LIFETIME reading rather than a difference, which is what makes it
@@ -596,11 +607,20 @@ fn flash(uart: &mut Uart) {
     });
     row(uart, "flash", "16 KiB", "read seq", &seq);
     sum ^= got;
+    hpm::select();
+    let (wait0, miss0) = hpm::dcache();
     let (rnd, got) = measure_for(FLASH_RND_ACCESSES, 4, || {
         flash_read(large, FLASH_RND_ACCESSES, true)
     });
+    let (wait1, miss1) = hpm::dcache();
     row(uart, "flash", "16 KiB", "read rnd", &rnd);
     sum ^= got;
+    // One D-cache line refill = one XIP fill (#593): waiting cycles per load miss.
+    let (waited, misses) = (wait1.wrapping_sub(wait0), miss1.wrapping_sub(miss0));
+    if misses != 0 {
+        let _ = writeln!(uart, "flash    refill {}.{:02} cycles per D-cache line ({} misses)",
+                         waited / misses, (waited % misses) * 100 / misses, misses);
+    }
     ratio(uart, "flash", &seq, &rnd);
 
     // Content, not absence of error: the ECP5 preamble at 0, and a word at 0x40

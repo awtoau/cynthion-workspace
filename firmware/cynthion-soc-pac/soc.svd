@@ -192,250 +192,450 @@
       </registers>
     </peripheral>
     <peripheral>
-      <name>SPI0</name>
-      <description>spi0: 5 registers at 0xf0000100</description>
+      <name>FLASH</name>
+      <description>flash: 21 registers at 0xf0000100</description>
       <baseAddress>0xF0000100</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x40</size>
+        <size>0x80</size>
         <usage>registers</usage>
       </addressBlock>
+      <interrupt>
+        <name>FLASH</name>
+        <value>19</value>
+      </interrupt>
       <registers>
         <register>
-          <name>PHY</name>
-          <description>SPI0.PHY, 18 bits at +0x00</description>
+          <name>ID</name>
+          <description>FLASH.ID, 32 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x3FFFF</resetMask>
-          <fields>
-            <field>
-              <name>LENGTH</name>
-              <description>length [5:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>6</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>WIDTH</name>
-              <description>width [9:6]</description>
-              <bitOffset>6</bitOffset>
-              <bitWidth>4</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>MASK</name>
-              <description>mask [17:10]</description>
-              <bitOffset>10</bitOffset>
-              <bitWidth>8</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CS</name>
-          <description>SPI0.CS, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
           <name>STATUS</name>
-          <description>SPI0.STATUS, 2 bits at +0x05</description>
-          <addressOffset>0x5</addressOffset>
-          <size>8</size>
+          <description>FLASH.STATUS, 16 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>16</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>RX_READY</name>
-              <description>rx_ready [0]</description>
+              <name>BUSY</name>
+              <description>busy [0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>1</bitWidth>
               <access>read-only</access>
             </field>
             <field>
-              <name>TX_READY</name>
-              <description>tx_ready [1]</description>
+              <name>READY</name>
+              <description>ready [1]</description>
               <bitOffset>1</bitOffset>
               <bitWidth>1</bitWidth>
               <access>read-only</access>
             </field>
-          </fields>
-        </register>
-        <register>
-          <name>DATA</name>
-          <description>SPI0.DATA, 64 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>64</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
             <field>
-              <name>RX</name>
-              <description>rx [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>TX</name>
-              <description>tx [63:32]</description>
-              <bitOffset>32</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>HOLD</name>
-          <description>SPI0.HOLD, 1 bits at +0x20</description>
-          <addressOffset>0x20</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x1</resetMask>
-          <fields>
-            <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
-    </peripheral>
-    <peripheral>
-      <name>FLASH_PROBE</name>
-      <description>flash_probe: 6 registers at 0xf0000200</description>
-      <baseAddress>0xF0000200</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x20</size>
-        <usage>registers</usage>
-      </addressBlock>
-      <registers>
-        <register>
-          <name>CS_FELL</name>
-          <description>FLASH_PROBE.CS_FELL, 1 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
+              <name>LOCKED</name>
+              <description>locked [2]</description>
+              <bitOffset>2</bitOffset>
               <bitWidth>1</bitWidth>
               <access>read-only</access>
             </field>
-          </fields>
-        </register>
-        <register>
-          <name>SCK_EDGES</name>
-          <description>FLASH_PROBE.SCK_EDGES, 16 bits at +0x02</description>
-          <addressOffset>0x2</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
             <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DQ_DRIVEN</name>
-          <description>FLASH_PROBE.DQ_DRIVEN, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
+              <name>INIT</name>
+              <description>init [3]</description>
+              <bitOffset>3</bitOffset>
               <bitWidth>1</bitWidth>
               <access>read-only</access>
             </field>
-          </fields>
-        </register>
-        <register>
-          <name>GRANTS</name>
-          <description>FLASH_PROBE.GRANTS, 16 bits at +0x06</description>
-          <addressOffset>0x6</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
             <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
+              <name>XIP_ACTIVE</name>
+              <description>xip_active [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>ENG_BUSY</name>
+              <description>eng_busy [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>_PAD</name>
+              <description>_pad [7:6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CODE</name>
+              <description>code [11:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>OP</name>
+              <description>op [15:12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>4</bitWidth>
               <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>OE_EDGES</name>
-          <description>FLASH_PROBE.OE_EDGES, 16 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CLEAR</name>
-          <description>FLASH_PROBE.CLEAR, 1 bits at +0x0a</description>
-          <addressOffset>0xA</addressOffset>
+          <name>CMD</name>
+          <description>FLASH.CMD, 4 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
           <size>8</size>
           <access>write-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>STROBE</name>
-              <description>strobe [0]</description>
+              <name>OP</name>
+              <description>op [3:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>FLASH.CTRL, 1 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ABORT</name>
+              <description>abort [0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>1</bitWidth>
               <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EVENTS</name>
+          <description>FLASH.EVENTS, 2 bits at +0x0e</description>
+          <addressOffset>0xE</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IRQ_EN</name>
+          <description>FLASH.IRQ_EN, 2 bits at +0x0f</description>
+          <addressOffset>0xF</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ERRORS</name>
+          <description>FLASH.ERRORS, 11 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7FF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [10:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>11</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ADDR</name>
+          <description>FLASH.ADDR, 22 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3FFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [21:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>22</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BUF_ADDR</name>
+          <description>FLASH.BUF_ADDR, 12 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [11:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>12</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LEN</name>
+          <description>FLASH.LEN, 13 bits at +0x1a</description>
+          <addressOffset>0x1A</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x1FFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [12:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>13</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>RESULT</name>
+          <description>FLASH.RESULT, 32 bits at +0x1c</description>
+          <addressOffset>0x1C</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WRITE_LO</name>
+          <description>FLASH.WRITE_LO, 11 bits at +0x20</description>
+          <addressOffset>0x20</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7FF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [10:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>11</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WRITE_HI</name>
+          <description>FLASH.WRITE_HI, 11 bits at +0x22</description>
+          <addressOffset>0x22</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7FF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [10:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>11</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CAL_ADDR</name>
+          <description>FLASH.CAL_ADDR, 22 bits at +0x28</description>
+          <addressOffset>0x28</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3FFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [21:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>22</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CAL</name>
+          <description>FLASH.CAL, 32 bits at +0x2c</description>
+          <addressOffset>0x2C</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BUSY_CYCLES</name>
+          <description>FLASH.BUSY_CYCLES, 29 bits at +0x38</description>
+          <addressOffset>0x38</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [28:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>29</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATE</name>
+          <description>FLASH.STATE, 16 bits at +0x3c</description>
+          <addressOffset>0x3C</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SEQ</name>
+          <description>FLASH.SEQ, 16 bits at +0x3e</description>
+          <addressOffset>0x3E</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CK_COUNT</name>
+          <description>FLASH.CK_COUNT, 22 bits at +0x40</description>
+          <addressOffset>0x40</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [21:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>22</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FILL_LAST</name>
+          <description>FLASH.FILL_LAST, 16 bits at +0x48</description>
+          <addressOffset>0x48</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FILL_MAX</name>
+          <description>FLASH.FILL_MAX, 16 bits at +0x4a</description>
+          <addressOffset>0x4A</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
@@ -2361,7 +2561,7 @@
       <registers>
         <register>
           <name>ENABLE</name>
-          <description>INTC.ENABLE, 19 bits at +0x00</description>
+          <description>INTC.ENABLE, 20 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2370,16 +2570,16 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
           <name>PENDING</name>
-          <description>INTC.PENDING, 19 bits at +0x04</description>
+          <description>INTC.PENDING, 20 bits at +0x04</description>
           <addressOffset>0x4</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2388,9 +2588,9 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
@@ -3001,6 +3201,16 @@
       <name>HYPERRAM_WINDOW</name>
       <description>hyperram_window: 4096 bytes of memory at 0xf0010000</description>
       <baseAddress>0xF0010000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x1000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
+      <name>FLASH_BUF</name>
+      <description>flash_buf: 4096 bytes of memory at 0xf0011000</description>
+      <baseAddress>0xF0011000</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
         <size>0x1000</size>

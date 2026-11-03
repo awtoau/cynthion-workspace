@@ -254,6 +254,13 @@ fn boot() -> ! {
         }
     };
 
+    // The XIP window answers ERR until the flash peripheral has calibrated (#593):
+    // STATUS.ready (bit 1). Bound: tLOCK2 15 ms + tRST 30 us + calibration ~1.4 ms, x1.25;
+    // on expiry the jump happens anyway and faults visibly.
+    let _ = hyperram::backend::wait_at(
+        cynthion_soc_pac::base::FLASH + cynthion_soc_pac::flash::offset::STATUS, 2, 2,
+        5 * (16_430 * (cynthion_soc_pac::base::SYNC_HZ / 1_000_000)) / 4);
+
     // Everything above this point is optional. This is not.
     enter_image(status)
 }

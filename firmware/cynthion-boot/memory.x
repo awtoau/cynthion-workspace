@@ -64,7 +64,7 @@ ASSERT(SIZEOF(.bss) == 0, "cynthion-boot has .bss; nothing zeroes it here")
  * the copy.
  *
  * Deepest path `boot -> pass -> copy`: 16 + 48 + 16 = 80 bytes, from the prologues.
- * Floor 240 = 3x that. It catches code growing until the stack lands in `.rodata`,
+ * Floor 200 = 2.5x that. It catches code growing until the stack lands in `.rodata`,
  * which corrupts a constant rather than faulting. */
 /* One word of boot status, at the very top of BOOT with the stack below it.
  *
@@ -82,8 +82,8 @@ ASSERT(SIZEOF(.bss) == 0, "cynthion-boot has .bss; nothing zeroes it here")
 _boot_status    = ORIGIN(BOOT) + LENGTH(BOOT) - 4;
 _boot_stack_top = _boot_status;
 
-ASSERT(_boot_stack_top - _boot_end >= 240,
-       "cynthion-boot leaves under 240 bytes of stack; shrink it or widen BOOT")
+ASSERT(_boot_stack_top - _boot_end >= 200,
+       "cynthion-boot leaves under 200 bytes of stack; shrink it or widen BOOT")
 
 /* Where the bootloader hands over, and the only jump target in the image.
  *

@@ -34,16 +34,10 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 8,
     },
     Peripheral {
-        name: "spi0",
+        name: "flash",
         base: 0xf0000100,
-        size: 0x00000040,
-        registers: 5,
-    },
-    Peripheral {
-        name: "flash_probe",
-        base: 0xf0000200,
-        size: 0x00000020,
-        registers: 6,
+        size: 0x00000080,
+        registers: 21,
     },
     Peripheral {
         name: "apollo_uart",
@@ -120,6 +114,12 @@ pub static PERIPHERALS: &[Peripheral] = &[
     Peripheral {
         name: "hyperram_window",
         base: 0xf0010000,
+        size: 0x00001000,
+        registers: 1,
+    },
+    Peripheral {
+        name: "flash_buf",
+        base: 0xf0011000,
         size: 0x00001000,
         registers: 1,
     },
