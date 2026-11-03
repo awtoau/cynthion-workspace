@@ -35,7 +35,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/sideband_csr.py`](../../../gateware/soc/peripherals/sideband_csr.py) | `sync` only | none needed | — | **sound** |
 | [`peripherals/vbus_csr.py`](../../../gateware/soc/peripherals/vbus_csr.py) | `sync` only | none needed | — | **sound** |
 | [`peripherals/fabric_status.py`](../../../gateware/soc/peripherals/fabric_status.py) | `sync` only | none needed | `2**19` `sync` cycles (DTR cadence) | **sound** — scales harmlessly |
-| [`peripherals/flash_cdc.py`](../../../gateware/soc/peripherals/flash_cdc.py) | `sync` + `phy_domain` | two `AsyncFIFOBuffered` + `FFSynchronizer` on `cs` | — | **sound** |
+| `peripherals/flash_cdc.py` (removed, #593) | `sync` + `phy_domain` | two `AsyncFIFOBuffered` + `FFSynchronizer` on `cs` | — | **sound** |
 | [`peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) mmap / crossbar | `domain` param, honoured | none | `MMAP_DEFAULT_TIMEOUT = 256` cycles | **sound** |
 | `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 6** — latent |
 | `flash.py` `ObservablePHY` | `domain` param, honoured | one flop on `dq.i` (upstream) | SCK = `f_domain / 2(1+divisor)` | **sound** |
