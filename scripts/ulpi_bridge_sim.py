@@ -46,8 +46,8 @@ OUT = ROOT / "tmp" / "ulpi_bridge" / "sim.json"
 
 TICK = 1042e-12         # T/8; fast period 8 ticks (~119.96 MHz), usb 16 ticks: exact 2:1
 NOMINAL_OFFSET = 2      # usb rising edge T/4 after a fast rising edge (ratio_bridge.py)
-QUALIFY_LIMIT = 200     # fast cycles: 2 warm-up + 16 usb periods (32) + margin x1.25 -> 43; use 200
-FAULT_LIMIT = 8         # fast cycles from a phase jump to `fault`: one usb period (2) + pipeline (3)
+QUALIFY_LIMIT = 47      # fast cycles to `ok`: (2 warm-up + 16 usb periods x 2 + 3 pipeline) x 1.25
+FAULT_LIMIT = 7         # fast cycles, phase jump to `fault`: (one usb period 2 + pipeline 3) x 1.25
 
 
 class Harness(Elaboratable):
