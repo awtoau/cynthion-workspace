@@ -956,6 +956,8 @@ def main():
     for case in cases:
         status, detail = loop.run_until_complete(run_case(backend, case, prof, emit))
         counts[status] += 1
+        if status == "FAIL":        # as the sim: bus reset before the next case, so one wedge
+            backend.invalidate()    # (the Pixel's EP0 after NAKed requests, #572) does not cascade
         if status != "SKIP":
             emit(f"  {status:11} {case.name}  {detail}")
         if status == "FAIL" and case.group == "fuzz":
