@@ -530,6 +530,10 @@ def measure(sck, state):
         say(f"  blank check: errors {blank['errors']} / {blank['checked']}"
             + ("" if blank["done"] else " HUNG"))
         record(dict(blank, kind="blank"))
+        if state.get("dtr_only"):
+            state["ebh_best"] = state["jedec_best"]
+            measure_dtr(fl, seed, stale, state)
+            return 0
         # 3. capture from the seeded EBh read (all four IO, both directions).
         def probe():
             r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
@@ -578,8 +582,9 @@ def measure_dtr(fl, seed, stale, state):
     def probe():
         r = dtr_read(TEST_BASE + EYE_BYTES, probe_win, seed, "eye DTR", quick=True)
         return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
+    # The DTR window sits ~1 lat later than the SDR one at 80 MHz and moves out with SCK.
     best, width = eye(fl, probe, "DTR seeded", max(1, fl.n_steps // 16),
-                      lats=range(max(0, lat0 - 2), min(LAT_RANGE.stop, lat0 + 2)), halves=(0, 1))
+                      lats=range(max(0, lat0 - 1), min(LAT_RANGE.stop, lat0 + 4)), halves=(0, 1))
     if best is None:
         say(f"  {DTR_MODE}: no clean capture")
         best = state["jedec_best"]
@@ -609,7 +614,7 @@ def sweep(args):
     say(f"sweep {RUN_ID}: SCK {args.sck}; test region {TEST_BASE:#x}+{TEST_SIZE:#x}")
     if not build_cached(args.sck):
         return 1
-    state = dict(seed=new_seed(0))
+    state = dict(seed=new_seed(0), dtr_only=args.dtr_only)
     rc = 0
     for sck in args.sck:
         if not configure(sck):
@@ -699,6 +704,8 @@ def main():
     pb.add_argument("--sck", type=float, nargs="+", required=True)
     pw = sub.add_parser("sweep")
     pw.add_argument("--sck", type=float, nargs="+", default=SWEEP_SCK)
+    pw.add_argument("--dtr-only", action="store_true",
+                    help="erase/program with a fresh seed, then only the DTR eye and read")
     ps = sub.add_parser("scan", help="read-only: ID, status registers, sector map")
     ps.add_argument("--sck", type=float, default=20)
     sub.add_parser("clocks")
