@@ -154,6 +154,13 @@ def verify(exp, res, prof):
     return None
 
 
+def nak_is_refusal(step, res, prof):
+    """`generic` only (Dan, #572): a control request that may STALL may also NAK until the
+    limit; the case ends there as a pass and the bus is reset before the next one."""
+    return (prof.name == "generic" and step.op == "ctrl" and step.exp is not None
+            and "stall" in step.exp.kinds and res.kind == "nak")
+
+
 def sp(bm, req, val=0, idx=0, length=0):
     return bytes([bm, req, val & 255, val >> 8, idx & 255, idx >> 8, length & 255, length >> 8])
 
@@ -269,6 +276,19 @@ def table():
          S("ctrl", E(check=lambda r, p: None if len(r.data) == 18 else "no descriptor"),
            bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)],
         about="STALL clears on the next SETUP")
+    # #572: the Pixel NAKs unhandled requests, then stops answering SETUP until a bus reset.
+    nak_forever = [
+        S("ctrl", E("nak"), bm=0xC0, req=0x5A, val=0, idx=0, len=2),
+        S("ctrl", E("nak"), bm=0x40, req=0x5A, val=0, idx=0, len=0),
+        S("ctrl", E("nak"), bm=0xC0, req=0x5A, val=0, idx=0, len=64),
+        S("ctrl", E("nak"), bm=0x40, req=0x5A, val=0, idx=0, len=4, out=b"\x01\x02\x03\x04")]
+    add("ctrl_nak_forever_then_good", "ctrl_std",
+        nak_forever + [
+            S("ctrl", E("stall"), bm=0x80, req=0x7F, val=0, idx=0, len=2),
+            S("ctrl", E(length=18), bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)],
+        profiles=("model", "model_fs"), board="vendor request 0x5A is the model's NAK-forever request",
+        about="four requests abandoned after NAKs (data IN, status IN, data IN, data OUT); "
+              "the next SETUPs are ACKed: the host side keeps no state from an abandoned transfer")
 
     # ---- SET_ADDRESS / SET_CONFIGURATION -------------------------------------------
     GD = dict(bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)
@@ -389,12 +409,19 @@ def table():
         profiles=("model", "model_fs"),
         about="CLEAR_FEATURE(ENDPOINT_HALT) restarts the toggle on both sides (driver and device)")
 
+    # Before mps_plus_1: on a wedged engine the next case's own recovery overruns the stall guard.
+    add("bulk_out_oversize_then_bus_reset", "bulk_int",
+        [S("bulk_out", Exp(kinds=ANY | {"hang"}), ep=1, data=b"\xa5" * 513),
+         S("reset", E()),
+         S("enumerate", E(length=4), addr=DEV_ADDR),
+         S("ctrl", E(length=18), **GD)],
+        profiles=("model",), board="shell `out` takes at most 64 bytes", after=ADDRESSED,
+        about="REGRESSION (#572): a bus reset alone returns the engine to service, whatever the OUT did")
     add("bulk_out_mps_plus_1", "bulk_int",
-        [S("bulk_out", Exp(kinds=ANY), ep=1, data=b"\xa5" * 513),
+        [S("bulk_out", E("dropped"), ep=1, data=b"\xa5" * 513),
          S("recover", E(length=18))],
         profiles=("model",), board="shell `out` takes at most 64 bytes", after=NONE,
-        known="ENGINE BUG: an OUT payload over 512 B never raises EV_DONE (hang); a bus reset does not recover it",
-        about="one byte over the SIE's 512 B buffer: must be refused (dropped/overflow), never hang")
+        about="REGRESSION (#572): one byte over the SIE's 512 B buffer is refused (dropped), never hangs")
 
     # ---- handshakes ----------------------------------------------------------------
     add("handshake_nak", "handshake",
@@ -601,6 +628,9 @@ async def run_case(backend, case, prof, emit):
             res = await backend.op(step.op, **step.args)
             if step.exp is None:
                 continue
+            if nak_is_refusal(step, res, prof):
+                backend.invalidate()        # EP0 stays wedged until a bus reset (#572)
+                return "PASS", f"step {n}: NAK until limit, accepted as a refusal on {prof.name}; bus reset next"
             problem = verify(step.exp, res, prof)
             if problem:
                 trail = ""
@@ -865,6 +895,15 @@ def selftest():
     expect("bulk_in", (link.sent[-1], r.data), ("usb target_a in 1 64", b"\x01\x02"))
     r = loop.run_until_complete(b.op("link"))
     expect("link", r.info, {"connected": True, "speed": "HS", "reset_done": True, "ls": 1})
+    unhandled = Case("t", "t", [S("ctrl", E("stall"), bm=0xC0, req=1, val=0, idx=0, len=2)], needs=NONE)
+    for name, reply, want in (("generic", "timeout: control data in limit 500000 us elapsed 500100 us",
+                               ("PASS", NONE)), ("model", "timeout: control data in limit 1 us elapsed 2 us",
+                                                 ("FAIL", None))):
+        link = FakeLink({"ctrl": reply})
+        b = BoardBackend(link, "target_a", get_profile(name), print)
+        b.level = CONFIGURED
+        status, _ = loop.run_until_complete(run_case(b, unhandled, get_profile(name), print))
+        expect(f"NAK refusal on {name}", (status, b.level if status == "PASS" else None), want)
     emit = print
     for line in bad:
         emit("FAIL " + line)
@@ -936,6 +975,8 @@ def main():
     for case in cases:
         status, detail = loop.run_until_complete(run_case(backend, case, prof, emit))
         counts[status] += 1
+        if status == "FAIL":        # as the sim: bus reset before the next case, so one wedge
+            backend.invalidate()    # (the Pixel's EP0 after NAKed requests, #572) does not cascade
         if status != "SKIP":
             emit(f"  {status:11} {case.name}  {detail}")
         if status == "FAIL" and case.group == "fuzz":

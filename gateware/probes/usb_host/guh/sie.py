@@ -65,6 +65,9 @@ class USBSIEInterface(wiring.Signature):
     def __init__(self):
         super().__init__({
             "bus_reset": In(1),
+            # Discard the TX FIFO while idle; `tx_pending` = bytes still in it.
+            "tx_flush":   In(1),
+            "tx_pending": Out(1),
             "xfer":      In(USBSIEInterface.Transfer),
             "status":    Out(USBSIEInterface.Status),
             "txs":       In(stream.Signature(unsigned(8))),
@@ -490,6 +493,7 @@ class USBSIE(wiring.Component):
         ]
 
         m.d.comb += [
+            self.ctrl.tx_pending.eq(tx_fifo.r_rdy),
             self.ctrl.status.rx_len.eq(rx_len),
             self.ctrl.status.response.eq(response),
             self.ctrl.status.sof_frame.eq(sof_controller.o.payload.data),
@@ -522,6 +526,7 @@ class USBSIE(wiring.Component):
             with m.State("IDLE"):
                 m.d.comb += send_sofs.eq(1)
                 m.d.comb += self.ctrl.status.idle.eq(1)
+                m.d.comb += tx_fifo.r_en.eq(self.ctrl.tx_flush & tx_fifo.r_rdy)
                 # Capture transfer parameters on xfer.start
                 with m.If(self.ctrl.xfer.start):
                     m.d.usb += [

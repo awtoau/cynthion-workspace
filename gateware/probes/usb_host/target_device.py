@@ -9,6 +9,8 @@
 - Bulk OUT 1 -> bulk IN 1: echo, packet-for-packet (`bulk_mps`: 512 HS, 64 FS).
 - Interrupt IN 2 (8 B): an up-counter.
 - `present` low detaches (line state SE0), as in `AoaPhone`.
+- Vendor request `REQ_NAK_FOREVER`: claimed, data and status stages NAKed until the next SETUP
+  (an Android gadget whose function driver never answers, #572).
 
 Not modelled: isochronous (the engine has no ISO token type), LS, suspend.
 """
@@ -16,16 +18,39 @@ Not modelled: isochronous (the engine has no ISO token type), LS, suspend.
 from amaranth import Elaboratable, Module, Signal
 
 from luna.gateware.interface.utmi import UTMIInterface
+from luna.gateware.usb.request.control import ControlRequestHandler
 from luna.gateware.usb.usb2.control import USBControlEndpoint
 from luna.usb2 import USBDevice, USBStreamInEndpoint, USBStreamOutEndpoint
 
 from usb_protocol.emitters import DeviceDescriptorCollection
-from usb_protocol.types import USBDirection, USBTransferType
+from usb_protocol.types import USBDirection, USBRequestType, USBTransferType
 
 VID, PID = 0x1D50, 0x6199
 MANUFACTURER, PRODUCT, SERIAL = "awto", "target test device", "0001"
 CONTROL_MPS = 64
 INT_MPS = 8
+REQ_NAK_FOREVER = 0x5A
+
+
+class NakForeverHandler(ControlRequestHandler):
+    """Vendor `REQ_NAK_FOREVER`: NAK every data/status token; a new SETUP ends it (USB 2.0 8.5.3)."""
+
+    def elaborate(self, platform):
+        m = Module()
+        interface, setup = self.interface, self.interface.setup
+        mine = (setup.type == USBRequestType.VENDOR) & (setup.request == REQ_NAK_FOREVER)
+        with m.FSM(domain="usb"):
+            with m.State("IDLE"):
+                with m.If(setup.received & mine):
+                    m.next = "NAKING"
+            with m.State("NAKING"):
+                m.d.comb += interface.claim.eq(mine)
+                with m.If(mine & (interface.data_requested | interface.status_requested
+                                  | interface.rx_ready_for_response)):
+                    m.d.comb += interface.handshakes_out.nak.eq(1)
+                with m.If(setup.received & ~mine):
+                    m.next = "IDLE"
+        return m
 
 
 def descriptors(bulk_mps):
@@ -68,6 +93,7 @@ class TargetDevice(Elaboratable):
         usb.data_clock = 60e6
         control = USBControlEndpoint(utmi=self.utmi, max_packet_size=CONTROL_MPS)
         control.add_standard_request_handlers(descriptors(self.bulk_mps))
+        control.add_request_handler(NakForeverHandler())
         usb.add_endpoint(control)
 
         ep_out = USBStreamOutEndpoint(endpoint_number=1, max_packet_size=self.bulk_mps)

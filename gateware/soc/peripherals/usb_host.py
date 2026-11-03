@@ -74,8 +74,12 @@ and the `regs_*` hand-off are ports, so aux/control can be instanced later.
 - Start while the SIE is not idle, or a response that never ends: `BUSY_DROP` / watchdog (`TIMEOUT`).
 - Trace (0x18..0x1f) exists only when built with `trace_depth` (CYNTHION_USB_TRACE=1); a
   debug aid, absent from the shipping image (`TR_STATE.3` = 0).
-- `host` TX bytes flow into the SIE's own 512 B FIFO as written, so `clr_tx` does NOT remove
-  them from there; the SIE sends whatever it holds at the next `start`. Stage, then start.
+- `host` TX bytes flow into the SIE's own 512 B FIFO as written; `clr_tx` empties both FIFOs.
+  Stage, then start: the SIE sends whatever it holds at the next `start`.
+- OUT payload over the SIE FIFO (512 B): refused at `start`, both FIFOs emptied, `tx_overflow`
+  then `done` (#572). A `start` while a discard runs is dropped (`busy_drop`).
+- Bus reset in `host`, or leaving `host`: a transfer in progress ends at once (`busy_drop` +
+  `done`); a bus reset also empties both TX FIFOs.
 """
 
 import sys
@@ -667,6 +671,8 @@ class UsbPort(wiring.Component):
         brst_usb = to_domain(brst_t, "usb")
         brst_prev = Signal()
         m.d.usb += brst_prev.eq(brst_usb)
+        host_brst = Signal()        # usb pulse: bus reset requested in host role
+        m.d.comb += host_brst.eq(sel_host & (brst_usb != brst_prev))
 
         addr_u, ep_u = to_domain(addr_r, "usb"), to_domain(ep_r, "usb")
         # addr/ep are written before `start` toggles and held until `done`; the
@@ -681,7 +687,7 @@ class UsbPort(wiring.Component):
             xfer.dev_addr.eq(addr_u),
             xfer.ep_addr.eq(ep_u[0:4]),
             xfer.data_pid.eq(ep_u[6]),
-            sie.ctrl.bus_reset.eq(sel_host & (brst_usb != brst_prev)),
+            sie.ctrl.bus_reset.eq(host_brst),
         ]
 
         rx_cnt  = Signal(10)
@@ -694,6 +700,9 @@ class UsbPort(wiring.Component):
         wd_reset = Signal()
         h_drop  = Signal()
         h_tmo   = Signal()
+        h_oversize = Signal()       # usb pulse: OUT payload over the SIE FIFO, refused
+        flush_act = Signal()        # TX discard (shim FIFO and SIE FIFO) in progress
+        flush_req = Signal()
         m.d.comb += host_rst.eq(~sel_host | wd_reset)
 
         with m.If(sel_host & sie.utmi.rx_valid):
@@ -701,26 +710,49 @@ class UsbPort(wiring.Component):
             with m.If(~got_pid):
                 m.d.usb += [rx_pid.eq(sie.utmi.rx_data), got_pid.eq(1)]
 
+        def finish_xfer(**result):
+            m.d.usb += [h_resp.eq(result.get("resp", 0)), h_len.eq(result.get("length", 0)),
+                        xfer_ack.eq(~xfer_ack), done_t.eq(~done_t)]
+
+        def abort_on_reset():
+            # A bus reset or leaving host ends any transfer at once (EV_BUSY_DROP + done).
+            with m.If(host_brst | ~sel_host):
+                m.d.comb += h_drop.eq(1)
+                finish_xfer()
+                m.next = "IDLE"
+
         with m.FSM(domain="usb"):
             with m.State("IDLE"):
                 m.d.usb += [drain.eq(0), wd.eq(0)]
                 with m.If(start_usb != xfer_ack):
-                    with m.If(sel_host & status.idle & ~status.reset_active):
+                    with m.If(sel_host & status.idle & ~status.reset_active & ~flush_act):
                         m.next = "DRAIN"
                     with m.Else():
                         m.d.comb += h_drop.eq(1)
-                        m.d.usb += [h_resp.eq(0), h_len.eq(0), rx_pid.eq(0),
-                                    xfer_ack.eq(~xfer_ack), done_t.eq(~done_t)]
+                        m.d.usb += rx_pid.eq(0)
+                        finish_xfer()
             with m.State("DRAIN"):
                 # All pushed bytes must be inside the SIE before it samples tx_len.
                 m.d.usb += drain.eq(Mux(tx.r_rdy, 0, drain + 1))
-                with m.If(drain == 4):
+                with m.If(tx.r_rdy & ~sie.ctrl.txs.ready):
+                    # SIE FIFO full with bytes still queued: never sendable, discard it all.
+                    # The event is raised here, >= 6 cycles before `done` (after the flush).
+                    m.d.comb += [flush_req.eq(1), h_oversize.eq(1)]
+                    m.next = "REFUSE"
+                with m.Elif(drain == 4):
                     m.d.usb += [rx_cnt.eq(0), got_pid.eq(0)]
                     m.next = "PULSE"
+                abort_on_reset()
+            with m.State("REFUSE"):
+                with m.If(~flush_act):
+                    finish_xfer()
+                    m.next = "IDLE"
+                abort_on_reset()
             with m.State("PULSE"):
                 m.d.comb += start_pulse.eq(1)
                 m.d.usb += wd.eq(0)
                 m.next = "STARTED"
+                abort_on_reset()
             with m.State("STARTED"):
                 m.d.usb += wd.eq(wd + 1)
                 with m.If(~status.idle):
@@ -728,33 +760,33 @@ class UsbPort(wiring.Component):
                     m.next = "RUN"
                 with m.Elif(wd == START_EDGE_LIMIT - 1):
                     m.d.comb += h_drop.eq(1)
-                    m.d.usb += [h_resp.eq(0), h_len.eq(0),
-                                xfer_ack.eq(~xfer_ack), done_t.eq(~done_t)]
+                    finish_xfer()
                     m.next = "IDLE"
+                abort_on_reset()
             with m.State("RUN"):
                 m.d.usb += wd.eq(wd + 1)
                 with m.If(status.idle):
-                    m.d.usb += [h_resp.eq(status.response.as_value()),
-                                h_len.eq(Mux(rx_cnt >= 3, rx_cnt - 3, 0)),
-                                xfer_ack.eq(~xfer_ack), done_t.eq(~done_t)]
+                    finish_xfer(resp=status.response.as_value(),
+                                length=Mux(rx_cnt >= 3, rx_cnt - 3, 0))
                     m.next = "IDLE"
                 with m.Elif(wd == self._xfer_limit - 1):
                     m.d.comb += [h_tmo.eq(1), wd_reset.eq(1)]
-                    m.d.usb += [h_resp.eq(0), h_len.eq(0),
-                                xfer_ack.eq(~xfer_ack), done_t.eq(~done_t)]
+                    finish_xfer()
                     m.next = "IDLE"
+                abort_on_reset()
 
-        # TX/RX plumbing for the SIE and the discard path.
-        flush_act = Signal()
+        # TX discard: CLR_TX, a host bus reset, or a refused payload. Ends once both FIFOs
+        # have been empty for 5 cycles (the CDC pointer sync is <= 3 behind).
         flush_t_prev = Signal()
         flush_quiet = Signal(3)
         m.d.usb += flush_t_prev.eq(clr_tx_usb)
-        with m.If(clr_tx_usb != flush_t_prev):
-            m.d.usb += [flush_act.eq(1), flush_quiet.eq(0)]
         with m.If(flush_act):
-            m.d.usb += flush_quiet.eq(Mux(tx.r_rdy, 0, flush_quiet + 1))
+            m.d.usb += flush_quiet.eq(Mux(tx.r_rdy | sie.ctrl.tx_pending, 0, flush_quiet + 1))
             with m.If(flush_quiet == 5):
                 m.d.usb += [flush_act.eq(0), popped.eq(pushed_usb)]
+        with m.If((clr_tx_usb != flush_t_prev) | flush_req | host_brst):
+            m.d.usb += [flush_act.eq(1), flush_quiet.eq(0)]
+        m.d.comb += sie.ctrl.tx_flush.eq(flush_act & sel_host)
 
         host_fwd = Signal()
         m.d.comb += host_fwd.eq(sel_host & ~flush_act)
@@ -840,7 +872,7 @@ class UsbPort(wiring.Component):
             done_pulse,
             pulse_to_sync(line_pulse_u),
             pulse_to_sync(rx_drop),
-            tx_ovf,
+            tx_ovf | pulse_to_sync(h_oversize),
             rx_under,
             pulse_to_sync(raw_abort),
             pulse_to_sync(h_drop) | busy_drop_start | busy_drop_sync,
