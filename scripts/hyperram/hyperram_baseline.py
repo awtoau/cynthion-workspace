@@ -406,7 +406,8 @@ def table(run_id=None):
             w, r = keep.get((ck, f"write b{n}")), keep.get((ck, f"read b{n}"))
             cells.append("-" if not w else f"{w['mb_s']:.0f} / {r['mb_s']:.0f}"
                          + ("" if r["errors"] == 0 else f" ({r['errors']} err)"))
-        print(f"| {ck:g} | " + " | ".join(cells) + " |")
+        if any(c != "-" for c in cells):
+            print(f"| {ck:g} | " + " | ".join(cells) + " |")
     return 0
 
 
