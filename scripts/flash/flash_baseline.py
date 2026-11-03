@@ -839,6 +839,10 @@ def climb_point(sck, seed, stale, drive_check=False, io=""):
     out = dict(sck=sck, sck_meas=fl.f, io=io or "16mA-fast", pll_lock=bool(fl.b.rd("STATUS") & 2))
     best, w = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
                   lats=range(0, 8), halves=(0, 2))
+    if best is None:
+        # Coarse columns are T/4 apart: a window narrower than that is missed (200 MHz).
+        best, w = eye(fl, lambda: jedec_ok(fl), "JEDEC x1 fine", max(1, fl.n_steps // 16),
+                      lats=range(2, 8), halves=(0, 2))
     out.update(jedec=best, jedec_width=w)
     if best is None:
         out.update(why="no JEDEC eye", lock_lost=bool(fl.b.rd("STATUS") >> 3 & 1))
