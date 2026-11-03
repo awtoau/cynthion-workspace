@@ -946,6 +946,44 @@ def climb(args):
     return 0
 
 
+def climb_table(run_ids):
+    """Markdown table of climb runs: per SCK, eye widths, MB/s / errors, controls asserted."""
+    rows = [json.loads(line) for line in RESULTS.read_text().splitlines()]
+    rows = [r for r in rows if r.get("run_id") in run_ids]
+    pts = [r for r in rows if r["label"] == "climb point"]
+
+    def get(sck, label):
+        return next((r for r in reversed(rows) if r.get("sck") == sck and r["label"] == label), None)
+
+    def cell(r, want=TEST_SIZE):
+        if r is None:
+            return "-"
+        if not r["done"]:
+            return "HUNG"
+        ok = r.get("seq_ok", True) and r["checked"] == want
+        return f"{r['mb_s']:.2f} / {r['errors']}" if ok else "INVALID"
+
+    def ctl(r):
+        if r is None:
+            return "-"
+        return "fails all" if r["done"] and r["errors"] == r["checked"] == TEST_SIZE else \
+            f"{r['errors']}/{r['checked']} NOT ALL"
+
+    print("| SCK | PLL lock | JEDEC eye | EBh eye | EBh 1-4-4 MB/s / err | EBh burst32 | 0Bh 1-1-1 | "
+          "QPI 4-4-4 | DTR | stale ctl | xor ctl | QPI stale ctl | lock lost | verdict |")
+    print("|" + "---|" * 14)
+    for p in pts:
+        s = p["sck"]
+        print(f"| {s:g} | {p.get('pll_lock', '-')} | {p.get('jedec_width', 0)} | "
+              f"{p.get('ebh_width', '-')} | {cell(get(s, 'EBh 1-4-4 region'))} | "
+              f"{cell(get(s, 'EBh 1-4-4 burst32'), 1 << 16)} | {cell(get(s, '0Bh 1-1-1 region'))} | "
+              f"{cell(get(s, 'QPI EBh 4-4-4 region'))} | {cell(get(s, 'EDh DTR 1-4-4 region'))} | "
+              f"{ctl(get(s, 'ctl stale seed'))} | {ctl(get(s, 'ctl xor'))} | "
+              f"{ctl(get(s, 'ctl QPI stale seed'))} | {p.get('lock_lost')} | "
+              f"{'PASS' if p.get('ok') else 'FAIL: ' + p.get('why', 'errors')} |")
+    return 0
+
+
 def raw_probe(args):
     """What does a failing point read? Raw 9Fh results over phase x lat x xfer, plus the
     engine state: a value shifted from EF4016 is capture; a constant is the bus or engine."""
@@ -1070,6 +1108,8 @@ def main():
     pc.add_argument("--min-stop", type=float, default=260, help="never stop below this")
     pp = sub.add_parser("probe", help="raw 9Fh values over phase x lat x xfer at one SCK")
     pp.add_argument("--sck", type=float, required=True)
+    pq = sub.add_parser("climb-table", help="markdown table of climb runs")
+    pq.add_argument("runs", nargs="+")
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
@@ -1088,6 +1128,8 @@ def main():
         return climb(args)
     if args.cmd == "probe":
         return raw_probe(args)
+    if args.cmd == "climb-table":
+        return climb_table(args.runs)
     if args.cmd == "table":
         return table(args.run)
     return sweep(args)
