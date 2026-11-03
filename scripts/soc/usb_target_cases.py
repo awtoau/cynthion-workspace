@@ -389,12 +389,19 @@ def table():
         profiles=("model", "model_fs"),
         about="CLEAR_FEATURE(ENDPOINT_HALT) restarts the toggle on both sides (driver and device)")
 
+    # Before mps_plus_1: on a wedged engine the next case's own recovery overruns the stall guard.
+    add("bulk_out_oversize_then_bus_reset", "bulk_int",
+        [S("bulk_out", Exp(kinds=ANY | {"hang"}), ep=1, data=b"\xa5" * 513),
+         S("reset", E()),
+         S("enumerate", E(length=4), addr=DEV_ADDR),
+         S("ctrl", E(length=18), **GD)],
+        profiles=("model",), board="shell `out` takes at most 64 bytes", after=ADDRESSED,
+        about="REGRESSION (#572): a bus reset alone returns the engine to service, whatever the OUT did")
     add("bulk_out_mps_plus_1", "bulk_int",
-        [S("bulk_out", Exp(kinds=ANY), ep=1, data=b"\xa5" * 513),
+        [S("bulk_out", E("dropped"), ep=1, data=b"\xa5" * 513),
          S("recover", E(length=18))],
         profiles=("model",), board="shell `out` takes at most 64 bytes", after=NONE,
-        known="ENGINE BUG: an OUT payload over 512 B never raises EV_DONE (hang); a bus reset does not recover it",
-        about="one byte over the SIE's 512 B buffer: must be refused (dropped/overflow), never hang")
+        about="REGRESSION (#572): one byte over the SIE's 512 B buffer is refused (dropped), never hangs")
 
     # ---- handshakes ----------------------------------------------------------------
     add("handshake_nak", "handshake",
