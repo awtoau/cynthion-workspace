@@ -52,7 +52,7 @@ OSS_CAD_ENV = Path.home() / "opt" / "oss-cad-suite" / "environment"
 sys.path.insert(0, str(GW))
 
 from spiflash import (BITMAP_WORDS, CHECK_BLANK, CHECK_PATTERN, OP_RAW, OP_READ,  # noqa: E402
-                      OP_WLOOP, READ_MODES, W1, W4, desc)
+                      DTR, OP_WLOOP, READ_MODES, W1, W4, desc)
 from top import APPLET_ID, CK_WINDOW_BITS, REG, reachable  # noqa: E402
 
 PART_BYTES = 4 << 20
@@ -69,7 +69,8 @@ QPI_MODES = {"QPI EBh 4-4-4": desc(0xEB, cmd_w4=True, abits=32, aw=W4, dummy=6, 
                                    read=True, tail=1)}
 MODES = dict(READ_MODES, **QPI_MODES)
 WIDTH = {"0Bh 1-1-1": 1, "3Bh 1-1-2": 2, "BBh 1-2-2": 2, "6Bh 1-1-4": 4, "EBh 1-4-4": 4,
-         "QPI EBh 4-4-4": 4}
+         "QPI EBh 4-4-4": 4, "EDh DTR 1-4-4": 8}
+DTR_MODE = "EDh DTR 1-4-4"
 EYE_MODE = "EBh 1-4-4"
 EYE_BYTES = 4096
 LAT_RANGE = range(0, 10)     # round trip in sck cycles: 2 at 20 MHz (scan), more as T shrinks
@@ -238,8 +239,9 @@ class Flash:
     def phase(self):
         return self.pos % self.n_steps
 
-    def set_capture(self, step, lat):
-        """Delay-only PHASESTEPs (glitch-free direction) to reach `step`, then lat/xfer."""
+    def set_capture(self, step, lat, half=0):
+        """Delay-only PHASESTEPs (glitch-free direction) to reach `step`, then lat/xfer;
+        `half` picks the DDR nibble pairing (DTR only)."""
         delta = (step - self.phase()) % self.n_steps
         if delta:
             self.pstep_bit ^= 1
@@ -254,16 +256,16 @@ class Flash:
             self.pos += delta
         frac = step / self.n_steps
         self.b.wr("XFER", int(frac < 0.25 or frac >= 0.75))
-        self.b.wr("LAT", lat)
+        self.b.wr("LAT", lat | half << 8)
 
     # -- ops -------------------------------------------------------------------------
     def op(self, kind, *, d=0, addr=0, length=0, burst=0, count=0, stride=0, check=0, seed=0,
-           xor=0, poll_after=0, wdata=0, expect_s=0.0, label="", quick=False):
+           xor=0, poll_after=0, wdata=0, window=(0, 0), expect_s=0.0, label="", quick=False):
         b = self.b
         for name, v in (("OP", kind | poll_after << 8), ("DESC", d), ("ADDR", addr),
                         ("LENGTH", length), ("BURST", burst), ("COUNT", count),
                         ("STRIDE", stride), ("CHECK", check), ("SEED", seed), ("XOR", xor),
-                        ("WDATA", wdata)):
+                        ("WDATA", wdata), ("CHK_LO", window[0]), ("CHK_HI", window[1])):
             b.wr(name, v)
         self.go_bit ^= 1
         b.wr("GO", self.go_bit)
@@ -367,14 +369,15 @@ def open_board(sck):
 
 # ---- calibration -------------------------------------------------------------
 
-def eye_key(fl, step, lat):
-    """Capture time in phase steps: past 3/4 T the xfer path adds an engine cycle."""
+def eye_key(fl, step, lat, half=0):
+    """Capture time in phase steps: past 3/4 T the xfer path adds an engine cycle. DDR
+    pairings (`half`) are separate rows."""
     extra = 1 if step / fl.n_steps >= 0.75 else 0
-    return (lat - extra) * fl.n_steps + step
+    return (half, (lat - extra) * fl.n_steps + step)
 
 
 def pick(fl, grid):
-    """Centre of the widest clean run along capture time. grid: {(step, lat): ok}."""
+    """Centre of the widest clean run along capture time. grid: {(step, lat[, half]): ok}."""
     pts = sorted(grid, key=lambda k: eye_key(fl, *k))
     runs, cur = [], []
     for k in pts:
@@ -391,22 +394,22 @@ def pick(fl, grid):
     return widest[len(widest) // 2], len(widest)
 
 
-def eye(fl, probe, label, stride, lats=LAT_RANGE):
+def eye(fl, probe, label, stride, lats=LAT_RANGE, halves=(0,)):
     grid = {}
     steps = range(0, fl.n_steps, stride)
+    rows = [(lat, h) for h in halves for lat in lats]
     for step in steps:
-        for lat in lats:
-            fl.set_capture(step, lat)
-            grid[(step, lat)] = probe()
+        for lat, h in rows:
+            fl.set_capture(step, lat, h)
+            grid[(step, lat, h)] = probe()
     best, width = pick(fl, grid)
-    rows = []
-    for lat in lats:
-        rows.append(f"lat {lat:>2} " + "".join("." if grid[(s, lat)] else "X" for s in steps))
-    say(f"  eye {label} (phase steps 0..{fl.n_steps - 1} by {stride}):\n    " + "\n    ".join(rows))
+    text = [f"lat {lat:>2}{'' if halves == (0,) else f' half {h}'} "
+            + "".join("." if grid[(s, lat, h)] else "X" for s in steps) for lat, h in rows]
+    say(f"  eye {label} (phase steps 0..{fl.n_steps - 1} by {stride}):\n    " + "\n    ".join(text))
     say(f"  {label}: best {best}, widest clean run {width} points")
     record(dict(label=f"eye {label}", sck=fl.sck, sck_meas=fl.f, n_steps=fl.n_steps,
                 stride=stride, best=best, width=width,
-                grid=[[s, l, int(ok)] for (s, l), ok in grid.items()]))
+                grid=[[*k, int(ok)] for k, ok in grid.items()]))
     return best, width
 
 
@@ -539,6 +542,7 @@ def measure(sck, state):
         if best is None:
             say(f"sck{sck:g}: no clean EBh capture; measuring at the JEDEC setting")
             best = state["jedec_best"]
+        state["ebh_best"] = best
         fl.set_capture(*best)
         # 4. every mode, whole test region in one transaction, then 32-byte bursts.
         for mode in MODES:
@@ -549,9 +553,41 @@ def measure(sck, state):
         for lbl, kw in (("ctl stale seed", dict(seed=stale)), ("ctl xor", dict(seed=seed, xor=1))):
             r = fl.read(EYE_MODE, TEST_BASE, TEST_SIZE, label=lbl, **kw)
             report(fl, r)
+        measure_dtr(fl, seed, stale, state)
     except Hung as e:
         say(f"sck{sck:g}: {e}")
     return 0
+
+
+def measure_dtr(fl, seed, stale, state):
+    """EDh DTR quad, one transaction from address 0 (the PHY's address phase is SDR: only a
+    pair-equal address is sent correctly), checked against the seed over the test region
+    only (CHK_LO/CHK_HI). Own eye: (phase, lat, DDR pairing)."""
+    def dtr_read(length, window, s, label, quick=False):
+        r = fl.op(OP_READ, d=DTR, addr=0, length=length, burst=length, check=CHECK_PATTERN,
+                  seed=s, window=window, quick=quick, label=label,
+                  expect_s=(length + 60) / fl.hz)
+        secs = r["run_cycles"] / fl.hz if r["run_cycles"] else 0
+        r["mb_s"] = r.get("bytes", 0) / secs / 1e6 if secs and r["done"] else 0
+        r["mode"] = DTR_MODE
+        return r
+
+    probe_win = (TEST_BASE, TEST_BASE + EYE_BYTES)
+    lat0 = state["jedec_best"][1]
+
+    def probe():
+        r = dtr_read(TEST_BASE + EYE_BYTES, probe_win, seed, "eye DTR", quick=True)
+        return r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES
+    best, width = eye(fl, probe, "DTR seeded", max(1, fl.n_steps // 16),
+                      lats=range(max(0, lat0 - 2), min(LAT_RANGE.stop, lat0 + 2)), halves=(0, 1))
+    if best is None:
+        say(f"  {DTR_MODE}: no clean capture")
+        best = state["jedec_best"]
+    fl.set_capture(*best)
+    win = (TEST_BASE, TEST_BASE + TEST_SIZE)
+    report(fl, dtr_read(TEST_BASE + TEST_SIZE, win, seed, f"{DTR_MODE} region"))
+    report(fl, dtr_read(TEST_BASE + TEST_SIZE, win, stale, "ctl DTR stale seed"))
+    fl.set_capture(*state["ebh_best"])
 
 
 def report(fl, r):
@@ -629,13 +665,13 @@ def table(run_id=None):
     modes = list(MODES)
     print(f"Run {run_id}. Cells: MB/s / errors over the {TEST_SIZE >> 20} MiB test region "
           f"(one transaction); burst32 = 64 KiB in 32-byte transactions.\n")
-    print("| SCK req | SCK meas | eye EBh (pts) | " + " | ".join(modes)
+    print("| SCK req | SCK meas | eye EBh (pts) | " + " | ".join(modes + [DTR_MODE])
           + " | EBh burst32 | 0Bh burst32 | stale-seed ctl | xor ctl | blank chk | scan MB/s |")
-    print("|" + "---|" * (len(modes) + 9))
+    print("|" + "---|" * (len(modes) + 10))
     for sck in scks:
         e = get(sck, "eye EBh seeded")
         meas = next((r.get("sck_meas") for r in rows if r.get("sck") == sck and r.get("sck_meas")), 0)
-        cells = [cell(get(sck, f"{m} region")) for m in modes]
+        cells = [cell(get(sck, f"{m} region")) for m in modes + [DTR_MODE]]
         ctl = [get(sck, "ctl stale seed"), get(sck, "ctl xor")]
         bl, sc = get(sck, "blank check"), get(sck, "scan")
         print(f"| {sck:g} | {meas:.3f} | {e['width'] if e else '-'} | " + " | ".join(cells)
