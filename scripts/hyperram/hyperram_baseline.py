@@ -210,7 +210,7 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
                time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
                  "MISSING", "STRADDLED", "CHECKED", "ERRORS", "BAD_INDEX", "BAD_GOT_WANT",
-                 "GENERATED", "REG_VALUE", "BAD_BITS"):
+                 "GENERATED", "REG_VALUE", "BAD_BITS", "STATE"):
         # A run that never finished leaves counters moving: one read, flagged HUNG.
         row[name.lower()] = b.rd_stable(name) if done else b.rd(name)
     moved = row["words_w"] + row["words_r"]
@@ -225,7 +225,7 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
         f"{row['mb_s']:7.1f} MB/s eff {100 * row['efficiency']:5.1f}% "
         f"errors {row['errors']} / {row['checked']} missing {row['missing']} "
         f"straddled {row['straddled']} src_wait {row['src_wait']} sink_wait {row['sink_wait']}"
-        + ("" if done else " HUNG")
+        + ("" if done else f" HUNG state {row['state']:#010x}")
         + (f" bad bits {row['bad_bits']:#06x} first bad @{row['bad_index']} "
            f"got {bad >> 16:#06x} want {bad & 0xFFFF:#06x}" if row["errors"] else ""))
     return row

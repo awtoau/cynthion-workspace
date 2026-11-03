@@ -86,6 +86,7 @@ class HyperBusCore(Elaboratable):
         self.missing = Signal(16)           # words of the last read the tail filled
         self.straddled = Signal()           # last read word straddled IDDR cycles
         self.reset_req = Signal()           # pulse: run the RESET# sequence again
+        self.fsm_state = Signal(4)
 
     def elaborate(self, platform):
         m = Module()
@@ -110,7 +111,7 @@ class HyperBusCore(Elaboratable):
         m.d.sync += [p.cs.eq(0), p.ck_en.eq(0), p.dq_oe.eq(0), p.rwds_oe.eq(0),
                      p.rwds_o.eq(0), p.reset.eq(rst_cnt > rst_cycles)]
 
-        with m.FSM():
+        with m.FSM() as fsm:
             with m.State("RESET"):
                 with m.If(rst_cnt == 0):
                     m.next = "IDLE"
@@ -198,6 +199,7 @@ class HyperBusCore(Elaboratable):
                          self.rdata.eq(Mux(aligned, Cat(p.dq_q1, p.dq_q0),
                                            Cat(p.dq_q0, prev_d1)))]
             m.d.sync += [received.eq(received + 1), self.straddled.eq(straddle)]
+        m.d.comb += self.fsm_state.eq(fsm.state)
         return m
 
 

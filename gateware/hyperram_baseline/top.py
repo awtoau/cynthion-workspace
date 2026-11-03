@@ -23,7 +23,7 @@ REG = dict(ID=1, GO=2, MODE=3, BURST=4, TOTAL=5, XOR=6, STATUS=7, CK_KHZ=8, MAX_
            SYNC_KHZ=10, RUN_CYCLES=11, WORDS_W=12, WORDS_R=13, SRC_WAIT=14, SINK_WAIT=15,
            XACTS=16, MISSING=17, CHECKED=18, ERRORS=19, BAD_INDEX=20, BAD_GOT_WANT=21,
            GENERATED=22, WAIT=23, DELAY=24, REG_ADDR=25, REG_VALUE=26, STRADDLED=27,
-           START_ADDR=28, SEED=29, BAD_BITS=30, CK_COUNT=31)
+           START_ADDR=28, SEED=29, BAD_BITS=30, CK_COUNT=31, STATE=32)
 
 MODE_WRITE, MODE_READ, MODE_BOTH, MODE_REG = 1, 2, 3, 4
 
@@ -103,6 +103,7 @@ class SeqEngine(Elaboratable):
         self.missing = Signal(32)
         self.straddled = Signal(32)
         self.reg_value = Signal(16)
+        self.state = Signal(32)          # engine FSM, core FSM, FIFO levels: where a stall is
         self.checked = Signal(32)
         self.errors = Signal(32)
         self.bad_index = Signal(32, init=0xFFFFFFFF)
@@ -192,7 +193,7 @@ class SeqEngine(Elaboratable):
         with m.If(busy):
             m.d.hr += self.run_cycles.eq(self.run_cycles + 1)
 
-        with m.FSM(domain="hr"):
+        with m.FSM(domain="hr") as fsm:
             with m.State("IDLE"):
                 with m.If(go_ps.o):
                     m.d.hr += [burst.eq(self.burst & ~1), mode.eq(self.mode), done_hr.eq(0),
@@ -270,6 +271,10 @@ class SeqEngine(Elaboratable):
         with m.Elif(~done_sync):
             m.d.sync += stale.eq(0)
         m.d.comb += self.done.eq(done_sync & ~stale)
+        # Read asynchronously from sync: a snapshot for locating a stall, not a counter.
+        # [7:0] engine state, [11:8] core state, [25:16] write-FIFO level (entries).
+        m.d.comb += self.state.eq(Cat(fsm.state, Const(0, 8 - len(fsm.state)),
+                                      core.fsm_state, Const(0, 4), wfifo.r_level))
         return m
 
 
@@ -390,6 +395,6 @@ class BaselineTop(Elaboratable):
         regs.add_read_only_register(REG["MAX_BURST"], read=core.max_burst)
         for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
                      "MISSING", "CHECKED", "ERRORS", "BAD_INDEX", "BAD_GOT_WANT",
-                     "GENERATED", "REG_VALUE", "STRADDLED", "BAD_BITS"):
+                     "GENERATED", "REG_VALUE", "STRADDLED", "BAD_BITS", "STATE"):
             regs.add_read_only_register(REG[name], read=getattr(eng, name.lower()))
         return m
