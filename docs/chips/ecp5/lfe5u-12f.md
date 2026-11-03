@@ -146,9 +146,9 @@ transmitting unbidden rather than a faster link. See the pin-sharing section of
 #### The fabric limits, after the pins
 
 **Two PLLs on this die, not four** (Table 1.1, and the 25F die does not add any).
-One is `SocClocks` in `gateware/soc/clocks.py`, giving `sync` and `fast`; the
-second clocks the HyperRAM core (`hr`, `hr90`, CK 180, #588). There is no third, so any future independent domain
-displaces one of those two.
+PLL A (`SocClocks`, `gateware/soc/clocks.py`) gives `hr`, `hr90` (CK 180, #588) and
+`sync`; PLL B clocks the config flash at SCK 190 (#593). There is no third, so any future
+independent domain must share one of their VCOs.
 
 **The PLL's reachable set is wider than this tree says, and out of spec for most
 of it.** `solve_pll` searches CLKI_DIV and CLKFB_DIV to 128 rather than taking

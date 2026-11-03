@@ -217,9 +217,7 @@ is code with no caller. Listed so it is not mistaken for a misplaced decision.
   its `init` setter — properties with no reader. [`soc_stream_buffer_sim.py:77`](../scripts/soc/soc_stream_buffer_sim.py)
   re-declares its own `DEPTH` rather than reading the one that exists
 
-SBU and SWD are the largest instance of this and are **out of scope here** —
-they belong to [#518](https://github.com/awtoau/cynthion-workspace/issues/518),
-not to this audit.
+SBU is the largest instance of this and is **out of scope here** (parked, #591).
 
 Two dangling references found on the way:
 `scripts/riscv_flash_crossbar_sim.py` and `scripts/riscv_flash_ila_decode.py`

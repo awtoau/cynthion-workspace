@@ -28,7 +28,7 @@ one by an oscillator, and only one by the device on the far end.
 | interface | the part supports | this board allows | we configure | gap |
 |---|---|---|---|---|
 | **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
-| **SPI flash SCK** | 133 MHz `fC1` | `USRMCLK` has no DDR ⇒ SCK ≤ the fabric clock; luna_soc's clock generator halves it again ⇒ SCK = `sync`/2 | **30 MHz** (`sync` 60, `FLASH_DIVISOR = 0`) | **4.4×** to the part, 2× of which is the `/2` |
+| **SPI flash SCK** | 133 MHz `fC1` | PLL B clock gated by a DCCA into `USRMCLK`; #590 eye at 190, none at 200 | **190 MHz** EBh 1-4-4 (#593) | above rated; limit is the fixed MCLK phase at the part ([flash-baseline.md](flash-baseline.md)) |
 | **flash MCLK at boot** | 133 MHz on `0x0B` | `ecppack --freq` accepts only {2.4, 19.4, 38.8, 62.0}; ECP5 Table 4.7 stops at 62 | **38.8 MHz** | **1.6×** on configuration time |
 | **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** (Table 3.21) | **180 MHz** (#588) | above both; #581 measured CK 60-180 clean ([`hyperram/sequential-baseline.md`](hyperram/sequential-baseline.md)) |
 | **ULPI** ×3 | 60 MHz, fixed by the ULPI 1.1 specification | the FPGA *sources* the clock (`clk_dir='o'`) from the A8 oscillator: exactly 60.000 MHz | **60 MHz** | **none, and it is not a parameter** |
@@ -38,7 +38,6 @@ one by an oscillator, and only one by the device on the far end.
 | **console 16550** | — | there is no baud generator; the transport is USB CDC | **n/a** | USB-bound, not baud-bound |
 | **`sync`** | ECP5 `fOUT` 3.125–400 MHz | nextpnr median **71.81 MHz** on this netlist | **60 MHz** | ~20%, and unmeasured on silicon |
 | **`usb`** | — | the A8 oscillator, straight through | **60.000 MHz** | none by construction |
-| **`fast`** | — | the flash PHY's own fmax, 111–125 MHz | **not built** | gated on an ODDR that `USRMCLK` cannot have |
 
 **One rate that is not a bus and was the largest error of the lot.** The
 PAC1954's **conversion rate** ran at **8 SPS against a 1024 SPS default** — 128×

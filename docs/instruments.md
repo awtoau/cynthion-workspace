@@ -14,9 +14,9 @@ Recurring defect: a check that passes for a reason unrelated to what it claims t
 ## The rules that follow
 
 **A check must be shown to fail.** Corrupt the parity, delay the turnaround,
-drop the acknowledge — and watch it go red. `scripts/soc/swd_host_sim.py` and
-`scripts/soc/sbu_port_sim.py` run their negative controls on every invocation, which
-is why their passes mean something.
+drop the acknowledge — and watch it go red. `scripts/soc/flash_peripheral_sim.py` and
+`scripts/soc/hyperram_peripheral_sim.py` run their negative controls on every invocation,
+which is why their passes mean something.
 
 **Do not build a control for the mechanism you replaced.** Proving the old way
 was worse is cost without information; cite the issue. Prove the NEW check can

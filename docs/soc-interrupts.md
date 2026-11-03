@@ -57,6 +57,7 @@ exercises it.
 | 16 | — | SBU peripheral, AUX — balls **H13**, **K14** | level | no — no peripheral |
 | 17 | — | PLL loss of lock | **edge**, fall on `locked` | **yes** |
 | 18 | — | HyperRAM peripheral ([`peripherals/hyperram.py`](../gateware/soc/peripherals/hyperram.py)): op done / error, gated by `IRQ_EN` (#588) | level | **yes** |
+| 19 | — | config flash peripheral ([`peripherals/flash.py`](../gateware/soc/peripherals/flash.py)): command done / error, gated by `IRQ_EN` (#593) | level | **yes** |
 
 * The six not built need a peripheral that does not exist. Their numbers are
   gaps, tied low in `intc.py`, so wiring one up renumbers nothing.

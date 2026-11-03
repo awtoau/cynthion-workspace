@@ -7,7 +7,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 | script | answers |
 |---|---|
 | [soc_peripheral_area.py](../scripts/soc/soc_peripheral_area.py) | each peripheral synthesised alone (upper bound) |
-| [soc_upstream_copy_check.py](../scripts/soc/soc_upstream_copy_check.py) | is our copy of luna_soc's SPI PHY still verbatim |
 | [pnr_noise.py](../scripts/soc/pnr_noise.py) | how much of an Fmax difference is placement luck |
 | [soc_icache_model.py](../scripts/soc/soc_icache_model.py) | I-cache misses of a `.text` layout |
 | [soc_review.py](../scripts/soc/soc_review.py) | what moved vs [soc-review-baseline.json](soc-review-baseline.json), what got duplicated; run after every change |
@@ -78,7 +77,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 ## 4. Instrumentation in context
 
 - `peripherals/flash.py`: the ILA "was built to find the JEDEC read fault, which is fixed"; `flash_cdc.py`: after the PHY moves to its own domain ILA captures cross a clock boundary unsynchronised ("gross behaviour only").
-- `ObservablePHY` (`peripherals/flash.py`) re-implements `luna_soc`'s `SPIPHYController.elaborate` statement for statement (130 lines). `soc_upstream_copy_check.py`: in sync with the installed `luna_soc` (83 upstream statements, 85 in the copy: instrumentation assignments + the `as fsm:` handle); validated against known-bad mutations both directions.
 
 ## 5. Firmware bytes (`llvm-nm --print-size`, `b403978`)
 

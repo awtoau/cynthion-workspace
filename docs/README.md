@@ -78,7 +78,7 @@ in its §13 got there in the first place.
 * [`rtic.md`](rtic.md) — **The concurrency design**: tasks on one stack, priority in software, and the I-cache that sizes it
 * [`architecture.md`](architecture.md) — **what this is made of, and where each piece came from**
 * [`soc-clocking.md`](soc-clocking.md) — The RISC-V SoC clock ceiling: it was never place-and-route
-* [`sbu.md`](sbu.md) — **The Type-C sideband**: four lines to the FPGA, three protocols, and why SWD is the one that fits
+* [`sbu.md`](sbu.md) — **The Type-C sideband**: four lines to the FPGA, the protocols a far end can negotiate
 * [`soc-interrupts.md`](soc-interrupts.md) — **The interrupt design**: every interrupt-capable signal, what should raise one, and the four decisions still open
 * **[`gateware-vs-firmware.md`](gateware-vs-firmware.md) — every decision the SoC bakes at elaboration**: one row per decision, seven reasons to stay in gateware, and the ports that exist and reach nothing
 * [`riscv-core-build.md`](riscv-core-build.md) — Building the RISC-V core — and why you should, more often than you think
@@ -106,6 +106,7 @@ in its §13 got there in the first place.
 * **[`chips/bus-speed-audit.md`](chips/bus-speed-audit.md) — every interface: what the part supports, what this board allows, what we configure**
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
+* [`chips/flash-soc-peripheral.md`](chips/flash-soc-peripheral.md) — config flash SoC peripheral (#593): XIP, command port, calibration, SCK 190
 * [`chips/flash-baseline.md`](chips/flash-baseline.md) — config flash clean-room baseline (#590): every read mode, 20-260 MHz climb, 190 MHz operating point, program/erase times
 * [`chips/hyperram/`](chips/hyperram/README.md) — Winbond W956A8MBYA — the HyperRAM: part facts, #581 baseline, SoC peripheral (#588)
 

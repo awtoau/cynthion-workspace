@@ -100,4 +100,5 @@ cd .claude/worktrees/<name>
 - [git.md](git.md): lists seven submodules (facedancer, luna, packetry, saturn-v absent from `.gitmodules`); "eleven submodules" vs four top-level; hardcoded pin `90c8b7b6`.
 - [riscv-core-build.md](riscv-core-build.md): "every worktree shares the main checkout's `repos/vexiiriscv`" is false after `worktree-setup` (lock is then per worktree).
 - [chips/samd11-apollo.md](chips/samd11-apollo.md): cites `scripts/apollo_reflash.py`, which does not exist.
+- [chips/w25q32-config-flash.md](chips/w25q32-config-flash.md) Performance / refill / "What the SoC took" / Speed sections, [chips/ecp5/peripheral-clock-audit.md](chips/ecp5/peripheral-clock-audit.md) flash rows, [upstream-boundary.md](upstream-boundary.md), [soc-size-review.md](soc-size-review.md): describe the luna_soc flash controller replaced by [chips/flash-soc-peripheral.md](chips/flash-soc-peripheral.md) (#593); QPI/DTR "absent" is contradicted by #590.
 - [`soc_run.py`](../scripts/soc_run.py) docstring: shell image "baked into the bitstream at 0x400" vs [`dev.py`](../scripts/dev.py) `fw`: ".text lives in flash, nothing of the firmware travels in the bitstream".

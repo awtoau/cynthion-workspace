@@ -2,7 +2,6 @@
 
 Four lines to the FPGA, no peripheral, three mutually exclusive protocols depending on what the far end negotiated. The analog front end decides what is reachable.
 
-- Reference: <https://github.com/minoseigenheer/SWD-over-USB-C> — SWD in Debug Accessory Mode on this pin pair.
 - Index: [`README.md`](README.md) · protection [`chips/dpo2036-cc-sbu-protection.md`](chips/dpo2036-cc-sbu-protection.md) · interrupts [`soc-interrupts.md`](soc-interrupts.md)
 
 ## What is wired
@@ -33,14 +32,6 @@ Four lines to the FPGA, no peripheral, three mutually exclusive protocols depend
 - Apple's 1.2 V sits below an LVCMOS33 `VIH` of about 1.6 V.
 - Reachable without new hardware: single-ended 3.3 V only (UART, SWD).
 
-## SWD fits
-
-- Two wires, single-ended, 3.3 V, **host-clocked** (no baud agreement, no oversampling). `SWCLK`/`SWDIO` map to `SBU1`/`SBU2`.
-- No analog front end; no rate negotiation (far end sets speed).
-- Hard part: `SWDIO` turnaround, same shape as [`gateware/probes/sideband/sideband_link.py`](../gateware/probes/sideband/sideband_link.py) on one bidirectional pin.
-- Makes Cynthion a debug probe over USB-C.
-- Precondition is CC-side entry into Debug Accessory Mode (FUSB302B presents the right resistors, far end accepts). The FUSB302B driver is measurement-only today (`POWER` without internal oscillator, `MASKA`/`MASKB` fully masked, `PDWN1`/`PDWN2` not enabled): nothing negotiates.
-
 ## DP AUX (for completeness)
 
 - 1 Mbit/s Manchester-II, half-duplex, one differential pair. Transaction: SYNC preamble, 4-bit request header (native vs I2C-over-AUX, read/write, MOT), 20-bit address, length byte, payload, STOP. Replies ACK / NACK / DEFER.
@@ -54,29 +45,7 @@ Four lines to the FPGA, no peripheral, three mutually exclusive protocols depend
 
 A data line is not an interrupt source; the receiver's interrupt is (as the console 16550 is the source for USB CDC bytes, not the ULPI pins). Two ports, two sources. Existing pattern `SerialLine` → `StreamBuffer` → `Uart16550` → source; `SerialLine` drops onto an SBU pad unchanged.
 
-## The peripheral — [`gateware/soc/peripherals/sbu.py`](../gateware/soc/peripherals/sbu.py)
+## The peripheral
 
-One peripheral per port, one bidirectional pin pair, three modes selected by a register, sharing pads and tristate logic:
+- `sbu.py`/`swd.py` and their sims are parked on branch `park/sbu-swd` (Dan, 2026-11-03; [#591](https://github.com/awtoau/cynthion-workspace/issues/591)).
 
-| mode | pin 0 | pin 1 | rate |
-|---|---|---|---|
-| **0 raw** (reset) | driven and sampled | driven and sampled | capture at `sync`, 16.7 ns |
-| **1 serial** | transmit | receive | runtime baud, 10 Mbit/s exact, 12 Mbit/s ceiling |
-| **2 swd** | `SWCLK`, always driven | `SWDIO`, turnaround per B4.2 | 52.5 MHz down to 25.6 kHz |
-
-- **Raw** captures every transition with the levels after it and how long the previous levels held; the FIFO reports overflow rather than dropping quietly. It is the fallback for protocols with no engine here.
-- **SWD** is the host side (Cynthion generates `SWCLK`), [#518](https://github.com/awtoau/cynthion-workspace/issues/518). Engine [`peripherals/swd.py`](../gateware/soc/peripherals/swd.py), from ARM IHI 0074E chapter B4 (document: [`sources/README.md`](../sources/README.md)).
-- **Speed** is an index into a fixed table (OpenOCD `stlink_khz_to_speed_map_swd[]` is twelve `{kHz, divisor}` pairs; ST-Link V2 tops out at 4 MHz). Index 0 is **52.5 MHz**.
-- **`mode.swap`** corrects both reversal causes: flipped cable, and [#517](https://github.com/awtoau/cynthion-workspace/issues/517) row 9.
-
-Clock:
-- SWD runs in `swd`, 105 MHz: CLKOS2 of the PLL making `sync`, `CLKOS2_DIV = 4` of the 420 MHz VCO, exact; no second PLL bel. Clock plan: [`soc-clocking.md`](soc-clocking.md).
-- CSRs stay in `sync`: pulses each way, request fields as data behind that handshake, ACK/RDATA captured on `done` (not synchronised per bit).
-
-Bring-up:
-- On-board SAMD11, not a cable. `J6` is the ARM 10-pin Cortex header carrying `MCU_SWCLK`/`MCU_SWDIO` to `U6` PA30/PA31. Jumper `user_pmod` 0 pins 1 and 2 (balls `C9`/`B9`) to it.
-- **Read DPIDR and stop**: that SAMD11 is Apollo; halting it takes the board off USB.
-
-Verification:
-- Simulation only, no hardware yet: [`scripts/soc/swd_host_sim.py`](../scripts/soc/swd_host_sim.py) (37 checks; UNVERIFIED count) drives a spec-derived target model; [`scripts/soc/sbu_port_sim.py`](../scripts/soc/sbu_port_sim.py) (29 checks; UNVERIFIED count) runs both clock domains through the CSR bus.
-- Still to settle on a board: that the round trip through two DPO2036 switches and a cable fits the 9.5 ns half period at index 0 ([#97](https://github.com/awtoau/cynthion-workspace/issues/97) proves DC only); a slower speed index is the fallback.

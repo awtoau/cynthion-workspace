@@ -397,9 +397,9 @@ def run_checks(checks, args):
     ids_seen = {r["id"] for r in results}
     checks.check("(d) switchable compressor: mode picks the codec per block, order preserved",
                  not bad and ids_seen == {ID_STORED, ID_LZ4}, "; ".join(bad[:6]))
-    swd = SwitchableDecompressor()
+    sdec = SwitchableDecompressor()
     dec_in = [(r["coded"], r["id"], r["raw_len"]) for r in results]
-    dres, _ = decompress_run(swd, dec_in, rng=rng, valid_prob=0.9, ready_prob=0.8)
+    dres, _ = decompress_run(sdec, dec_in, rng=rng, valid_prob=0.9, ready_prob=0.8)
     bad = [f"#{i}" for i, (d, r) in enumerate(zip(sw_blocks, dres))
            if r["raw"] != d or r["error"] or not r["last"]]
     checks.check("(d) switchable decompressor: mixed stored/lz4 stream == input",

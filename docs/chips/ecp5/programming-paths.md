@@ -166,7 +166,7 @@ firmware over the TARGET USB interface while the design keeps running.
 
 | half | state |
 |---|---|
-| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) `HoldableSPIController` gives the CPU arbitrary SPI transactions with a chip select that latches across CSR writes. Exposed as `SPI0` at `0xf0000100`. (Upstream's CS is a write-strobe pulse and collapses between transfers, which is a separate all-zeros JEDEC result from the one below — the file's own header has the capture.) |
+| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) command port (#593): JEDEC, status, write enable, 4/64 KiB erase, page program, read, at `0xf0000100` with a 4 KiB buffer at `0xf0011000` ([flash-soc-peripheral.md](../flash-soc-peripheral.md)). |
 | firmware | **absent.** [`firmware/cynthion-soc/src/memory.rs`](../../../firmware/cynthion-soc/src/memory.rs) says so in its own header: reading all three regions is safe, writing is not, and no `write` verb exists. |
 
 What the shell can do today is `flash read <hex>` and `flash id` — and `flash
