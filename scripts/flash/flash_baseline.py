@@ -876,7 +876,7 @@ def main():
     pd.add_argument("--sck", type=float, default=100)
     pd.add_argument("--n", type=int, default=300)
     pd.add_argument("--ops", type=int, default=100)
-    pd.add_argument("--drv", action="store_true", help="eye width at SR3 drive 25% vs 100%")
+    pd.add_argument("--drv", action="store_true", help="eye width at SR3 drive 25%% vs 100%%")
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
