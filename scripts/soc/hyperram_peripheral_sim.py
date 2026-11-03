@@ -509,7 +509,20 @@ async def s_ck_pll(checks, b, dev, ctx, periph):
     await ctx.tick("sync").repeat(8)
     err = await b.read("errors")
     checks.check("PLL lock lost: sticky pll_lost", err >> hrp.ERR_PLL_LOST & 1, f"{err:#x}")
+    st = await b.cmd(hrp.OP_FILL, hr_addr=0x100, len=4)
+    checks.check("unlocked: hr held in reset, command refused NOT_READY",
+                 st["code"] == hrp.CODE_NOT_READY and not st["ready"], str(st))
     ctx.set(periph.sim_locked, 1)
+    st = await wait_boot(b)
+    err = await b.read("errors")
+    checks.check("relocked: synchronous release, RESET# + calibration again, pll_lost kept",
+                 st is not None and st["cal"] and err >> hrp.ERR_PLL_LOST & 1,
+                 f"{st} errors {err:#x}")
+    st = await b.cmd(hrp.OP_TEST, hr_addr=0x200, len=1024, mode=hrp.TEST_BOTH << 2, seed=7)
+    checked, errs = await b.read("checked"), await b.read("errs")
+    checks.check("after relock: TEST checks every word (checked == length), 0 errors",
+                 st["code"] == 0 and checked == 512 and errs == 0,
+                 f"{st} checked {checked} errs {errs}")
 
 
 async def s_ck_wrong(checks, b, dev, ctx, periph):

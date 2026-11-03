@@ -20,7 +20,7 @@ from pathlib import Path
 from amaranth             import (Cat, ClockSignal, Const, DomainRenamer, Elaboratable,
                                   Module, Mux, ResetInserter, Signal)
 from amaranth.lib         import memory, wiring
-from amaranth.lib.cdc     import FFSynchronizer
+from amaranth.lib.cdc     import FFSynchronizer, ResetSynchronizer
 from amaranth.lib.fifo    import AsyncFIFO, SyncFIFOBuffered
 from amaranth.lib.wiring  import In, Out
 from amaranth_soc         import csr, wishbone
@@ -278,6 +278,8 @@ class _Engine(Elaboratable):
                     with m.Else():
                         win_write((d_q0 + widx)[0:11], got[8:16], got[0:8], ~mask_a, ~mask_b)
                 with m.Case(SNK_CHECK):
+                    # No FIFO before the checker: the core's `done` follows its last
+                    # rvalid (TAIL waits for every word), so counts are final at done.
                     diff = Signal(16)
                     m.d.comb += diff.eq((got ^ want) & cmp_mask)
                     s += c["checked"].eq(c["checked"] + 1)
@@ -681,10 +683,12 @@ class HyperRAM(wiring.Component):
         locked = Signal()
         if self.sim:
             m.d.comb += locked.eq(self.sim_locked)
+            # as the PLL's own: hr held in reset while unlocked, released synchronously
+            m.submodules.hr_rst = ResetSynchronizer(~self.sim_locked, domain="hr")
         else:
             m.submodules.pll = pll = BaselinePLL(domain="hr", mhz=self.ck_mhz,
                                                  clki=ClockSignal("usb"),
-                                                 phase90_domain="hr90")
+                                                 phase90_domain="hr90", sync_reset=True)
             m.d.comb += locked.eq(pll.locked)
 
         # ---- abort: CTRL.abort held 8 sync cycles, synchronised into hr
