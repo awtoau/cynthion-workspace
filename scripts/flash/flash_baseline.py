@@ -836,7 +836,7 @@ def climb_point(sck, seed, stale, drive_check=False, io=""):
     if fl is None:
         return False, dict(why="wrong applet")
     fl.reset_part()
-    out = dict(sck=sck, sck_meas=fl.f, io=io or "16mA-fast")
+    out = dict(sck=sck, sck_meas=fl.f, io=io or "16mA-fast", pll_lock=bool(fl.b.rd("STATUS") & 2))
     best, w = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4),
                   lats=range(0, 8), halves=(0, 2))
     out.update(jedec=best, jedec_width=w)
@@ -911,7 +911,7 @@ def climb(args):
     say(f"climb {RUN_ID}: {scks}; region seed {seed:#010x}, stale {stale:#010x}")
     if not build_cached(scks):
         return 1
-    fails, last_pass, results = 0, None, []
+    fails, last_pass, results, pass_ge240 = 0, None, [], False
     for sck in scks:
         ok, out = climb_point(sck, seed, stale)
         results.append(out)
@@ -919,9 +919,13 @@ def climb(args):
         say(f"climb {sck:g}: {'PASS' if ok else 'FAIL'} {out}")
         if ok:
             fails, last_pass = 0, sck
+            if sck >= 240:
+                pass_ge240 = True
         else:
             fails += 1
-            if fails == 2:
+            # Every point to 260 even after fails (a fail can be placement, not the part);
+            # past 260 only while some point >= 240 has passed.
+            if fails >= 2 and sck >= args.min_stop and not pass_ge240:
                 break
     if last_pass is not None:
         above = [s for s in scks if s > last_pass][:1]
@@ -1035,6 +1039,7 @@ def main():
     pc = sub.add_parser("climb", help="10 MHz steps up until two points fail; reads only")
     pc.add_argument("--start", type=float, default=100)
     pc.add_argument("--stop", type=float, default=300)
+    pc.add_argument("--min-stop", type=float, default=260, help="never stop below this")
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
