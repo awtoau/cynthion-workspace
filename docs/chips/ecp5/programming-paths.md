@@ -21,12 +21,17 @@ is the map; the depth is in the files it links.
 | ECP5 block RAM, `0x0` | `firmware/cynthion-boot`, 500 bytes | packed into the bitstream — no path of its own |
 | SAMD11 | the Apollo debug firmware itself | USB DFU (Saturn-V bootloader) |
 
+HyperRAM is the fifth memory a transfer can land in, and today nothing executes
+from it — see [staging](#5-staging-into-hyperram).
+
 ## Transports
 
 | transport | reaches | notes |
 |---|---|---|
 | Apollo JTAG | ECP5 SRAM, ECP5 TAP, config flash (bit-banged through Apollo's SPI-over-JTAG) | needs Apollo owning the shared USB port, `1d50:615c` |
 | SPI-over-JTAG debug tunnel | registers in the running design | on r1.4 this **is** `device.spi`; there is no hard debug SPI above r0.2 ([`apollo_fpga/__init__.py:137,343`](../../../repos/apollo/apollo_fpga/__init__.py#L137)) |
+| ER1 user-JTAG sink | HyperRAM staging area | the workspace's own tap, [`gateware/soc/bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py); ER2 is the CPU debug module |
+| the SoC's own USB/serial console | HyperRAM staging area | needs a running, answering shell |
 | FlashBridge over USB bulk | config flash, offset 0 only | its own device, `1209:000f`, on the **CONTROL** port |
 | USB DFU | SAMD11 program flash | device must be in the Saturn-V bootloader, `1d50:60e6` |
 
@@ -113,7 +118,37 @@ is the map; the depth is in the files it links.
   command; `scripts/soc_run.py --firmware-only` reconfigures with a full
   `apollo configure` of the same bitstream instead.
 
-### 5. Apollo debug-SPI — `spi`, `spi-inv`, `spi-reg`, `jtag-spi`, `jtag-reg`
+### 5. Staging into HyperRAM
+
+Three front ends, one destination: the HyperRAM staging area, and a header of
+magic + length + CRC32 written last so a partial run leaves a header the
+bootloader ignores.
+
+Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path.
+
+| front end | needs | transport |
+|---|---|---|
+| [`scripts/soc/soc_jtag_stage.py`](../../../scripts/soc/soc_jtag_stage.py) | a configured FPGA carrying this design (ER1 signature `0x4a53`); no console, no running CPU | one `shift_data` per image, CPU held in reset |
+| console `load <hex>` | a running, answering shell | serial, byte at a time |
+| [`scripts/soc/soc_payload.py`](../../../scripts/soc/soc_payload.py) | as above | the same console |
+
+* The layout is [`firmware/cynthion-soc/src/hyperram.rs`](../../../firmware/cynthion-soc/src/hyperram.rs), compiled into the
+  bootloader *and* the shell, so no front end can disagree with the reader.
+* **Design survives: yes.** No bitstream rebuild, no flash write.
+* **It installs nothing today.** `_image_start` is `0x100B0000` — the
+  memory-mapped flash window — so the bootloader verifies the staged image and
+  reports `FlashResident` (status 6) rather than copying it. A store into a
+  read window does not program flash, and jumping afterwards would run whatever
+  flash already held while reporting success.
+  [`firmware/cynthion-boot/src/main.rs`](../../../firmware/cynthion-boot/src/main.rs), [`firmware/cynthion-boot/memory.x`](../../../firmware/cynthion-boot/memory.x).
+* Staging throughput is **not measured** in this tree.
+  `scripts/soc/soc_jtag_stage.py --benchmark` exists and times the streamed path
+  against the per-word register path in the same session; no run of it is
+  recorded.
+* `--clear` removes the header. It does not put back an image already copied —
+  a reconfigure does.
+
+### 6. Apollo debug-SPI — `spi`, `spi-inv`, `spi-reg`, `jtag-spi`, `jtag-reg`
 
 * **Not a programming path.** These read and write *registers inside the
   running design*. No memory, no flash, no code.
@@ -124,7 +159,7 @@ is the map; the depth is in the files it links.
 * **Design survives: yes** — and it must already be running, or there is
   nothing to answer.
 
-### 6. Proposed, not built — flash write from the SoC
+### 7. Proposed, not built — flash write from the SoC
 
 Needs no Apollo, no JTAG, and no downtime at all: the CPU writes its own next
 firmware over the TARGET USB interface while the design keeps running.
@@ -191,7 +226,7 @@ power-on / PROGRAMN
      └─ bitstream configures the fabric AND initialises block RAM
         └─ block RAM 0x0 = firmware/cynthion-boot, 500 bytes, and NOTHING else
            └─ CPU releases from reset_addr = RAM_BASE = 0x0
-              └─ bootloader stub: breadcrumb, fence.i, jump
+              └─ bootloader: read staging header from HyperRAM, checksum, jump
                  └─ 0x100B0000: .text + .rodata, read from flash +0xb0000
 ```
 
@@ -207,10 +242,33 @@ power-on / PROGRAMN
   skipping the build would then leave block RAM one edit behind flash while
   reporting success.
 
-### The bootloader
+### The bootloader's decision table
 
-* [`firmware/cynthion-boot/src/main.rs`](../../../firmware/cynthion-boot/src/main.rs): a block RAM stub. Sets `sp`, writes the boot breadcrumb (`NoMagic` (1), the ordinary path) and the sideband byte, `fence.i`, jumps to `0x100B0000`. No HyperRAM access, no staging (#588).
-* Two breadcrumbs, no console: the status word at `_boot_status` = `0x3fc` (marked `"BOT"` in its high 24 bits, read back by the shell's `info`), and a coarsened byte in the `BOARD_SIDEBAND` CSR, which reaches Apollo on pin T6 without USB, console or JTAG.
+[`firmware/cynthion-boot/src/main.rs`](../../../firmware/cynthion-boot/src/main.rs). Every path ends in the same instruction —
+jump to the image region — and nothing branches on the reason.
+
+| what it found | status | what it does |
+|---|---|---|
+| no magic in HyperRAM | `NoMagic` (1) | jump |
+| magic, CRC mismatch | `Crc` (2) | jump |
+| length 0, or past the image region | `Length` (3) | jump |
+| HyperRAM never answered | `Silent` (4) | jump |
+| a good image, and the region is block RAM | `Ran` (0) | copy, then jump |
+| a good image, and the region is the flash window | `FlashResident` (6) | **do not copy**, jump |
+| this image panicked | `Panicked` (5) | jump |
+
+`FlashResident` is the ordinary case on the board as built — see
+[staging](#5-staging-into-hyperram). It is not an error: it
+means the staged image was fine and is not what is running.
+
+Two breadcrumbs, no console: the status word at `_boot_status` = `0x3fc`
+(marked `"BOT"` in its high 24 bits, read back by the shell's `info`), and a
+coarsened byte in the `BOARD_SIDEBAND` CSR, which reaches Apollo on pin T6
+without USB, console or JTAG.
+
+The verify pass and the copy pass are two passes over HyperRAM on purpose: a
+single pass that checksummed while copying would have overwritten the image
+region before discovering the CRC was wrong.
 
 ### The image's memory map
 
@@ -238,6 +296,7 @@ power-on / PROGRAMN
 * **Configuration from flash**, in any `--spimode` or at any `--freq`. The
   `INITN` gap blocks host-triggered reconfiguration, so no boot-time figure
   exists — [`qspi-boot-time.md`](qspi-boot-time.md).
+* **Staging throughput** over ER1, and the console `load` path.
 * **Page program, sector erase and block erase on the part**, independently of
   the transport — [#93](https://github.com/awtoau/cynthion-workspace/issues/93).
 
@@ -251,6 +310,8 @@ power-on / PROGRAMN
 | `apollo flash-program` | anything | flash, any 256 B-aligned offset | **3.33 s** / 58,940 B = 17.3 KiB/s | **no — `ensure_unconfigured()` first** | Apollo on the port |
 | `apollo flash-program --fast` | anything | flash, **offset 0 only** | not measured here | no — overwritten by the bridge | cable in CONTROL, `1209:000f` udev rule, FPGA toolchain |
 | `apollo reconfigure` | nothing | — | — | no — and it never completes | a working `INITN`, which this board has not got |
+| [`scripts/soc/soc_jtag_stage.py`](../../../scripts/soc/soc_jtag_stage.py) | firmware image | HyperRAM staging area | not measured; one JTAG scan, no rebuild | **yes** — CPU held and released | a configured FPGA carrying this design |
+| console `load` / [`scripts/soc/soc_payload.py`](../../../scripts/soc/soc_payload.py) | firmware image | HyperRAM staging area | not measured; serial-bound | **yes** | a running, answering shell |
 | `apollo spi` / `jtag-spi` / `spi-reg` | register values | the running design | per-transaction USB latency | **yes** — and it must be running | a design that answers |
 | [`scripts/bram_patch.py`](../../../scripts/bram_patch.py) | block RAM init | a built `.bit` on disk | 22 s (2 s with `--no-verify-source`) | n/a — then `apollo configure` | a matching build directory |
 | `cynthion flash --mcu-firmware` | Apollo firmware | SAMD11 program flash | not measured here | n/a — the FPGA is not involved | Saturn-V bootloader, `1d50:60e6` |
