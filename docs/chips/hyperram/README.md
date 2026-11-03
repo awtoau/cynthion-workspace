@@ -13,6 +13,7 @@ The W956A8MBYA6I on Cynthion r1.4, and how it is being characterised.
 
 | document | what it is |
 |---|---|
+| [sequential-baseline.md](sequential-baseline.md) | **sequential throughput, non-RV path, from scratch** (#581) -- datasheet/public designs only; CK 60-165 figures, read eye, gap vs rated |
 | [w956a8.md](w956a8.md) | **the part** — registers, timing, wiring, and every measured behaviour |
 | [specifications.md](specifications.md) | **the numbers** — DC, current, refresh, and AC per speed grade, each with its source |
 | [app-notes.md](app-notes.md) | **what the vendor says outside the datasheet** — the four Winbond application notes, the four questions they settle, and the three places they contradict the datasheet or each other |
