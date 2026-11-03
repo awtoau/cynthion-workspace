@@ -77,6 +77,7 @@ SIMS = [
     "soc_i2c_owner_sim",
     "soc_typec_sim",
     "hyperram_peripheral_sim",
+    "flash_peripheral_sim",
     "soc_jtag_stage_sim",
     "soc_jtag_registers_sim",
     "soc_board_sim",
