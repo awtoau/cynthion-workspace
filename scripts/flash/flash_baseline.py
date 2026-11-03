@@ -243,17 +243,20 @@ class Flash:
         """Delay-only PHASESTEPs (glitch-free direction) to reach `step`, then lat/xfer;
         `half` picks the DDR nibble pairing (DTR only)."""
         delta = (step - self.phase()) % self.n_steps
-        if delta:
+        # One pulse per write: a burst of pulses landed the 132 MHz capture a cycle off
+        # the point its eye had found (#590); single steps are what the eye itself used.
+        for _ in range(delta):
             self.pstep_bit ^= 1
-            self.b.wr("PHASE_STEP", (self.pstep_bit << 31) | delta)
-            # Waits for: delta pulses x 4 cycles of 60 MHz (67 ns each, < 25 us for a
-            # period). One JTAG read (~ms) outlasts it; bounded at 20 polls.
-            for _ in range(20):
-                if not self.b.rd("STATUS") & 4:
-                    break
-            else:
-                raise Hung(f"PHASESTEP {delta} never finished")
-            self.pos += delta
+            self.b.wr("PHASE_STEP", (self.pstep_bit << 31) | 1)
+            self.pos += 1
+        # Waits for: the last pulse, 4 cycles of 60 MHz (67 ns); one JTAG read (~ms)
+        # outlasts it. Bounded at 20 polls.
+        for _ in range(20 if delta else 0):
+            if not self.b.rd("STATUS") & 4:
+                break
+        else:
+            if delta:
+                raise Hung(f"PHASESTEP to {step} never finished")
         frac = step / self.n_steps
         self.b.wr("XFER", int(frac < 0.25 or frac >= 0.75))
         self.b.wr("LAT", lat | half << 8)
@@ -548,6 +551,9 @@ def measure(sck, state):
             best = state["jedec_best"]
         state["ebh_best"] = best
         fl.set_capture(*best)
+        ok = probe()
+        say(f"  capture {best}: eye probe repeated after placing: {'clean' if ok else 'FAILS'}")
+        record(dict(label="capture verify", sck=sck, sck_meas=fl.f, best=best, ok=ok))
         # 4. every mode, whole test region in one transaction, then 32-byte bursts.
         for mode in MODES:
             r = fl.read(mode, TEST_BASE, TEST_SIZE, seed=seed, label=f"{mode} region")
