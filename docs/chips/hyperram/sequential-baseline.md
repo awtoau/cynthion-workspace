@@ -53,7 +53,7 @@ Conditions:
 - Gateware `1d272c9`; `sync` 130 MHz. The FIFO side supplies 260 Mwords/s, which is above the bus at every CK. CR0 is the power-on value 0x8F2F, read back after calibration. Fixed latency 7 (2x), linear bursts.
 - Burst is the longest tCSM allows at that CK (`max_burst_words(CK)`). Each case covers the whole array (4 Mi words, 8 MiB) in one pass. The pattern toggles every DQ bit on every beat and folds in all 22 address bits.
 - Every write uses a fresh random seed, so a read that returns data left by an earlier write fails.
-- Two negative controls must fail every word. "xor" checks the read against the pattern xor 1. "stale seed" checks it against the previous seed.
+- Two negative controls must fail every word. "xor" checks the read against the pattern xor 1. "stale seed" checks it against the write's seed xor 0x5A5A (a wrong seed, not the previous write's).
 - Read delay: input DELAYF swept in 8-tap steps, 64 Ki words written and read per tap. The run uses the centre of the widest clean run.
 - **CK measured:** the hr clock is counted over 2^19 cycles of the 60 MHz oscillator pin (8.74 ms window). That count checks the PLL ratio; the absolute frequency is only as good as the oscillator. MB/s is computed from the measured CK.
 
@@ -100,7 +100,7 @@ Read eye (8-tap steps, taps 0..120; `.` clean, `X` errors or hung):
   - 5 taps hang in WAIT_W, as at 210.
   - CR0 still reads 0x8F2F at tap 16, so single-word register reads still work.
   - Whether the part, the pads or the fabric fails first at 240 cannot be separated with this harness.
-- **The checker detects real failure.** At 240 it reports 4194304 / 4194304 errors on reads that ran at full rate. The stale-seed control rules out the earlier risk of a read returning old data from a lower-CK write (the first, unseeded sweep had that risk; it is superseded and deleted here).
+- **The checker detects real failure.** At 240 it reports 4194304 / 4194304 errors on reads that ran at full rate. The fresh seed per write rules out a read returning old data from a lower-CK write (the first, unseeded sweep had that risk; it is superseded and deleted here). The stale-seed control shows only that a wrong seed fails ([lessons.md](lessons.md#corrections-to-the-published-baseline)).
 - **First register read before calibration is unreliable.** CR0 read at tap 0 returned 0x87AF (140), 0x8D2F (160), 0x0000/0x27AF (210), 0x5F2F (240). After calibration every CK through 180, and 240 at tap 16, read 0x8F2F.
 
 ## Gap vs rated max (CK 165: read 311.1 of 330 MB/s pin rate; rated part 166 MHz = 332 MB/s)
