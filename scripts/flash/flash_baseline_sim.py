@@ -44,7 +44,7 @@ from amaranth import ClockDomain, ClockSignal, Module, Mux, Signal  # noqa: E402
 from amaranth.hdl import Fragment                                    # noqa: E402
 from amaranth.sim import Simulator                                   # noqa: E402
 
-from spiflash import (CHECK_BLANK, CHECK_NONE, CHECK_PATTERN, OP_RAW, OP_READ,  # noqa: E402
+from spiflash import (CHECK_BLANK, CHECK_PATTERN, DTR, OP_RAW, OP_READ,  # noqa: E402
                       OP_WLOOP, READ_MODES, W1, W4, FlashPHY, FlashPins, OpEngine, TxEngine,
                       desc, pattern_py)
 
@@ -134,6 +134,23 @@ class W25Q32JV:
             for _ in range(4):
                 yield None
             reader, w = a, 4
+        elif cmd == 0xED:
+            # DTR (W25Q32JV-DTR rev H Fig 27a): address and M 2 nibbles per CLK, 7 dummies,
+            # then a byte per CLK, high nibble after CLK falling, low after the next rising.
+            # Inputs are sampled on rising edges only: the engine's SDR address phase holds
+            # each nibble for a whole CLK, so this model needs a pair-equal address (0).
+            a = 0
+            for _ in range(3):
+                n = yield None
+                a = (a << 8) | ((n & 0xF) << 4) | (n & 0xF)
+            yield None
+            for _ in range(7):
+                yield None
+            addr = [a]
+            while True:
+                b = self.read(addr[0])
+                addr[0] += 1
+                yield ("ddr", (b >> 4, 0b1111), (b & 0xF, 0b1111))
         elif cmd in (0x02, 0x32):
             a = yield from self.take(24, 1)
             data = []
@@ -215,12 +232,25 @@ def run(phase_ns, xfer, script):
     dev = W25Q32JV()
     cs_high = {"run": 0, "min": None}
 
-    trace = []
+    def apply(ctx, drive):
+        if drive is None:
+            ctx.set(h["f_oe"], 0)
+            return
+        ctx.set(h["f_val"], drive[0])
+        ctx.set(h["f_oe"], drive[1])
+        if drive[1] & ctx.get(h["pad_oe"]):
+            dev.contention += 1
+            dev.contended.add(dev.cmds[-1])
 
     async def flash(ctx):
         clk = h["fclk"].clk
+        rise = None                       # DDR low nibble due after the next rising edge
         while True:
             await ctx.posedge(clk)
+            if rise is not None and ctx.get(h["pad_cs"]):
+                await ctx.delay(TCLQV_NS * 1e-9)
+                apply(ctx, rise)
+            rise = None
             dev.clk += 1
             cs = ctx.get(h["pad_cs"])
             if not cs:
@@ -239,25 +269,11 @@ def run(phase_ns, xfer, script):
                 oe = ctx.get(h["pad_oe"])
                 io = ctx.get(h["pad_o"]) & oe
                 drive = dev.gen.send(io)
-            trace.append((dev.clk, cs, ctx.get(h["tx"].phase), ctx.get(h["pad_oe"]),
-                          dev.bits_in, drive))
-            del trace[:-40]
+                if drive is not None and drive[0] == "ddr":
+                    drive, rise = drive[1], drive[2]
             await ctx.negedge(clk)
             await ctx.delay(TCLQV_NS * 1e-9)
-            if drive is None:
-                ctx.set(h["f_oe"], 0)
-            else:
-                ctx.set(h["f_val"], drive[0])
-                ctx.set(h["f_oe"], drive[1])
-                if drive[1] & ctx.get(h["pad_oe"]):
-                    dev.contention += 1
-                    dev.contended.add(dev.cmds[-1])
-                    if dev.contention == 1:
-                        log.info("    contention: cmd %#x bits_in %d fpga oe %#x flash oe %#x "
-                                 "tx phase %d", dev.cmds[-1], dev.bits_in,
-                                 ctx.get(h["pad_oe"]), drive[1], ctx.get(h["tx"].phase))
-                        for t in trace:
-                            log.info("      clk %d cs %d phase %d oe %#x bits_in %d drive %s", *t)
+            apply(ctx, drive)
 
     results = []
 
@@ -266,15 +282,19 @@ def run(phase_ns, xfer, script):
         ctx.set(phy.xfer, xfer)
 
         async def op(kind, *, d=0, addr=0, length=0, burst=0, count=0, stride=0, check=0,
-                     seed=0, xor=0, poll_after=0, lat=None, wdata=0, csh_r=CSH_R, label=""):
+                     seed=0, xor=0, poll_after=0, lat=None, half=None, wdata=0, csh_r=CSH_R,
+                     window=(0, 0), label=""):
             for sig, v in ((eng.op, kind), (eng.desc, d), (eng.addr, addr), (eng.length, length),
                            (eng.burst, burst), (eng.count, count), (eng.stride, stride),
                            (eng.check, check), (eng.seed, seed), (eng.xor, xor),
                            (eng.poll_after, poll_after), (eng.wdata, wdata),
-                           (eng.csh_r, csh_r), (eng.csh_w, CSH_W)):
+                           (eng.csh_r, csh_r), (eng.csh_w, CSH_W),
+                           (eng.chk_lo, window[0]), (eng.chk_hi, window[1])):
                 ctx.set(sig, v)
             if lat is not None:
                 ctx.set(tx.lat, lat)
+            if half is not None:
+                ctx.set(tx.half, half)
             ctx.set(eng.go, 1)
             await ctx.tick()
             ctx.set(eng.go, 0)
@@ -426,6 +446,34 @@ def main():
             check(r["result"] & 0xFFFFFF != 0xEF4016, "QPI 9Fh does not answer (no QPI)")
             r = await op(OP_RAW, d=desc(0x9F, dw=W1, read=True), length=3, label="JEDEC ID after")
             check(r["result"] & 0xFFFFFF == 0xEF4016, "SPI still answers after the probe")
+            # DTR EDh from address 0 (the only pair-equal address the SDR PHY sends), checked
+            # in a window: page 0 programmed, the next page blank.
+            await op(OP_WLOOP, d=desc(0x20, abits=24), addr=0, count=1, label="erase sector 0")
+            await op(OP_WLOOP, d=desc(0x02, abits=24, dw=W1), addr=0, burst=256, count=1,
+                     stride=256, seed=seed_a, label="program page 0")
+            clean = []
+            for dl in range(0, 8):
+                for hf in (0, 1):
+                    r = await op(OP_READ, d=DTR, length=512, burst=512, check=CHECK_PATTERN,
+                                 seed=seed_a, window=(0, 256), lat=dl, half=hf,
+                                 label=f"DTR lat {dl} half {hf}")
+                    if r["errors"] == 0 and r["checked"] == 256:
+                        clean.append((dl, hf))
+            check(len(clean) >= 1, f"DTR has a clean (lat, half): {clean}")
+            if clean:
+                dl, hf = clean[0]
+                r = await op(OP_READ, d=DTR, length=512, burst=512, check=CHECK_PATTERN,
+                             seed=seed_a, window=(0, 256), lat=dl, half=hf, label="DTR read")
+                check(r["bytes"] == 512 and 512 <= r["run_cycles"] <= 512 + 60,
+                      f"DTR: a byte per CLK ({r['run_cycles']} cycles for 512)")
+                r = await op(OP_READ, d=DTR, length=512, burst=512, check=CHECK_PATTERN,
+                             seed=seed_a, window=(0, 512), label="neg: DTR window over blank")
+                check(r["errors"] >= 250, f"window covering blank bytes fails ({r['errors']})")
+                r = await op(OP_READ, d=DTR, length=512, burst=512, check=CHECK_PATTERN,
+                             seed=seed_c, window=(0, 256), label="neg: DTR stale seed")
+                check(r["errors"] == 256, f"DTR stale seed fails every byte ({r['errors']})")
+                await op(OP_READ, d=ebh, addr=BASE, length=16, burst=16, lat=lat, half=0,
+                         label="restore lat")
 
         dev, results, cs_high = run(ph, xfer, cases)
         check(all(r["done"] for r in results), "every op finished in bound")
