@@ -13,14 +13,14 @@ Every hardware fact has one home; find it here. If something here is wrong, fix 
 |---|---|---|---|
 | **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die**; 20,143 LUT4 placed and verified on a 24,288-LUT die | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
 | **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM (64 Mbit ÷ 8) | HyperBus from the fabric; **no CPU path yet** ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM (64 Mbit ÷ 8) | register interface on the #581 core at CK 180, `0xf0000800` (#588) | [`chips/hyperram/`](chips/hyperram/README.md) |
 | **PAC1954-1** | 4-channel power monitor (`PRODUCT_ID` `0x7B`, `MANUFACTURER_ID` `0x54`) | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | **ATSAMD11D14A** | the Apollo debug MCU | USB vendor requests on CONTROL | [`chips/samd11-apollo.md`](chips/samd11-apollo.md) |
 | PI3USB102G | USB 2.0 DPDT mux (U16), CONTROL only | Apollo PA06 | [below](#the-control-port-mux) |
 
-- Making either memory faster: [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md), [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), ranked in [`architecture.md`](architecture.md).
+- Making the flash faster: [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md).
 - Every bus rate against what its parts support (rated | board | actual): [`chips/bus-speed-audit.md`](chips/bus-speed-audit.md).
 
 | soft core | what it is | note |
@@ -390,7 +390,7 @@ python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> help   # the Apol
 | `info` | image, CPU, bitstream identity | below |
 | `selftest` | CPU, block RAM, each identity register | below |
 | `flash id`, `flash read <hex>` | memory-mapped config flash | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| `bram read <hex>`, `hyperram read <hex>` | one word of the other two memories | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| `bram read <hex>` | one word of block RAM | — |
 | `ports` | which 16550s answer | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md) |
 | `irq` | event-controller pending/enabled, per-source counts, deferred-log health, per-console `lost` | [`chips/ns16550a-console-uart.md`](chips/ns16550a-console-uart.md), [`soc-interrupts.md`](soc-interrupts.md) |
 | `time` | 1 ms CLINT tick: uptime, `mtime`, handler cost | below |
@@ -403,13 +403,13 @@ python3 scripts/soc_shell.py --port /dev/serial/by-id/<apollo> help   # the Apol
 | `phy` | TARGET USB3343 ULPI registers, walking-bit test | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | `typec [init]` | both FUSB302B: CC and VBUS state, `int`/`fault` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | `sideband [hex]` | what the FPGA_ADV link reports | — |
-| `load <hex>`, `reset` | stage an image and boot into it | — |
+| `reset` | reboot into the image in flash | — |
 
 ### `info`
 
 - Eight lines: image (git hash, branch, dirty flag, build time); compiler and target triple; section sizes and what is left of the image region; boot status left by the bootloader; `misa` decoded; `mstatus`/`mtvec`; controller pending/enables; gateware.
 - Image region and linker layout: [`firmware/cynthion-soc/memory.x`](../firmware/cynthion-soc/memory.x) (RAM 31 KiB at `0x400`, above the 492-byte bootloader; `.text`/`.rodata` in flash at `0x100B0000`). `.stack` is whatever RAM nothing else claimed; check headroom after any firmware change: `llvm-objdump -h firmware/cynthion-soc/target/riscv32imac-unknown-none-elf/release/cynthion-soc`.
-- Firmware and bitstream are built separately (`load` replaces firmware without a bitstream rebuild). Which pair runs is the HOST's question: identity is the ECP5 USERCODE, readable only over JTAG.
+- Firmware and bitstream are built separately (`./dev.py fw` rewrites the flash image without a bitstream rebuild). Which pair runs is the HOST's question: identity is the ECP5 USERCODE, readable only over JTAG.
   - [`gateware/build_helpers.py`](../gateware/build_helpers.py) stamps it at pack time (`ecppack --usercode`): short hash, bit 31 set for a dirty tree.
   - [`gateware/usercode_map.py`](../gateware/usercode_map.py) resolves the 32 bits to commit, variant, source digest, part, declared clocks, cache and ISA. One record per bitstream, one index across all.
   - `scripts/soc_confirm.py` reads USERCODE and IDCODE after configuring and names `stale-bitstream`, `wrong-part`, `declared-clock`; `scripts/soc/soc_probe.py` asserts the same two.
@@ -533,7 +533,7 @@ TARGET PHY vendor/product IDs, function and OTG control, line state, walking-bit
 | upstream vs replaced | [`upstream-boundary.md`](upstream-boundary.md) |
 | reusable test gateware | [`gateware-architecture-plan.md`](gateware-architecture-plan.md) |
 | clock plan | [`soc-clocking.md`](soc-clocking.md) |
-| flash, HyperRAM, USB, BRAM | [`chips/ecp5/`](chips/ecp5/) |
+| flash, USB, BRAM | [`chips/ecp5/`](chips/ecp5/) |
 | Apollo firmware | [`apollo_samd11_mcu/`](apollo_samd11_mcu/) |
 | soft CPU | [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) |
 | toolchain | [`toolchain-versions.md`](toolchain-versions.md), [`toolchain-simplification.md`](toolchain-simplification.md) |

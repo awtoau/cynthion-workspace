@@ -157,7 +157,7 @@ Part detail: [`../pac1954-power-monitor.md`](../pac1954-power-monitor.md).
 
 | resource | subsignal | balls | state | where / why |
 |---|---|---|---|---|
-| `ram` 0 | `clk` | C3 D3 | used | requested `dir="-"` by `BootRAM` in [`gateware/soc/bootram.py`](../../../gateware/soc/bootram.py); `HyperRAMDQSPHY` owns the buffers |
+| `ram` 0 | `clk` | C3 D3 | used | the HyperRAM peripheral (#588), PHY from the #581 core [`gateware/hyperram_baseline/hyperbus.py`](../../../gateware/hyperram_baseline/hyperbus.py) |
 | | `dq` | F2 B1 C2 E1 E3 E2 F3 G4 | used | same |
 | | `rwds` | D1 | used | same |
 | | `cs` | B2 | used | same |
@@ -402,7 +402,7 @@ resource on an ECP5.
 | ball | net | how it is driven | why it is not in the pin map |
 |---|---|---|---|
 | N9 | `FPGA_FLASH_CLK` (W25Q32 `U7` pin 6) | the `USRMCLK` macro, instantiated in [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) | the configuration clock has no user I/O buffer; the macro is the only route. The pin map says so in the `spi_flash` comment |
-| R11, T10, T11, M10 | `FPGA_JTAG.TDI` / `.TCK` / `.TMS` / `.TDO` | the die's single `JTAGG` primitive, via [`gateware/soc/bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | dedicated JTAG pins, not fabric I/O |
+| R11, T10, T11, M10 | `FPGA_JTAG.TDI` / `.TCK` / `.TMS` / `.TDO` | the die's single `JTAGG` primitive (`UserJTAG`: ER2 to the CPU debug module) | dedicated JTAG pins, not fabric I/O |
 
 Note the overlap that *is* declared: **R14 and R11 are the same net**, and **T14
 and T11 are the same net** — confirmed in the netlist, not merely asserted by the
@@ -460,7 +460,7 @@ CFG0–2, `P9` DONE, `R9` PROGRAMN, `T9` INITN).
    and diffed against upstream's copy — identical.
 2. Every `platform.request(` call reachable from
    [`gateware/soc/top.py`](../../../gateware/soc/top.py) enumerated: `top.py`
-   itself, plus `clocks.py`, `bootram.py`, `peripherals/flash.py`,
+   itself, plus `clocks.py`, `peripherals/flash.py`,
    `probes/sideband/sideband_debug.py` and `board/core.py`.
 3. Per requested resource, each subsignal checked for an assignment in either
    direction.
