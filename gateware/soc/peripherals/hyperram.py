@@ -70,7 +70,8 @@ N_ERR = 13
 REG_ADDRS = (0x0000, 0x0001, 0x0800, 0x0801)
 
 # Cycles around n data words (hyperbus.py): start 1, PRE guard, CA 3, TAIL, POST guard,
-# CS# high, +1 for `done`. XFER watchdog = 1.25 x (n + latency + this); expiry WDOG.
+# CS# high, +1 for `done`. A read whose words never arrive also spends n cycles in FILL.
+# XFER watchdog = 1.25 x (n [+ n read] + latency + this); expiry WDOG.
 XFER_OVERHEAD = 1 + GUARD_CYCLES + 3 + TAIL_CYCLES + POST_GUARD_CYCLES + CS_HIGH_CYCLES + 1
 # sync<->hr toggle round trip: 2 FF + edge each way <= 8 sync cycles; 1.25x.
 HANDSHAKE_SYNC = 10
@@ -345,7 +346,7 @@ class _Engine(Elaboratable):
 
         reg_addr = Mux(o["reg_sel"][1], Cat(o["reg_sel"][0], Const(0, 10), Const(1, 1)),
                        o["reg_sel"][0])
-        lim_xfer = ((n_x + lat + XFER_OVERHEAD) * 5) >> 2
+        lim_xfer = ((Mux(x_write, n_x, 2 * n_x) + lat + XFER_OVERHEAD) * 5) >> 2
         lim_delay = ((8 + 8 * self.delay_tap + 4) * 5) >> 2
         rst_cycles = int(RESET_NS * self.ck_mhz / 1000.0)
         lim_reset = (2 * rst_cycles + 8) * 5 // 4

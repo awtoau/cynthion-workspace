@@ -91,7 +91,7 @@ Source: [`gateware/soc/peripherals/hyperram.py`](../../../gateware/soc/periphera
 ## Bounds (1.25x the derived expectation; the source has each one)
 | wait | expected | expiry |
 |---|---|---|
-| one transaction | n + latency + 25 hr cycles (hyperbus.py guard/CA/tail/post/CS# high) | WDOG, core reset, STATE latched |
+| one transaction | n (+ n tail fill for a read) + latency + 25 hr cycles (hyperbus.py guard/CA/tail/post/CS# high) | WDOG, core reset, STATE latched |
 | DELAYF step | 8 + 8 x tap hr cycles | WDOG |
 | RESET# | 2 x 2 us | NOT_READY |
 | command handshake | 8 sync cycles | HANDSHAKE |
