@@ -946,6 +946,30 @@ def climb(args):
     return 0
 
 
+def raw_probe(args):
+    """What does a failing point read? Raw 9Fh results over phase x lat x xfer, plus the
+    engine state: a value shifted from EF4016 is capture; a constant is the bus or engine."""
+    global RUN_ID
+    RUN_ID = time.strftime("%Y%m%d-%H%M%S")
+    if not build_cached([args.sck]) or not configure(args.sck):
+        return 1
+    fl = open_board(args.sck)
+    fl.reset_part()
+    seen = {}
+    for step in range(0, fl.n_steps, max(1, fl.n_steps // 8)):
+        for lat in range(0, 8):
+            for h in (0, 2):
+                fl.set_capture(step, lat, h)
+                r = fl.op(OP_RAW, d=desc(0x9F, dw=W1, read=True), length=3, label="raw 9F")
+                v = r["result"] & 0xFFFFFF
+                seen.setdefault(v, []).append((step, lat, h >> 1, r["done"], r["state"]))
+    for v, where in sorted(seen.items(), key=lambda kv: -len(kv[1])):
+        say(f"  9Fh -> {v:#08x} at {len(where)} settings, e.g. {where[:3]}")
+    record(dict(label="raw probe", sck=args.sck, values={f"{v:#08x}": len(w) for v, w in seen.items()},
+                lock_lost=bool(fl.b.rd("STATUS") >> 3 & 1)))
+    return 0
+
+
 def scan_only(args):
     global RUN_ID
     RUN_ID = time.strftime("%Y%m%d-%H%M%S")
@@ -1044,6 +1068,8 @@ def main():
     pc.add_argument("--start", type=float, default=100)
     pc.add_argument("--stop", type=float, default=300)
     pc.add_argument("--min-stop", type=float, default=260, help="never stop below this")
+    pp = sub.add_parser("probe", help="raw 9Fh values over phase x lat x xfer at one SCK")
+    pp.add_argument("--sck", type=float, required=True)
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
@@ -1060,6 +1086,8 @@ def main():
         return diag(args)
     if args.cmd == "climb":
         return climb(args)
+    if args.cmd == "probe":
+        return raw_probe(args)
     if args.cmd == "table":
         return table(args.run)
     return sweep(args)
