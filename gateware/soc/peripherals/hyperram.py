@@ -75,6 +75,8 @@ REG_ADDRS = (0x0000, 0x0001, 0x0800, 0x0801)
 XFER_OVERHEAD = 1 + GUARD_CYCLES + 3 + TAIL_CYCLES + POST_GUARD_CYCLES + CS_HIGH_CYCLES + 1
 # sync<->hr toggle round trip: 2 FF + edge each way <= 8 sync cycles; 1.25x.
 HANDSHAKE_SYNC = 10
+# Engine idle but no done yet: both cross by 2 FFs, so they agree within ~5 sync cycles.
+LOST_DONE_SYNC = 6
 # Stream ring transactions, words: under the tCSM cap at CK 180, half the FIFO in words.
 STREAM_BURST = 256
 STREAM_FIFO = 512                   # 32-bit entries
@@ -845,6 +847,13 @@ class HyperRAM(wiring.Component):
             with m.If(code != CODE_OK):
                 m.d.comb += err_set[ERR_OP].eq(1)
 
+        def refuse(code, op):
+            # leaves an op in flight alone: its own done still finishes it
+            m.d.sync += [code_r.eq(code), op_r.eq(op)]
+            m.d.comb += err_set[ERR_OP].eq(1)
+            with m.If(~pending):
+                m.d.comb += ev_set[0].eq(1)
+
         w = cmd.w_data
         mode = r["mode"].f
         hr_v, win_v, len_v = f("hr_addr").data, f("win_addr").data, f("len").data
@@ -858,13 +867,13 @@ class HyperRAM(wiring.Component):
                    | ((w == OP_TEST) & (mode.test.data == 0)))
         with m.If(cmd.w_stb):
             with m.If(pending | hr_busy_s):
-                finish(CODE_BUSY, w)
+                refuse(CODE_BUSY, w)
             with m.Elif(~(ready_s & locked_s)):
-                finish(CODE_NOT_READY, w)
+                refuse(CODE_NOT_READY, w)
             with m.Elif(arg_bad):
-                finish(CODE_ARG, w)
+                refuse(CODE_ARG, w)
             with m.Elif(needs_cal & ~cal_valid_s):
-                finish(CODE_UNCAL, w)
+                refuse(CODE_UNCAL, w)
             with m.Else():
                 o = eng.o
                 m.d.sync += [
@@ -877,6 +886,18 @@ class HyperRAM(wiring.Component):
                     o["reg_wdata"].eq(f("reg_wdata").data),
                     pending.eq(1), awaiting.eq(1), hs_count.eq(0), start_t.eq(~start_t),
                     op_r.eq(w), code_r.eq(CODE_OK)]
+
+        # A result that never arrives: the engine went idle (hr_busy low) and no done
+        # came. Both cross with the same 2-FF latency, +-1 cycle; 6 = 1.25 x ~5.
+        lost = Signal(range(LOST_DONE_SYNC + 1))
+        with m.If(pending & ~awaiting & ~hr_busy_s & ~done_s & ~cmd.w_stb):
+            m.d.sync += lost.eq(lost + 1)
+            with m.If(lost == LOST_DONE_SYNC):
+                m.d.sync += lost.eq(0)
+                finish(CODE_HANDSHAKE, op_r)
+                m.d.comb += err_set[ERR_HANDSHAKE].eq(1)
+        with m.Else():
+            m.d.sync += lost.eq(0)
 
         with m.If(awaiting & ~cmd.w_stb):
             with m.If(ack_s):
