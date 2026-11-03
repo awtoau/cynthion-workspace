@@ -53,6 +53,7 @@ class SocDevice(Device):
         self.regs = {0x800: 0x8F2F, 0x801: 0xFFC1, 0x0: 0x0C81, 0x1: 0x0000}
         self.corrupt = lambda: False      # True: flip bits in returned data
         self.ignore_reg_writes = False
+        self.silent = False               # reads return no RWDS edges: every word missing
 
     def step(self, cs, ck_en, dq_o, rwds_o):
         quiet = [(0, 0), (0, 0)]
@@ -89,6 +90,9 @@ class SocDevice(Device):
             self.left -= 1
             if self.left == 0:
                 self.state = "data"
+            return quiet
+        if self.read and self.silent:
+            self.addr += 1
             return quiet
         if self.read:
             word = self.regs.get(self.addr, 0) if self.regsp else self.mem.get(self.addr, 0x5A5A)
@@ -405,6 +409,18 @@ async def s_main(checks, b, dev, ctx, periph):
     st = await b.cmd(hrp.OP_FILL, hr_addr=0x6000, len=4, mode=hrp.FILL_CONST, fill_value=0x99)
     checks.check("after the watchdog: core reset, next op OK",
                  st["code"] == 0 and dev.byte(0x6000) == 0x99, str(st))
+
+    # a read whose words never arrive spends n more cycles in the core's tail fill:
+    # it must end as CHECK with every word missing, not as a watchdog
+    await b.write("errors", 0x1FFF)
+    dev.silent = True
+    st = await b.cmd(hrp.OP_TEST, hr_addr=0x4000, len=2 * 668, mode=hrp.TEST_READ << 2, burst=0)
+    dev.silent = False
+    missing, err = await b.read("missing"), await b.read("errors")
+    checks.check("silent part, max burst: CHECK with 668 missing, no watchdog",
+                 st["code"] == hrp.CODE_CHECK and missing == 668
+                 and not err >> hrp.ERR_WDOG & 1, f"{st} missing {missing} errors {err:#x}")
+    await b.write("errors", 0x1FFF)
 
     # broken expectation must fail (the sim's own negative control)
     checks.check("negative control of the bench: a wrong expectation is caught",
