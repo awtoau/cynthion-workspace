@@ -6,9 +6,9 @@ Recurring defect: a check that passes for a reason unrelated to what it claims t
 
 | shape | what it looks like | example |
 |---|---|---|
-| **verifies itself** | the check reads back what it just wrote, never what was stored | `hr ramp w` reported `256/256 correct` on a part holding `RESET#` asserted |
-| **measures against a belief** | the model under test is one we wrote | every HyperRAM sim ran the open twin; the vendor model was installed and never asked ([#426](https://github.com/awtoau/cynthion-workspace/issues/426)) |
-| **cannot go red where anyone looks** | correct, working, on no list | `hyperram_phy_rwds_sim.py` sat red on main; nothing ran it ([#401](https://github.com/awtoau/cynthion-workspace/issues/401)) |
+| **verifies itself** | the check reads back what it just wrote, never what was stored | a ramp test reported `256/256 correct` on a part held in reset |
+| **measures against a belief** | the model under test is one we wrote | every sim ran our own device model; the vendor model was installed and never asked ([#426](https://github.com/awtoau/cynthion-workspace/issues/426)) |
+| **cannot go red where anyone looks** | correct, working, on no list | a sim sat red on main; nothing ran it ([#401](https://github.com/awtoau/cynthion-workspace/issues/401)) |
 | **reports a number that cannot move** | the quantity is real, the denominator is wrong | `rtic` prints a LIFETIME stall ratio: 121/566 idle, 120/566 after 215,040 cache-missing accesses ([#530](https://github.com/awtoau/cynthion-workspace/issues/530)) |
 
 ## The rules that follow
@@ -44,5 +44,4 @@ figure attributed to the wrong build is worse than no figure
 ## Why the cost is asymmetric
 
 - A missing check leaves a known gap; a passing check that cannot fail closes the question and leaves the next reader a wrong answer.
-- HyperRAM throughput figures were deleted, not annotated: five overlapping faults were live and no number could be matched to which ([`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)).
 - A superseded measurement is deleted, not annotated; a number kept beside a warning that it is wrong still gets quoted.

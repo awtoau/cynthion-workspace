@@ -19,7 +19,6 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 | [#300](https://github.com/greatscottgadgets/luna/issues/300) `USBInterpacketTimer` uses HS timings for LS | open | copy-paste bug, no PR | only if LS is used |
 | [#295](https://github.com/greatscottgadgets/luna/issues/295) iso stream IN `frame_finished` never fires | open | unfixed | AVOID iso stream IN |
 | [#159](https://github.com/greatscottgadgets/luna/issues/159) ULPI D4/D7 spike on STP | open | ULPI IO not registered | WATCH |
-| [#244](https://github.com/greatscottgadgets/luna/pull/244) HyperRAM via ECP5 DQS | merged 2024-05-02 | upstream has a DQS PHY (`psram.py`); UNSURE it fits the W956A8 | reference (DQS is parked) |
 | [#278](https://github.com/greatscottgadgets/luna/pull/278) Amaranth 0.5 migration; [#297](https://github.com/greatscottgadgets/luna/issues/297) RFC 61 streams (0.6) | merged / open | migration reference; 0.6 removes `Record` | USE / WATCH |
 | [#303](https://github.com/greatscottgadgets/luna/pull/303) USB3 compliance, de-emphasis on ECP5 | merged 2026-08-19 | USB3 only | WATCH |
 | luna has **no USB host core** (only `ulpi.py`) | | host mode is on us: see [`aoa-adaptor.md`](aoa-adaptor.md) | |
@@ -44,7 +43,6 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 ## cynthion, cynthion-hardware, packetry
 | item | state | why it matters | verdict |
 |---|---|---|---|
-| cynthion [#147](https://github.com/greatscottgadgets/cynthion/issues/147) DQS for HyperRAM | open since 2024-07, empty | no upstream DQS result | |
 | cynthion [#259](https://github.com/greatscottgadgets/cynthion/issues/259) speed grade 8 vs 6 | closed | parts are not binned: grade does not matter | USE |
 | cynthion [#236](https://github.com/greatscottgadgets/cynthion/issues/236) part ID mismatch (25F fitted) | closed | upstream bitstreams are part-specific | AVOID mixing parts |
 | cynthion [#251](https://github.com/greatscottgadgets/cynthion/issues/251) / [PR#255](https://github.com/greatscottgadgets/cynthion/pull/255) softcore takes the JTAG lines after reset | closed | reset-delay fix | USE |
@@ -66,7 +64,6 @@ Scan of 2026-11-02 (Haiku/Sonnet agents, `gh`, read-only). Verdicts: **USE** ado
 
 ## Not upstream
 - GUH (the vendored host SIE): [apfaudio/guh](https://github.com/apfaudio/guh), BSD-3-Clause, pushed 2026-10-26, 8 commits past our vendored `923c8490` (mostly mass-storage engines). Tiliqua: [apfaudio/tiliqua](https://github.com/apfaudio/tiliqua) (the only working LUNA-lineage host).
-- LiteDRAM [`ecp5ddrphy.py`](https://github.com/enjoy-digital/litedram/blob/master/litedram/phy/ecp5ddrphy.py): per-group bitslip knob, DDRDLLA init order, IOLOGIC reset with ECLK stopped (DQS reference, parked).
 
 ## Second sweep: older items and open issues of any age (2026-11-02)
 First sweep covered May 2025 on. This one read every open issue/PR of any age and sampled closed items before 2025-05 on our topics. Closed items were keyword-sampled, not exhaustively read; UNSURE = title only. Repos: luna, facedancer, cynthion, apollo, cynthion-hardware, saturn-v, luna-soc, packetry.
