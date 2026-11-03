@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Simulate the HyperRAM sequential baseline against a datasheet model (#581).
+# Simulate the HyperRAM sequential baseline against a datasheet model (#581). REFERENCE: see gateware/hyperram_baseline/README.md.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """`gateware/hyperram_baseline` (engine + controller) against a W956A8 model written here.

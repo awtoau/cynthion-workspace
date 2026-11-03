@@ -30,7 +30,7 @@ one by an oscillator, and only one by the device on the far end.
 | **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
 | **SPI flash SCK** | 133 MHz `fC1` | `USRMCLK` has no DDR ⇒ SCK ≤ the fabric clock; luna_soc's clock generator halves it again ⇒ SCK = `sync`/2 | **30 MHz** (`sync` 60, `FLASH_DIVISOR = 0`) | **4.4×** to the part, 2× of which is the `/2` |
 | **flash MCLK at boot** | 133 MHz on `0x0B` | `ecppack --freq` accepts only {2.4, 19.4, 38.8, 62.0}; ECP5 Table 4.7 stops at 62 | **38.8 MHz** | **1.6×** on configuration time |
-| **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** — the FPGA pin, not the RAM. Non-DQS PHY makes CK = fabric clock | **60 MHz** | **2.5×** to the board's own ceiling |
+| **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** (Table 3.21) | **180 MHz** (#588) | above both; #581 measured CK 60-180 clean ([`hyperram/sequential-baseline.md`](hyperram/sequential-baseline.md)) |
 | **ULPI** ×3 | 60 MHz, fixed by the ULPI 1.1 specification | the FPGA *sources* the clock (`clk_dir='o'`) from the A8 oscillator: exactly 60.000 MHz | **60 MHz** | **none, and it is not a parameter** |
 | **JTAG TCK** | ECP5 `fMAX` 25 MHz | SAMD11 SERCOM: SCK = 48/(2·(BAUD+1)), so the only rungs are 24 and 12 MHz. 24 fails the TDO round trip | **12 MHz** (BAUD = 1) | **none — there is no legal rung in between** |
 | **Apollo UART** | SERCOM USART off a 48 MHz core clock | R14/T14 *are* JTAG TDI/TMS. The cost is arbitration, not bit rate | **115200** | large in principle; the constraint is the sharing |
@@ -63,14 +63,10 @@ question exposed the 128×.
    `sync`/2 because luna_soc's `SPIClockGenerator` toggles SCK as a register.
    Driving it through the domain clock directly makes SCK equal the domain rate.
    Detail and the ODDR obstacle: [`w25q32-config-flash.md`](w25q32-config-flash.md).
-2. **The HyperRAM's uncoalesced cache-line refill, worth 6.4×** —
-   12.0 → 76.8 MB/s. Not a clock decision at all;
-   [`hyperram/w956a8.md`](hyperram/w956a8.md) §4 and
-   [#185](https://github.com/awtoau/cynthion-workspace/issues/185).
-3. **Boot MCLK 38.8 → 62 MHz, worth 1.6× on configuration time.** One
+2. **Boot MCLK 38.8 → 62 MHz, worth 1.6× on configuration time.** One
    `ecppack` flag, already investigated:
    [`ecp5/qspi-boot-time.md`](ecp5/qspi-boot-time.md).
-4. **The four probe bitstreams still at 100 kHz I²C** — `period_cyc = 600` on a
+3. **The four probe bitstreams still at 100 kHz I²C** — `period_cyc = 600` on a
    60 MHz domain, in
    [`../../gateware/probes/pins/i2c_scan.py`](../../gateware/probes/pins/i2c_scan.py),
    [`../../gateware/probes/pins/fusb302_id.py`](../../gateware/probes/pins/fusb302_id.py),
@@ -84,7 +80,7 @@ question exposed the 128×.
    [`pac1954-power-monitor.md`](pac1954-power-monitor.md); the parts do 1 MHz.
    And the free-running **poller** in `power_monitor_gateware.py` is not a
    one-shot scan, so it has no such excuse.
-5. **PAC1954 current resolution, worth 2× and never considered.** `CFG_VSn = 10`
+4. **PAC1954 current resolution, worth 2× and never considered.** `CFG_VSn = 10`
    (±50 mV) halves the LSB from 152.588 µA to 76.294 µA, at the cost of halving
    full scale to ±2.5 A. See
    [`pac1954-power-monitor.md`](pac1954-power-monitor.md) — and note that the
@@ -92,11 +88,11 @@ question exposed the 128×.
    [`../plans/performance-sections.md`](../plans/performance-sections.md)
    assumed: Register 7-11's only sub-32 V option is bipolar ±16 V, which halves
    the range and the code count together and lands on the same 488.3 µV/LSB.
-6. **`sync` 60 → ~72 MHz, worth 20% on everything derived from it** — CPU, flash
-   SCK, HyperRAM CK and the I²C bus all move together. The CPU's real ceiling is
+5. **`sync` 60 → ~72 MHz, worth 20% on everything derived from it** — CPU, flash
+   SCK and the I²C bus all move together. The CPU's real ceiling is
    unmeasured; [`../soc-clocking.md`](../soc-clocking.md) §2 withdraws the old
    result.
-7. **Unknown:** the SDA bus capacitance. Everything about the I²C rise-time
+6. **Unknown:** the SDA bus capacitance. Everything about the I²C rise-time
    margin rests on an assumed 50 pF. See below.
 
 **Three interfaces have no gap at all**, and saying so is the point of an audit:
@@ -119,7 +115,7 @@ The CCLK site has no `DATAMUX_ODDR`/`IOLDO` mux in the Trellis routing database,
 so **SCK can never exceed the fabric clock that generates it** — never 2×. That
 is the sharpest pin constraint on the board and it is permanent.
 
-### LVCMOS33 — the HyperRAM clock, and everything else fast
+### LVCMOS33 — every fast signal
 
 ECP5 datasheet FPGA-DS-02012-1.9 **Table 3.21, Maximum I/O Buffer Speed**:
 
@@ -129,10 +125,8 @@ ECP5 datasheet FPGA-DS-02012-1.9 **Table 3.21, Maximum I/O Buffer Speed**:
 | **LVCMOS33 (all drives)** | **200 MHz** | **150 MHz** |
 
 Every fast signal on this board is `IO_TYPE="LVCMOS33"`, because every part on
-the far end is a 3.3 V CMOS device. **So the HyperRAM's rated 166 MHz CK is
-already outside the FPGA's published output ceiling**, and the board maximum for
-CK is 150 MHz rather than the part's 166 — a fact that
-[`hyperram/w956a8.md`](hyperram/w956a8.md) §4 rank 3 did not account for.
+the far end is a 3.3 V CMOS device. The HyperRAM's rated 166 MHz CK is already
+outside the FPGA's published output ceiling; CK 180 runs past both (#588).
 
 Table 3.21 note 4 — *"All speeds are measured at fast slew"* — narrows it
 further: only five resources in
@@ -181,8 +175,7 @@ have returned them. Running it at BAUD 0 costs one USB request.
 ## Where each I²C bus actually stops — measured 2026-08-10, board image `1e574f4`
 
 Swept with [`../../scripts/soc/i2c_rate_sweep.py`](../../scripts/soc/i2c_rate_sweep.py),
-1000 identity reads per rung, on the `bist1-ck120` variant (sync counted at
-50 MHz). The identity is checked against the value the device is KNOWN to hold,
+1000 identity reads per rung, sync counted at 50 MHz. The identity is checked against the value the device is KNOWN to hold,
 because `i2c soak` takes its expected value from its own first read and calls a
 stable wrong answer CLEAN.
 
@@ -196,7 +189,7 @@ stable wrong answer CLEAN.
   3.33 MHz return `0xff` with **zero** bus errors — an undriven bus, read as a
   stable wrong value. Power at 5 MHz returns 1000 bus errors.
 - 1 MHz is now reached rather than claimed: PRER is derived from the clock the
-  fabric counts, so the BIST variant's 50 MHz gives PRER 9 instead of the
+  fabric counts, so the 50 MHz variant gives PRER 9 instead of the
   generated 11. It ran at **833 kHz** while reporting 1 MHz ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)).
 - Both variants land on the same bit timing: 50 MHz/PRER 9 and 60 MHz/PRER 11
   are both a 200 ns slot, so the margins table below holds for either.

@@ -8,7 +8,6 @@
 
     python3 scripts/worktree_setup.py check     # is THIS checkout buildable?
     python3 scripts/worktree_setup.py setup     # make it buildable
-    python3 scripts/worktree_setup.py check --gate   # as check; a missing vendor model only warns
 
 `setup` always prunes registrations left by deleted worktrees (#375).
 
@@ -25,7 +24,6 @@ Both are reachable as `./dev.py worktree-check` and `./dev.py worktree-setup`.
   the superproject's own `modules/repos/apollo` object store and nowhere else,
   so `git submodule update` cannot repair a worktree and cannot ever fix a fresh
   clone. This names that rather than surfacing git's "not our ref". See #373.
-- `sources/**` is gitignored, so a worktree carries no vendor models.
 
 ## How it is fixed: share, never copy
 
@@ -59,12 +57,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, log  # noqa: E402
-from shared_paths import main_checkout, resolve_shared  # noqa: E402
-
-# One vendor file that is gitignored and that a simulation needs. Presence of
-# this stands in for `sources/**` as a whole -- it is the only entry any script
-# treats as required. `scripts/hyperram/hyperram_vendor_model_sim.py` is the consumer.
-VENDOR_MODEL = Path("sources/models/W956X8MBY_verilog_p.zip")
 
 # Every git call here is local metadata against an existing object store, so the
 # bound is process startup, not I/O: measured 20-40 ms per call on this machine.
@@ -239,7 +231,7 @@ def unfetchable_report(name: str, url: str, mod: Path, pin: str) -> list[str]:
 # check
 # ---------------------------------------------------------------------------
 
-def check(verbose: bool = False, gate: bool = False) -> int:
+def check(verbose: bool = False) -> int:
     failures: list[str] = []
     warnings: list[str] = []
 
@@ -249,7 +241,7 @@ def check(verbose: bool = False, gate: bool = False) -> int:
     emit("")
 
     subs = submodules()
-    width = max([len(s.label) for s in subs] + [len(str(VENDOR_MODEL.parent))])
+    width = max([len(s.label) for s in subs], default=0)
     for sub in subs:
         head = head_of(sub.work)
 
@@ -286,19 +278,6 @@ def check(verbose: bool = False, gate: bool = False) -> int:
                 f"{sub.label}: pin {sub.pin[:8]} is on no remote -- fine here, "
                 f"fatal for a fresh clone (#373). Fix it with "
                 f"`./dev.py pin-publish --push {sub.label}`")
-
-    model = resolve_shared(ROOT, VENDOR_MODEL)
-    label = str(VENDOR_MODEL.parent)
-    if model is None:
-        # Gitignored vendor IP a machine may lack: advisory in the gate (#375).
-        (warnings if gate else failures).append(
-            f"{VENDOR_MODEL} found in neither this checkout nor the "
-            f"main one -- the vendor-model simulations cannot run")
-        emit(f"  {label:<{width}}  {'WARN' if gate else 'FAIL'}  "
-             f"{VENDOR_MODEL.name} not found")
-    else:
-        where = "here" if model.is_relative_to(ROOT) else "main checkout"
-        emit(f"  {label:<{width}}  ok    {model.name} ({where})")
 
     emit("")
     for line in warnings:
@@ -408,15 +387,6 @@ def setup() -> int:
             problems += trouble
 
     emit("")
-    model = resolve_shared(ROOT, VENDOR_MODEL)
-    if model is None:
-        problems.append(f"{VENDOR_MODEL} is in neither this checkout nor the main "
-                        f"one. It is gitignored vendor IP -- see sources/README.md.")
-    else:
-        where = "here" if model.is_relative_to(ROOT) else f"shared from {main_checkout(ROOT)}"
-        emit(f"  {'sources/models':<24} {model.name} resolved ({where})")
-
-    emit("")
     if problems:
         for line in problems:
             log(line, "ERROR")
@@ -439,13 +409,11 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?", default="check",
                         choices=("check", "setup"))
-    parser.add_argument("--gate", action="store_true",
-                        help="check: a missing vendor model warns instead of failing")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     if args.action == "setup":
         return setup()
-    return check(verbose=args.verbose, gate=args.gate)
+    return check(verbose=args.verbose)
 
 
 if __name__ == "__main__":

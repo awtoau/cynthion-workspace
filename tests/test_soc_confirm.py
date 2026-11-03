@@ -201,7 +201,7 @@ def test_other_readers_names_a_real_process_holding_a_real_tty():
 def test_a_bitstream_with_no_console_is_confirmed_by_done_alone():
     """A JTAG-readback probe has no shell; asking for one would score it dead.
 
-    `hyperram_identify.py` reads its results over JTAG registers. DONE is the
+    A JTAG-register probe reads its results over JTAG. DONE is the
     whole of the confirmation available, and it is still more than an exit code.
     """
     assert verdict(expect="design", apollo=True, idcode=ECP5_IDCODE,

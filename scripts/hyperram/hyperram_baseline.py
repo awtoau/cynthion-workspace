@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Build, load and measure the HyperRAM sequential baseline (#581).
+# Build, load and measure the HyperRAM sequential baseline (#581). REFERENCE: see gateware/hyperram_baseline/README.md.
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Sequential HyperRAM throughput, non-RV path, on Cynthion r1.4.

@@ -58,7 +58,7 @@ Technical detail is in [`architecture.md`](architecture.md); this is the policy 
 
 | what | ours | why it diverged | detail |
 |---|---|---|---|
-| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream: 60/120/240 MHz only, blocked the HyperRAM ceiling and RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` is exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#core) |
+| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream: 60/120/240 MHz only, blocked the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` is exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#core) |
 | SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/peripherals/flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer: `riscv_flash_crossbar_sim.py` (now in `debris/scripts/`) | [architecture](architecture.md#peripherals) |
 | SPI controller | `HoldableSPIController` (same file) | **upstream defect.** CS field is `csr.action.W` (one-cycle pulse) used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
 | UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
@@ -83,7 +83,6 @@ A replacement keeping luna-soc's SVD generator working must keep `InterruptContr
   - `pseudo_power_supply_fragment` (with `prepare()`): r1.4 strands I/O balls to VCCIO/GND that must be driven; Amaranth leaves unrequested pins undriven; no build error otherwise.
   - `toolchain_prepare` sets `--freq 38.8`, the SPI configuration clock the board reads its bitstream at on power-on.
   - `DEFAULT_CLOCK_FREQUENCIES_MHZ`, read by `gateware/probes/adv_speed/adv_speed_gateware.py` to size a UART divisor.
-- One deliberate divergence from upstream's pin file: HyperRAM pins' electrical attributes ([#311](https://github.com/awtoau/cynthion-workspace/issues/311)).
 - Equivalence was checked by running nextpnr both ways (utilisation and per-signal balls identical on `blinky`, 59 pins; `wide`, 105 pins): `platform_vendor_compare.py`, now in `debris/scripts/`.
 
 ## Still taken from upstream: Cynthion-specific work
@@ -111,69 +110,10 @@ Source patches, tracked in this repository's issues. `facedancer` and `luna` are
 | [#43](https://github.com/awtoau/cynthion-workspace/issues/43) | moondancer | `gcp/moondancer.rs` | clamp endpoint `max_packet_size` to 512 (HS limit) instead of rejecting SuperSpeed devices |
 | [#65](https://github.com/awtoau/cynthion-workspace/issues/65) | apollo | `uart.c`, `console.c`, `vendor.c`, `apollo_mode.c` | JTAG/UART arbitration on shared PA11/PA14: [`hardware.md`](hardware.md#pin-sharing--the-two-hazards) |
 
-## Decided: HyperRAM splits at the PHY, and both controllers are vendored
+## HyperRAM: written, not taken
 
-**The PHY split still holds**, and it falls out of the policy rather than being a
-compromise: `HyperBus` is a published protocol and the layer that speaks it is generic;
-the layer below it is ECP5 I/O for r1.4's pin map, which is exactly the "genuinely
-Cynthion-specific" the policy reserves — and reserving it means writing it, because
-nobody else has this board. `HyperRAMPHY` stays upstream's because it works here;
-`HyperRAMDQSPHY` could not be instantiated at all.
-
-**Both controllers are now vendored, for two defects each** — not rewritten. The FSMs are
-upstream's, copied with the changes marked in place, which is the same shape as the board
-definition: do not inherit a stack to get one file.
-
-| layer | whose | why |
-|---|---|---|
-| `HyperRAMDQSController` | **ours** (`gateware/soc/peripherals/hyperram_dqs_controller.py`) | luna's `HyperRAMDQSInterface`, vendored, with tCSHI enforced and the latency branch made a parameter |
-| `HyperRAMController` | **ours** (`gateware/soc/peripherals/hyperram_controller.py`) | luna's `HyperRAMInterface`, vendored, with the identical two fixes |
-| `HyperRAMPHY` (non-DQS) | **upstream, unchanged** | it elaborates here and it works |
-| `HyperRAMDQSPHY` | **ours** (`gateware/soc/peripherals/hyperram_dqs_phy.py`) | upstream's cannot be instantiated on r1.4 at all — see below |
-
-**Wrapping upstream's DQS PHY was not an option.** It fails for three separate reasons,
-none of them about DQS: it assigns `bus.clk` as a single net where the platform declares a
-`DiffPairs`; it instantiates `BB` on `bus.dq.io`/`bus.rwds.io`, which exist only on a raw
-request, while writing `bus.clk`/`bus.cs` as if buffered; and it never drives `bus.reset`,
-leaving RESET# floating. There is no wrapper that fixes an assignment inside another
-module's `elaborate`.
-
-**And the board was wired for DQS all along.** `hyperram-detailed.md` recorded "unusable —
-no DQS pin group"; the device database says RWDS is on `LDQS8` and every DQ line is in the
-same group, and nextpnr agrees. `scripts/hyperram/hyperram_dqs_pins.py` is the check.
-
-Two upstream defects sit in **both** controllers, and both are now fixed in both. They
-were left in place for a while, and the reason that stopped being tenable is worth
-recording: the non-DQS path is what the SoC ships **and** the baseline every DQS result is
-compared against, so leaving the fixes in one of the two made every side-by-side
-measurement a comparison of two different instruments ([#215](https://github.com/awtoau/cynthion-workspace/issues/215), split out of [#208](https://github.com/awtoau/cynthion-workspace/issues/208)).
-
-- `RECOVERY` carries `# TODO: implement recovery` and falls through to `IDLE`, so nothing
-  keeps CS# high for tCSHI (10 ns — longer than a 120 MHz cycle). Both controllers
-  hold it, counted from the caller's `sync_mhz` so it follows the clock, so
-  `bootram.py` — the SoC path — gets it. `hyperram_ceiling_top.py` holds it outside
-  the controller as well (`:740`, gated at `:999` and `:1048`), deliberately, so that
-  harness pays tCSHI twice. Whether the gap clears tCSHI is judged by
-  `hyperram_model.v` in `controller_model_tb.sv`, with `+cs_hold_ns=25` as the defect
-  run that proves the monitor fires ([#346](https://github.com/awtoau/cynthion-workspace/issues/346)). `scripts/soc/soc_hyperram_sim.py` §4 and §4b
-  keep the caller-side half: the gap ours leaves against upstream's, measured.
-- `with m.If(extra_latency | 1)` makes the low-latency branch dead, which [#90](https://github.com/awtoau/cynthion-workspace/issues/90) reports as
-  costing ~30% of the fixed overhead. **It is correct for this part as configured**: CR0
-  reads `0x8f2f`, which selects *fixed* latency, so the device takes the long count every
-  time and RWDS says nothing about the transaction. So the behaviour is unchanged and the
-  intent is now stated: `fixed_latency=True` by default, `False` for a part reprogrammed
-  to variable latency — two changes, not one, and worth measuring rather than assuming.
-
-**The Wishbone peripheral ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)) is workspace gateware.** `HyperRAMWishbone` wraps the
-controller with a 32-bit memory port: full stores and reads are two-word HyperBus bursts,
-while partial stores read, merge and write because the controller — upstream's FSM,
-unchanged in this respect — exposes no RWDS mask input.
-
-Three bugs were found in *our own* use of that interface, not in it: `final_word` must be
-held rather than pulsed, `perform_write`/`write_data` must be held for the whole transfer,
-and `CHID` is a single register window so channel setup is not re-entrant. All three
-produced plausible wrong answers rather than failures. The first two are now asserted in
-simulation rather than only written down.
+- Clean-room core (`gateware/hyperram_baseline/`, #581) from the datasheet and public designs; nothing from luna's `psram.py`.
+- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588).
 
 ## Vendored: the USB host engine
 

@@ -250,8 +250,7 @@ patterns use well under 1% of it.
 1. ✅ Build one pattern, verify LEDs work
 2. ✅ Combine multiple patterns, select via button
 3. ✅ Add JTAG control for runtime selection
-4. ✅ Integrate with HyperRAM test (LED status indicator)
-5. ✅ Use LEDs as test/debug output for CPU
+4. ✅ Use LEDs as test/debug output for CPU
 
 ---
 

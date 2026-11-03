@@ -6,8 +6,8 @@
 """
 Checks the burst sequencer in `gateware/probes/qspi/qspi_gateware.py`.
 
-    python3 scripts/hyperram/qspi_burst_sim.py
-    python3 scripts/hyperram/qspi_burst_sim.py -v     # every stream beat
+    python3 scripts/fabric/qspi_burst_sim.py
+    python3 scripts/fabric/qspi_burst_sim.py -v     # every stream beat
 
 Exit status 0 if every check passes. Output goes to the terminal and to
 `tmp/logs/dev.log`.
@@ -118,7 +118,7 @@ from glasgow.gateware.ports import PortGroup
 from qspi_gateware import BURST_STRIDE, READ_BYTES, BurstSequencer
 
 
-# Divisor 1 is what scripts/hyperram/qspi_burst.py asks for: SCK at half the sync rate,
+# Divisor 1 is what scripts/fabric/qspi_burst.py asks for: SCK at half the sync rate,
 # 48 MHz on the shipped bitstream. It also keeps SCK a whole number of sync
 # cycles, so nothing here depends on the DDR half-cycle.
 DIVISOR = 1

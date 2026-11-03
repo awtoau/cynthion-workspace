@@ -50,7 +50,7 @@ def _trellis_eclk_db() -> Path | None:
     for var in ("TRELLIS_DB", "TRELLIS_INSTALL_PREFIX"):
         if os.environ.get(var):
             roots.append(Path(os.environ[var]))
-    # The suite the builds actually use. `hyperram_ceiling.py` prepends the same
+    # The suite the builds actually use; the build scripts prepend the same
     # path to PATH, so this finds the DB whether or not the caller did.
     for tool in ("nextpnr-ecp5", "ecppack", "yosys"):
         found = shutil.which(tool)

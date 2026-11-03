@@ -6,7 +6,7 @@ Removed from the live docs (superseded, or journey rather than state). Agents do
 
 This board's facts have been re-derived — wrongly — more than once: a power monitor
 called an INA when its silicon says PAC1954, an FPGA assumed to have 12,288 LUTs
-when 20,143 have been placed and verified, a 64 Mbit HyperRAM read as 4 MiB. Each
+when 20,143 have been placed and verified. Each
 of those was already written down when it was re-derived. If something here is
 wrong, fix it here; do not work around it in a third file.
 
@@ -18,7 +18,6 @@ Bus-speed audit pointer: "Written after the I²C bus turned out to have run twel
 |---|---|
 | "The power monitor is an INA3221 or similar" | **PAC1954-1.** `PRODUCT_ID` reads `0x7B`, `MANUFACTURER_ID` `0x54`, read from silicon by two independent paths. |
 | "The ECP5 has 12,288 LUT4s" | **20,143 have been placed, routed and verified** on a 24,288-LUT die. |
-| "The HyperRAM is 4 MiB" (from "64 Mbit") | **8 MiB.** 64 Mbit ÷ 8 = 8 MiB. Three successive wrong explanations came from that one arithmetic slip. |
 | "Both FUSB302Bs could share a bus" | They are both at `0x22`. They cannot. |
 | "USB VID:PID `1d50:615b` for everything" | Apollo is **`1d50:615c`**; only gateware is `615b`. |
 | "The Apollo bootloader is `1d50:60e6`" | Saturn-V uses **`1d50:615c`**, the same ID as Apollo firmware. `60e6` appears nowhere in the tree. |

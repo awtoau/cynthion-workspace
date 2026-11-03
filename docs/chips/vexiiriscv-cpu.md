@@ -2,7 +2,7 @@
 
 The RISC-V core in `gateware/soc/top.py`. Not a chip on the board:
 it is a soft core inside the [ECP5](ecp5/lfe5u-12f.md), and it has a note here for
-the same reason the flash and the HyperRAM do — what it actually does on this
+the same reason the flash does — what it actually does on this
 board differs from what its parameters suggest, and the measurements have to live
 somewhere they can be found.
 
@@ -174,7 +174,6 @@ section 4 returns to.
 | block RAM | 8 KiB | write rnd | 84.07 | ~50% miss on a write-back cache |
 | flash | 16 KiB | read seq | 43.99 | one 64-byte line per 16 accesses, quad SPI |
 | flash | 16 KiB | read rnd | 352.66 | a line refill on essentially every access |
-| HyperRAM | 4 KiB | read seq | 148.15 | CSR staging port — `main=0`, uncached by construction |
 
 **Cycles per instruction, with nothing in the way: 3.23.** The block RAM 2 KiB
 sequential row is seven instructions per access (22.77 × IPC 0.309 = 7.04), so
@@ -216,12 +215,7 @@ The hardware is there. `--performance-counters 4` is in `GENERATE_FLAGS`, and
     0x19  DCACHE_LOAD_MISS
     0x1A  DCACHE_WAITING
 
-It is wired into the HyperRAM memory-window walk only, and **no counter output is
-recorded anywhere in this repository.** The one figure attributed to them — *"the
-CPU spent 79% of every cache line stalled on instruction fetch"*, with HyperRAM
-reading 13.3 MB/s while the bus did 63.1 — appears in the doc comments of
-`bench.rs` and `gateware/soc/cpu/cpu.py` and nowhere else. **Treat it as the
-reason the counters were added, not as a counter reading.**
+**No counter output is recorded anywhere in this repository.**
 
 One trap for whoever runs them: `firmware/cynthion-soc/src/metrics.rs:75` states
 that `mhpmcounter3..31` "decode and read hardwired zero" because "nothing passes
@@ -238,7 +232,7 @@ Ranked, with what each is worth.
    recover. Cost: +12 BRAM for 16 KiB caches, and there are exactly 12 free.
    Whether it then closes timing is **unknown**.
 2. **Firmware out of block RAM.** 64 KiB of program memory is ~32 blocks. Execute
-   in place from flash, or from HyperRAM, and the cache budget above stops being
+   in place from flash, and the cache budget above stops being
    all-or-nothing. Cost: fetch latency — which is what the I-cache exists to
    hide, so the order matters and (1) has to come with it.
 3. **`--with-ras`.** `rasDepth = 4` inside `BtbPlugin`, cheap in area, and a
@@ -268,7 +262,6 @@ Ranked, with what each is worth.
 | D-cache hit | 1 cycle | 1 cycle | 1 by construction, **never isolated** | — | a targeted micro-walk |
 | block RAM line refill | — | — | **≈ 42 cycles**, derived from two rows | — | — |
 | flash line refill | — | — | **≈ 309 cycles**, derived; quad SPI at 144 MHz SCK | — | SCK is already at the instrument's limit |
-| HyperRAM, CSR staging port | — | uncached by construction (`main=0`) | 148.15 cycles/access | — | the memory window ([#90](https://github.com/awtoau/cynthion-workspace/issues/90)), not this port |
 | fetch stall fraction | 0% | — | **NEVER MEASURED** — counters present, nothing recorded | — | one `bench` run; read `mhpmcounter3` |
 | data stall fraction | 0% | — | **NEVER MEASURED** | — | same run, `mhpmcounter4` |
 | clock | 400 MHz PLL `fOUT` | 71.81 MHz median nextpnr, 3 runs; **true ceiling unmeasured** | 60 MHz shipping | 84% of the median | re-run the ladder with the fixed `StreamBuffer` |
@@ -363,7 +356,6 @@ sweep runs each.
 | `btb` | — same commit | block RAM 8 KiB write rnd, cycles/access | 97.08 | 84.07 | 1.15× |
 | `btb` | — same commit | flash 16 KiB read seq, cycles/access | 50.11 | 43.99 | 1.14× |
 | `btb` | — same commit | flash 16 KiB read rnd, cycles/access | 355.57 | 352.66 | 1.01× — flash-bound, not fetch-bound |
-| `btb` | — same commit | HyperRAM 4 KiB read seq, cycles/access | 155.22 | 148.15 | 1.05× |
 
 **Every row moves, and the ones that move least say why.** Flash 16 KiB random
 is 350 cycles of cache-line refill against fourteen instructions of loop, so

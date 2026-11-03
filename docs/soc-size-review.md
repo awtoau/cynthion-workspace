@@ -46,7 +46,7 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 
 ### COMB delta under ~200 is the mapper
 
-- Null control `432d29b`, `bist0-ck160-dqs1-merge0-sync60`, `--no-parallel-refine`, 2026-08-12: one 32-bit identity constant changed, no logic touched -> TRELLIS_COMB +194, TRELLIS_FF +1 ([soc_trim_delta.py `--trim null-constant`](../scripts/soc/soc_trim_delta.py)).
+- Null control `432d29b`, `--no-parallel-refine`, 2026-08-12: one 32-bit identity constant changed, no logic touched -> TRELLIS_COMB +194, TRELLIS_FF +1 ([soc_trim_delta.py `--trim null-constant`](../scripts/soc/soc_trim_delta.py)).
 - Global, not local folding (`gateware_id` block is 153 COMB; move is 194).
 - A COMB delta counts only when clear of +-194 and an FF/BRAM/LUTRAM delta of the same sign supports it ([#454](https://github.com/awtoau/cynthion-workspace/issues/454)). `soc_review.py` enforces it.
 
@@ -58,7 +58,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 
 | module | LUT4 eq | DFF | DP16KD | |
 |---|---:|---:|---:|---|
-| `hyperram_probe` | 750 | 289 | - | instrumentation |
 | `clint` | 400 | 137 | - | |
 | `uart16550` | 231 | 118 | - | x2 in the SoC |
 | `i2c_master` | 200 | 109 | - | |
@@ -75,19 +74,10 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 | `i2c_mux` | 9 | 20 | - | |
 | `wishbone_pipe` | 9 | 34 | - | |
 
-- `hyperram_probe` is the largest peripheral (instrumentation); `wishbone_pipe` recovered the timing margin for 9 LUT4 + 34 FF.
+- `wishbone_pipe` costs 9 LUT4 + 34 FF.
 
 ## 4. Instrumentation in context
 
-`FlashILA`, `FlashPinProbe`, `HyperRAMProbe` with logic removed, CSR bridges kept:
-
-| cell | with | without | delta | share |
-|---|---:|---:|---:|---:|
-| TRELLIS_COMB | 14,476 | 13,402 | 1,074 | 7.4% |
-| TRELLIS_FF | 7,472 | 7,016 | 456 | 6.1% |
-| DP16KD | 44 | 43 | 1 | |
-
-- Understates a deletion: a real removal also recovers three bridges and three decoder windows.
 - `peripherals/flash.py`: the ILA "was built to find the JEDEC read fault, which is fixed"; `flash_cdc.py`: after the PHY moves to its own domain ILA captures cross a clock boundary unsynchronised ("gross behaviour only").
 - `ObservablePHY` (`peripherals/flash.py`) re-implements `luna_soc`'s `SPIPHYController.elaborate` statement for statement (130 lines). `soc_upstream_copy_check.py`: in sync with the installed `luna_soc` (83 upstream statements, 85 in the copy: instrumentation assignments + the `as fsm:` handle); validated against known-bad mutations both directions.
 
@@ -134,8 +124,8 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 - `peripherals/vbus_csr.py` `input` register drives nothing: `VbusControl` exposes `control_vbus_in_en`/`aux_vbus_in_en`, `top.py` deliberately does not request the pads. Writable, reads back, reaches no pin, while its docstring says "`vbus input both` restores the permissive state" and `vbus::inputs()` reports it as board state.
 - `gateware/soc/cpu/irq.py`: 119 lines, 149 LUT4-eq, in no design. [upstream-boundary.md](upstream-boundary.md) keeps it so luna_soc's SVD generator finds the map; `repos/cynthion`'s facedancer top imports `InterruptController` from `luna_soc.gateware.cpu`, not here.
 - `hello_soc.py` and `cpu_area.py` deleted (VexRiscv vs VexiiRiscv is settled).
-- Doc references in `gateware/` to missing files: `docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`), `docs/luna_ecp5_fpga/hyperram-speed.md` (`hyperram/hyperram_identify.py:11,80`, `hyperram/hyperram_fifo.py:109`), `docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`). `./dev.py docs` does not check source comments.
-- `vbus::discharge()` has no caller (`firmware/cynthion-soc/src/vbus.rs:305`). `hyperram::seek_word`, `hyperram::write_word_pub` are called (eleven times from `bench.rs`); only ones checked against the whole tree are listed.
+- Doc references in `gateware/` to missing files: `docs/apollo_samd11_mcu/fpga-adv-sideband.md` (`sideband/sideband_gateware.py:5`), `docs/luna_ecp5_fpga/fast-bitstream-loading.md` (`loader/bitstream_sink.py:25`). `./dev.py docs` does not check source comments.
+- `vbus::discharge()` has no caller (`firmware/cynthion-soc/src/vbus.rs:305`).
 
 ## 9. Claim that measurement did not support
 

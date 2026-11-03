@@ -33,14 +33,14 @@ Each peripheral has a CSR interface; the register file becomes a bridge so one i
 
 The SoC reaches its console this way already.
 
-Order (cheapest, most load-bearing first): multiplexed I2C master (done) -> LEDs as CSR with override/release semantics -> flash (QSPI, most bus-shaped) -> HyperRAM ([#90](https://github.com/awtoau/cynthion-workspace/issues/90), largest, real timing question).
+Order (cheapest, most load-bearing first): multiplexed I2C master (done) -> LEDs as CSR with override/release semantics -> flash (QSPI, most bus-shaped).
 
 ## Scope
 
 - All three USB ports as 480 Mbps CDC: proves all three can come up; the shipping bitstream configures ports differently. Largest item: three device stacks against 24288 LUTs with a CPU needing ~6000.
-- HyperRAM ID and serial readback: registers already read from a standalone bitstream ([chips/hyperram/w956a8.md](chips/hyperram/w956a8.md)); missing is the CPU-side path.
+- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588).
 - FUSB302B and die temperature over the sideband: `gateware/probes/pins/fusb302_id.py` reads both controllers; missing are sideband commands ([chips/cynone-sideband.md](chips/cynone-sideband.md#4-commands)). Temperature needs the `DTR` primitive, instantiated nowhere.
-- Flash and HyperRAM benchmarking driven by the CPU.
+- Flash benchmarking driven by the CPU.
 
 ## Area reference
 

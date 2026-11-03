@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Sequential-throughput baseline top (#581): generator -> FIFO -> HyperRAM -> FIFO -> checker.
+"""REFERENCE test top (#581, README.md here): generator -> FIFO -> HyperRAM -> FIFO -> checker.
 
 - `sync` (registers, generator, checker) and `hr`/`hr90` (PHY, controller, engine) are
   separate PLLs; two AsyncFIFOs are the only data crossing.

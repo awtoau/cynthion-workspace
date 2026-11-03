@@ -31,7 +31,6 @@ regenerate by re-running a build. Put those somewhere tracked:
 - workspace tooling → `scripts/`
 - documentation → `docs/`
 
-This warning exists because it already happened once: a HyperRAM burst-test
-harness (five files, ~830 lines, including its own README) sat here uncommitted
-and was one `rm -rf` away from being lost. It now lives in
-[`gateware/probes/hyperram/`](../../gateware/probes/hyperram/).
+This warning exists because it already happened once: a test harness (five
+files, ~830 lines, including its own README) sat here uncommitted and was one
+`rm -rf` away from being lost.

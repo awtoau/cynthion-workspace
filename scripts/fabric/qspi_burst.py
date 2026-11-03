@@ -19,8 +19,8 @@ Addresses stride by 4099 bytes -- a prime, so successive reads land in
 different pages and rarely repeat. A sequential walk would stay inside one page
 and measure the wrong thing entirely.
 
-    ./scripts/hyperram/qspi_burst.py
-    ./scripts/hyperram/qspi_burst.py --sizes 4 32 --reads 512
+    ./scripts/fabric/qspi_burst.py
+    ./scripts/fabric/qspi_burst.py --sizes 4 32 --reads 512
 """
 
 import argparse

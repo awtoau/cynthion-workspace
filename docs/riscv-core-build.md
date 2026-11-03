@@ -86,7 +86,7 @@ zicntr, and `withPerformanceCounters` is `zihpm || zicntr`, so dropping
 `--performance-counters 0` — the plugin, its 8-bit buffers and its CSR-RAM flush
 FSM are all still there. Only the count is free. [#471](https://github.com/awtoau/cynthion-workspace/issues/471).
 
-**Ask the CPU before instrumenting the fabric.** The counters answer stall and miss questions in one build (example HyperRAM walk: `front-stall 7  back-stall 294  dcache-waiting 79  dcache-miss 1`, i.e. not fetch-bound). History: [`history/soc-usb.md`](history/soc-usb.md).
+**Ask the CPU before instrumenting the fabric.** The counters answer stall and miss questions in one build. History: [`history/soc-usb.md`](history/soc-usb.md).
 
 ## What regeneration costs
 

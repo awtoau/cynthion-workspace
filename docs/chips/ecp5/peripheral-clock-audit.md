@@ -9,7 +9,7 @@
 3. **`usb` has no reset.** `ResetSignal("usb")` is tied to 0 — the oscillator
    runs before any PLL is asked for anything, so there is nothing to gate on.
 
-Peripheral-by-peripheral review for [#229](https://github.com/awtoau/cynthion-workspace/issues/229): 24 modules and boundaries, nine findings; sound modules are recorded with the reason.
+Peripheral-by-peripheral review for [#229](https://github.com/awtoau/cynthion-workspace/issues/229): 20 modules and boundaries, eight findings; sound modules are recorded with the reason.
 
 Related: [`../../soc-clocking.md`](../../soc-clocking.md) §2, the withdrawn
 "CPU corrupts above 60 MHz" result whose signature was a `SyncFIFOBuffered`
@@ -29,7 +29,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/clock_monitor.py`](../../../gateware/soc/peripherals/clock_monitor.py) | `usb` + `sync` | toggle + edge detect (`FFSynchronizer`), `FFSynchronizer` on PLL `LOCK` | `usb`, exact by construction | **sound** |
 | [`peripherals/ulpi_window.py`](../../../gateware/soc/peripherals/ulpi_window.py) | `usb` + `sync` | four-phase handshake on two toggles | `usb`, exact by construction | **DEFECT 1** — the timeout reset is a no-op |
 | [`peripherals/uart16550.py`](../../../gateware/soc/peripherals/uart16550.py) | `sync` only | none inside; crossing is external and correct | none — no baud generator | **sound** |
-| [`peripherals/serial_line.py`](../../../gateware/soc/peripherals/serial_line.py) | `sync` only | `FFSynchronizer` on the rx pad | `divisor` argument | **sound** module, **DEFECT 6** at the call site |
+| [`peripherals/serial_line.py`](../../../gateware/soc/peripherals/serial_line.py) | `sync` only | `FFSynchronizer` on the rx pad | `divisor` argument | **sound** module, **DEFECT 5** at the call site |
 | [`peripherals/i2c_master.py`](../../../gateware/soc/peripherals/i2c_master.py) | `sync` only | `FFSynchronizer` on SDA | `PRER`, generated from `prescale_for` | **DEFECT 4 — CLOSED** |
 | [`peripherals/i2c_mux.py`](../../../gateware/soc/peripherals/i2c_mux.py) | `sync` only | four `FFSynchronizer`s on `int`/`fault` | — | **sound** |
 | [`peripherals/sideband_csr.py`](../../../gateware/soc/peripherals/sideband_csr.py) | `sync` only | none needed | — | **sound** |
@@ -37,16 +37,12 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/fabric_status.py`](../../../gateware/soc/peripherals/fabric_status.py) | `sync` only | none needed | `2**19` `sync` cycles (DTR cadence) | **sound** — scales harmlessly |
 | [`peripherals/flash_cdc.py`](../../../gateware/soc/peripherals/flash_cdc.py) | `sync` + `phy_domain` | two `AsyncFIFOBuffered` + `FFSynchronizer` on `cs` | — | **sound** |
 | [`peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) mmap / crossbar | `domain` param, honoured | none | `MMAP_DEFAULT_TIMEOUT = 256` cycles | **sound** |
-| `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 7** — latent |
+| `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 6** — latent |
 | `flash.py` `ObservablePHY` | `domain` param, honoured | one flop on `dq.i` (upstream) | SCK = `f_domain / 2(1+divisor)` | **sound** |
-| `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 8** — latent |
-| `flash.py` `FlashILA` | hardcoded `sync` | incidental 2-stage, per bit | `sample_rate=60e6`, cosmetic | **DEFECT 8** — latent, already documented |
-| [`bootram.py`](../../../gateware/soc/bootram.py) (HyperRAM) | `sync` only | JTAG side arrives pre-synchronised | `ck_mhz` argument | **DEFECT 5** |
-| `peripherals/hyperram_dqs_controller.py` | `sync` only | none | `sync_mhz` argument, `ceil`ed | **sound** — dormant |
-| `peripherals/hyperram_dqs_phy.py` | `sync` + `fast` | ECP5 hard 4:1 gearing (`ODDRX2*`/`IDDRX2*`/`TSHX2*`) | `DDRDLL_SETTLE_CYCLES = 8`, cycles by spec | **sound** — dormant; see the note on `LOCK` |
-| [`peripherals/hyperram_probe.py`](../../../gateware/soc/peripherals/hyperram_probe.py) | `sync` only | none | — | **sound** |
+| `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 7** — latent |
+| `flash.py` `FlashILA` | hardcoded `sync` | incidental 2-stage, per bit | `sample_rate=60e6`, cosmetic | **DEFECT 7** — latent, already documented |
 | [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
-| [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 9** |
+| [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 8** |
 | [`cpu/intc.py`](../../../gateware/soc/cpu/intc.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |
 | console / USB boundary in [`top.py`](../../../gateware/soc/top.py) | `sync` + `usb` | `StreamBuffer` async both ways, `FFSynchronizer` on `usb_took` | — | **sound** data path, **DEFECTS 2 and 3** |
 
@@ -225,64 +221,7 @@ The cheap fix is to derive `I2C_PRESCALE` in `soc_generate_pac.py` the way
 `SYNC_HZ` already is, using the gateware's own `prescale_for(sync_hz,
 I2C_SCL_HZ)`. That also makes the two dead references live.
 
-## Defect 5 — the HyperRAM path takes `SYNC_MHZ`, not `actual_sync_mhz` — **CLOSED**
-
-**Fixed in [`9d018e5`](https://github.com/awtoau/cynthion-workspace/commit/9d018e5),
-"soc: every period from a real clock".** `top.py:1106-1107` now reads
-`car.actual_sync_mhz` on both branches, with the reason spelled out two lines
-above it. The two adjacent frequency assumptions below — `CR0` latency tracking
-CK, and `HyperRAMPHY`'s fixed 2 ns `p_DEL_VALUE` — are unchanged and still stand.
-
-The original finding:
-
-`clocks.py:148-156` is explicit about which number downstream should read:
-
-> What the hardware will ACTUALLY produce, recomputed from the dividers rather
-> than echoed from the request. […] the day that solver learns to approximate,
-> everything downstream is already reading the truth.
-
-`FabricStatus` (`top.py:828`) and `SidebandDebug` (`top.py:1386`) do read
-`car.actual_sync_mhz`, the latter with a comment spelling out the -1.5% baud
-error a request/solve mismatch would produce. The HyperRAM does not
-(`top.py:1108`):
-
-```python
-ck_mhz=2 * SYNC_MHZ if HYPERRAM_DQS else SYNC_MHZ,
-```
-
-Everything that turns nanoseconds into cycles downstream of that argument is
-computed from the requested frequency: the tCSM burst cap
-(`HYPERRAM_TCSM_NS = 4000.0`, `HYPERRAM_TCSM_MARGIN = 0.9`), the tCK-max stall
-bound (`HYPERRAM_TCK_MAX_NS = 100.0`), and the DQS controller's tCSHI recovery
-(`T_CSHI_NS = 10.0`). The burst cap budgets for it explicitly and the tCSHI count
-rounds up, so both err safe; `hyperram_max_stall_cycles` has no margin and
-truncates with `int()`.
-
-Latent today, because `solve_pll` only accepts an exact match. It is listed
-because it is the one remaining site where the request and the solve are
-conflated, and the file whose comment warns about that is two hundred lines away.
-
-Two adjacent HyperRAM observations that are not domain-crossing faults but are
-frequency assumptions in the same path:
-
-* `HYPERRAM_LATENCY_CLOCKS = 6` and the DQS controller's
-  `HIGH_LATENCY_CLOCKS = 5` track the device's CR0 latency code, which is itself
-  a function of CK. Nothing reprograms CR0 as `sync` rises.
-* LUNA's `HyperRAMPHY` — the PHY actually built today — hardcodes the CK output
-  delay as `p_DEL_VALUE=int(2e-9 / 25e-12)`, a fixed 2 ns against a `sync` period
-  that ranges from 15.9 ns down to 7.7 ns.
-* ~~With `HYPERRAM_DQS = False` the DQS controller is not built, so **tCSHI is
-  enforced by nothing** — LUNA's `HyperRAMInterface.RECOVERY` falls straight
-  through to IDLE. The 10 ns gap comes only from the arbiter's FSM round trip,
-  which is a fixed cycle count and therefore shrinks in nanoseconds as `sync`
-  rises.~~ **Fixed.** Both controllers are vendored now
-  (`peripherals/hyperram_controller.py`, `peripherals/hyperram_dqs_controller.py`)
-  and both hold tCSHI from a cycle count computed off the caller's `sync_mhz`,
-  so the gap follows the clock instead of shrinking under it. This is the one
-  entry in this audit that was closed by taking the frequency as a parameter
-  rather than by moving a constant.
-
-## Defect 6 — two `sync`-derived periods in `top.py` read the request — **CLOSED**
+## Defect 5 — two `sync`-derived periods in `top.py` read the request — **CLOSED**
 
 **Fixed in the same commit.** Both now read the solved rate:
 `top.py:1333` computes the Apollo UART divisor from `car.actual_sync_mhz`
@@ -291,7 +230,7 @@ frequency assumptions in the same path:
 
 The original finding:
 
-Same class as Defect 5, in the top level rather than a peripheral:
+A period computed from the requested `SYNC_MHZ` rather than `car.actual_sync_mhz`:
 
 * `top.py:1327` — the Apollo UART divisor,
   `int(SYNC_MHZ * 1e6 // APOLLO_UART_BAUD)`.
@@ -305,7 +244,7 @@ the link to Apollo, and a UART tolerates about ±2%.
 
 Both should read `car.actual_sync_mhz`, for the reason `clocks.py` already gives.
 
-## Defect 7 — `HoldableSPIController` accepts a `domain` it does not honour
+## Defect 6 — `HoldableSPIController` accepts a `domain` it does not honour
 
 `flash.py:587-590` takes `domain="sync"`, stores it, and forwards it to the inner
 `SPIController`. Its `elaborate` (612-653) has **no `DomainRenamer`**, and it
@@ -326,7 +265,7 @@ same failure shape as Defect 1: **a domain parameter that is accepted and
 silently not applied.** Two instances of that in one tree is a pattern, and the
 only defence against it is that somebody read the code.
 
-## Defect 8 — the flash instrumentation is pinned to `sync`
+## Defect 7 — the flash instrumentation is pinned to `sync`
 
 `ObservablePHY` is parameterised on its domain; `FlashPinProbe` and `FlashILA`
 are not, and both sample in `sync` unconditionally. With `FLASH_PHY_FAST = True`
@@ -344,7 +283,7 @@ Latent while `FLASH_PHY_FAST = False`. It is exactly what will bite the day
 somebody flips that flag to get the flash off the CPU clock — which is the
 purpose `flash_cdc.py` was written for.
 
-## Defect 9 — "reachable by the PLL" is not "closeable by the fabric"
+## Defect 8 — "reachable by the PLL" is not "closeable by the fabric"
 
 Not a domain-crossing fault, but it bounds the premise this audit is written
 against. `SocClocks` will accept any `sync_mhz` its solver can hit, and the
@@ -412,8 +351,8 @@ the payload with an `AsyncFIFO` and both status levels with `FFSynchronizer`s,
 and asynchronously resets `jtck` from `sync` so `cpu_hold` is known clear at
 power-up with no JTAG attached.
 
-**`intc.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`, `hyperram_probe.py`,
-`sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`, `bootram.py`** are all
+**`intc.py`, `clint.py`, `cpu.py`, `wishbone_pipe.py`,
+`sideband_csr.py`, `vbus_csr.py`, `fabric_status.py`** are all
 single-domain `sync`. None names `usb`; none is affected by the reset change. Two
 invariants they depend on are worth writing down because nothing enforces them:
 every interrupt-controller line (`intc.lines[...]`) must be driven in `sync` (the controller has no synchroniser and
@@ -434,14 +373,6 @@ one sticky flag set in `usb` and read in `sync` (`usb_took`) goes through an
 hazard is the 0→1 edge — which is what makes two flops sufficient rather than
 lucky.
 
-**`hyperram_dqs_phy.py`'s `sync`/`fast` crossing needs no soft CDC.** The ECP5
-4:1 gearing primitives are SCLK/ECLK gearboxes that are only legal at exactly 2×
-from the same PLL with a defined phase, which is precisely what `SocClocks`
-guarantees. Adding synchronisers there would break it. Its use of bare
-`ResetSignal()` as `i_RST` on `fast`-clocked primitives is safe only because
-`clocks.py` drives both domain resets from the same `~locked` net; that is worth
-keeping true.
-
 **`usb` is constrained even though `SocClocks` adds no constraint for it.** The
 platform declares `Resource("clk_60MHz", 0, Pins("A8", dir="i"), Clock(60e6), …)`,
 so Amaranth attaches the constraint when the resource is requested. This was
@@ -458,12 +389,9 @@ would mislead a reader:
 
 * `top.py:1594-1598` — argues against tying the PHY reset to 0, which is what now
   happens. See Defect 2.
-* `hyperram_dqs_phy.py:37-41` — describes `usb` being solved alongside `sync` by
-  `VariableClockDomainGenerator`, which is no longer how `usb` is produced.
-* `fabric_status.py:44` and `bootram.py` throughout — still name
-  `VariableClockDomainGenerator`.
+* `fabric_status.py:44` — still names `VariableClockDomainGenerator`.
 * `clint.py:87-88` ("16.7 ns"), `clint.py:188` ("9700 years at 60 MHz"),
-  `fabric_status.py:77` ("8.7 ms at 60 MHz"), `bootram.py:44` and `:828` — all
+  `fabric_status.py:77` ("8.7 ms at 60 MHz") — all
   quote a 60 MHz `sync` in prose. Harmless individually; collectively they are
   what makes 60 look like a property of the design rather than one rung.
 * `flash.py:43-51` — the divisor table and its 50/62 MHz claims, superseded by
@@ -474,12 +402,12 @@ would mislead a reader:
 
 | | count |
 |---|---|
-| modules and boundaries audited | 24 |
-| sound as written | 15 |
-| with a named defect | 9 |
+| modules and boundaries audited | 20 |
+| sound as written | 12 |
+| with a named defect | 8 |
 | defects that are live today | 3 (1, 2, 3) |
-| defects that are latent until a flag flips | 3 (7, 8, 9) |
-| **closed** | **3 (4, 5, 6)** — and defect 4's rate was wrong twice over |
+| defects that are latent until a flag flips | 3 (6, 7, 8) |
+| **closed** | **2 (4, 5)** — and defect 4's rate was wrong twice over |
 
 The one to fix first is **Defect 1**: a peripheral whose recovery path was
 written, documented and never applied, in a module whose only other escape hatch

@@ -124,6 +124,8 @@ Three front ends, one destination: the HyperRAM staging area, and a header of
 magic + length + CRC32 written last so a partial run leaves a header the
 bootloader ignores.
 
+Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path.
+
 | front end | needs | transport |
 |---|---|---|
 | [`scripts/soc/soc_jtag_stage.py`](../../../scripts/soc/soc_jtag_stage.py) | a configured FPGA carrying this design (ER1 signature `0x4a53`); no console, no running CPU | one `shift_data` per image, CPU held in reset |

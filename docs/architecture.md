@@ -65,7 +65,7 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 | I2C | one controller plus a mux, OpenCores rev 0.9 map | written | forced — the parts share one bus |
 | device protocols | one owner, cached reads | written | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md), [#123](https://github.com/awtoau/cynthion-workspace/issues/123) |
 | SPI flash | crossbar, chip-select hold, quad `0xEB` | written | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), [#89](https://github.com/awtoau/cynthion-workspace/issues/89) |
-| HyperRAM | `HyperRAMWishbone` at `0x2000_0000`, 8 MiB, `main=1 exe=1` | vendored | [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md), [`soc-memory-bus.md`](soc-memory-bus.md), [#90](https://github.com/awtoau/cynthion-workspace/issues/90) |
+| HyperRAM | register interface on the #581 core at CK 180, `0xf0000800` window 0x80, IRQ 18 (#588) | written | [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md), [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | sideband | FPGA_ADV, one wire, three commands | written | [`chips/cynone-sideband.md`](chips/cynone-sideband.md), [#137](https://github.com/awtoau/cynthion-workspace/issues/137) |
 | ULPI window | register access on `target_phy`, no packet path | written | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | GPIO, VBUS, `fabric_status`, I2C mux | | written | [`hardware.md`](hardware.md#register-reference) |
@@ -80,7 +80,7 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 |---|---|---|---|
 | at `0x0` | **the bootloader** — `firmware/cynthion-boot`, 492 bytes | written | [`hardware.md`](hardware.md), [#138](https://github.com/awtoau/cynthion-workspace/issues/138) |
 | the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads | written | too large to be resident |
-| firmware load | JTAG stream, and USB bulk | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
+| firmware load | JTAG stream, and USB bulk. Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path. | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
 | memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
 
 ## Dependencies and verification

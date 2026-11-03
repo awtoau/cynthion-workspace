@@ -2214,8 +2214,8 @@ list where a transposition would be easiest to miss by eye. Utilisation alone
 would not catch a swapped pin; the per-signal ball comparison is the part that
 does.
 
-Five designs then elaborated to a bitstream against the vendored platform:
-`hyperram_identify`, `hyperram_regfuzz`, `vexii_bench_soc` and `bitstream_sink`. `scripts/check.py` is 6/6.
+Designs then elaborated to a bitstream against the vendored platform include
+`vexii_bench_soc` and `bitstream_sink`. `scripts/check.py` is 6/6.
 
 ```bash
 python3 scripts/platform_vendor_compare.py   # → tmp/logs/platform_vendor_compare.log
@@ -2236,8 +2236,8 @@ analyzer and facedancer gateware against r0.2 as a toolchain smoke test;
 deliberately, as the baseline it compares against.
 
 **This does not by itself retire the fork.** `luna` is still a real dependency of
-`gateware/` for USB (`USBDevice`, `USBSerialDevice`, the stream endpoints),
-HyperRAM (`HyperRAMInterface`) and `JTAGRegisterInterface`, and `luna_soc` still
+`gateware/` for USB (`USBDevice`, `USBSerialDevice`, the stream endpoints)
+and `JTAGRegisterInterface`, and `luna_soc` still
 supplies `blockram` and the CPU wrappers. What changed is that the dependency is
 now on `luna` for things `luna` actually provides, rather than on the entire
 `cynthion` → `luna` → `luna-soc`-fork chain for a list of pin names. Step 4

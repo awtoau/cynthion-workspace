@@ -1,7 +1,6 @@
 # Winbond W25Q32 — the configuration flash
 
-The SPI NOR flash the ECP5 boots from on Cynthion r1.4. **Exactly 4 MiB**, and
-unlike the [HyperRAM](hyperram/w956a8.md) on the same board it is exactly what its
+The SPI NOR flash the ECP5 boots from on Cynthion r1.4. **Exactly 4 MiB**, as its
 marking says.
 
 **Index:** [`../hardware.md`](../hardware.md)
@@ -286,19 +285,19 @@ Stated in `gateware/board/cynthion_r1_4.py` as `FLASH_DRIVE`, `FLASH_SLEWRATE`, 
 
 | attribute | rated (ECP5 LVCMOS33 output) | board allows | we run | why the gap |
 |---|---|---|---|---|
-| `DRIVE` | 4 / 8 / 12 / 16 mA in the Trellis PIC bits (`PICB0` `PIOA.DRIVE`); 24 mA in the Lattice datasheet, **UNVERIFIED** (not fetched, absent from the bits.db tile checked) | trace length, flash input load, series R: **UNVERIFIED**, schematic not in repo | **8** | inherited: nextpnr omits it and the pad bits decode as 8 mA (same finding as [HyperRAM](hyperram/pin-attributes.md#the-default-drive-is-8-ma)); no failure seen to motivate more |
+| `DRIVE` | 4 / 8 / 12 / 16 mA in the Trellis PIC bits (`PICB0` `PIOA.DRIVE`); 24 mA in the Lattice datasheet, **UNVERIFIED** (not fetched, absent from the bits.db tile checked) | trace length, flash input load, series R: **UNVERIFIED**, schematic not in repo | **8** | inherited: nextpnr omits it and the pad bits decode as 8 mA; no failure seen to motivate more |
 | `SLEWRATE` | SLOW / FAST | as above | **SLOW** | inherited: unset = SLOW; DQ is clocked by `USRMCLK` up to 144 MHz SCK, so FAST is the untested direction |
 | `PULLMODE` | UP / DOWN / NONE | external pull-ups on CS#/DQ2/DQ3 (WP#/HOLD#): **UNVERIFIED** | **NONE** | `top.config` reads NONE |
 | `HYSTERESIS` | ON / OFF | - | ON (DQ), unset (CS#) | `BIDIR_LVCMOS33` forces ON; not an axis here |
 
-- How the defaults were found: `./scripts/hyperram/hyperram_pin_patch.py --show --resource qspi_flash_0 --build-dir tmp/awto_soc/build/ck80-dqs0-sync60` on the built `top.config`: all five pins `DRIVE=None PULLMODE=NONE SLEWRATE=None`, DQ `HYSTERESIS=ON`.
+- How the defaults were found: the pad bits of `qspi_flash_0` in the built `top.config` (`ck80-dqs0-sync60`): all five pins `DRIVE=None PULLMODE=NONE SLEWRATE=None`, DQ `HYSTERESIS=ON`.
 - Explicit `DRIVE=8 SLEWRATE=SLOW PULLMODE=NONE` should pack to the same bits as unset. **UNVERIFIED**: no bitstream rebuilt for this change; compare `top.bit` of a default build before/after.
 - Part side: SR3 `DRV` is 25% (see [Drive strength](#drive-strength--real-but-there-is-no-failure-for-it-to-fix)); the FPGA-side drive is the other half of the same link.
 - Gate: `tests/test_flash_pin_electricals.py` (LPF carries the attributes; default LPF differs only by them).
 
 ### Planned sweep (not run, no results)
 
-- Axes: `CYNTHION_FLASH_DRIVE` in 4 / 8 / 12 / 16 (24 once confirmed), `CYNTHION_FLASH_SLEWRATE` in SLOW / FAST. Both are in the build-directory slug: `ck80-dqs0-sync60-fdrive<D>-fslew<S>`.
+- Axes: `CYNTHION_FLASH_DRIVE` in 4 / 8 / 12 / 16 (24 once confirmed), `CYNTHION_FLASH_SLEWRATE` in SLOW / FAST. Both are in the build-directory slug: `<variant>-fdrive<D>-fslew<S>`.
 - Judge by whether `flash bench` prints `reads CORRECT`; not by timing.
 - Build one point (no hardware touched):
 
@@ -306,7 +305,7 @@ Stated in `gateware/board/cynthion_r1_4.py` as `FLASH_DRIVE`, `FLASH_SLEWRATE`, 
 
 - Run it on the board, through the arbiter only:
 
-      ./scripts/board/board.py run --variant ck80-dqs0-sync60-fdrive16-fslewFAST "flash bench"
+      ./scripts/board/board.py run --variant <variant>-fdrive16-fslewFAST "flash bench"
 
 - Grid: 4 drives x 2 slews = 8 points (control is `fdrive8-fslewSLOW`); repeat the stress arm at a higher `CYNTHION_SYNC_MHZ` (SCK = sync / (`FLASH_DIVISOR` + 1), divisor 0 today), since nothing fails at 60 MHz.
 - The 60-point matrix (5 modes x 4 divisors x 3 sync rates) came from `debris/scripts/flash_ceiling.py` on a probe bitstream; it is retired, so this sweep uses the SoC's own `flash bench` instead.

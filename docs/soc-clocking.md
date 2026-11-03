@@ -8,10 +8,10 @@ Clock plan, owned here. Other docs link, they do not restate.
 |---|---|---|
 | `usb` | discrete 60 MHz oscillator (A8) passed straight through; FPGA sources the ULPI clock (`clk_dir='o'` on all three PHY resources in `cynthion_r1_4.py`) | 60.000 MHz exact |
 | `sync` (CPU, Wishbone) | PLL from the oscillator; `SYNC_MHZ` | default 60 (`CYNTHION_SYNC_MHZ`, `gateware/soc/variant.py:64`) |
-| `fast` | second output (CLKOS, not CLKOS2) of the SAME PLL as `sync` | exactly 2x its fabric domain (HyperRAM DQS 4:1 gearing) |
-| HyperRAM CK | `hyperram_clocks.HyperRAMDomains`: second PLL, oscillator as reference; not wired into `top.py` yet (#230) | see [chips/hyperram/w956a8.md](chips/hyperram/w956a8.md) |
+| `fast` | second output (CLKOS, not CLKOS2) of the SAME PLL as `sync` | exactly 2x its fabric domain (`FLASH_PHY_FAST`) |
+| HyperRAM `hr` (CK) + `hr90` | second PLL, CLKI = the 60 MHz `usb` net (#588) | 180 MHz; [chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) |
 
-- Code: `gateware/soc/clocks.py` (`SocClocks`), `gateware/soc/hyperram_clocks.py`.
+- Code: `gateware/soc/clocks.py` (`SocClocks`); HyperRAM PLL `_PLL` in `gateware/hyperram_baseline/top.py` (#581).
 - 60 MHz appears in `clocks.py` once, as the USB PHY's requirement; it is not the CPU's number.
 - `sync` choices: `reachable()` from the 60 MHz reference gives `60 70 72 75 80 84 90 96 100 105 108 110 120 130` (and 132, 135 past the ceiling). The other integers divide the reference below `PFD_MIN_MHZ` (jitter not guaranteed).
 - **Why `sync` is 60:** it equals the oscillator (`solve_pll(60)` = VCO 420 MHz, feedback 7, output div 7), so `sync` and `usb` run at one rate. It is the bottom of the menu, not below it. **Decision (Dan, 2026-11-02): run `sync` at 60 MHz for now, because it is simple** (one rate for CPU and PHY). Not a limit; faster rungs are not being pursued ([#462](https://github.com/awtoau/cynthion-workspace/issues/462)).
@@ -24,8 +24,8 @@ Clock plan, owned here. Other docs link, they do not restate.
 |---|---|---|---|---|
 | `usb` | 60.000 (ULPI) | 60.000 only | 60.000 oscillator | none |
 | `sync` | PLL menu above | `SYNC_CEILING_MHZ` | 60 | default, unmeasured; CPU ceiling is [#110](https://github.com/awtoau/cynthion-workspace/issues/110) |
-| `fast` | 2x `sync` | integer divide of the same VCO | 2x `sync` when DQS / `FLASH_PHY_FAST` | forced by DQS (parked) |
-| HyperRAM CK | part rated 166 | second PLL (`hyperram_clocks.py`) | not in the shipping design | [#230](https://github.com/awtoau/cynthion-workspace/issues/230), [#432](https://github.com/awtoau/cynthion-workspace/issues/432) |
+| `fast` | 2x `sync` | integer divide of the same VCO | 2x `sync` when `FLASH_PHY_FAST` | — |
+| HyperRAM CK | part rated 166 | LVCMOS33 output 150 (ECP5 Table 3.21) | 180 (#588) | above both; #581 measured CK 60-180 clean ([chips/hyperram/sequential-baseline.md](chips/hyperram/sequential-baseline.md)) |
 | `jtag_tck` | n/a | 405 kHz driven | unconstrained in nextpnr | [#461](https://github.com/awtoau/cynthion-workspace/issues/461) |
 
 ## PLL divider trap (why `usb` is not on the PLL)

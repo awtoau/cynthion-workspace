@@ -79,11 +79,8 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 
 ### Why CRC-32, and why there is one at all
 
-* **Already in the image.** `firmware/cynthion-soc/src/hyperram.rs:100-118` is a
-  bitwise CRC-32 — init `0xffffffff`, reflected `0xedb88320`, final NOT. That is
-  CRC-32/ISO-HDLC, so the host side is `zlib.crc32` and neither end hand-rolls a
-  loop. Reusing it costs no new `.text`; a CRC-16 would be a new implementation
-  on both sides to save two bytes a record.
+* **CRC-32/ISO-HDLC** — init `0xffffffff`, reflected `0xedb88320`, final NOT —
+  so the host side is `zlib.crc32`. A CRC-16 saves two bytes a record.
 * **Two independent places drop bytes silently**, and either leaves a truncated
   frame that still looks plausible:
   * `Uart::put` abandons a byte after 200,000 spins (`uart.rs:329-339`) — no TX
@@ -128,7 +125,6 @@ producers, and their layouts arrive at run time.
 | `0x04` | ERROR | `<II` — `code, value`; the stream's own faults |
 | `0x10` | POWER | `<IiIiIiIiI` — `bus_mv, current_ua` per channel, then the latching tick |
 | `0x20` | EVENT | `<IQI` — the event ring slot verbatim: `code, value, at_ms` |
-| `0x30` | BIST | allocated, **layout deliberately unspecified** — no producer exists, and the catalogue means one need not be frozen first |
 
 Notes that are the difference between a right and a wrong reading:
 
@@ -304,4 +300,4 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
    sets `serial.tx.last.eq(1)`, one USB IN transaction per byte — correct for a
    console, and the throughput ceiling for anything else. Only then decide
    whether a packing bit, a second CDC or bulk is needed.
-4. `EVENT`, then `BIST`.
+4. `EVENT`.

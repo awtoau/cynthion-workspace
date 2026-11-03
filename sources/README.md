@@ -263,11 +263,7 @@ same route — byte-identical, so the URLs are stable and serve the same file.
   *"must not be used in violation of the tCSM limit"* and *"it is recommended not to
   stop the clock during register access"*. That last sentence **replaces**, rather
   than adds to, the datasheet's §10.2.2 *"recommended to stop the clock when it is in
-  Low state"* — see [`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
-
-Full readings, with the places the four documents contradict each other and the
-datasheet, are in
-[`../docs/chips/hyperram/app-notes.md`](../docs/chips/hyperram/app-notes.md).
+  Low state"*.
 
 ### Vendor models — the Verilog one is encrypted, the HSPICE and IBIS are not
 
@@ -284,10 +280,6 @@ including a **250 MHz** block the datasheet has no column for (`tCSHI` 6 ns, `tR
 28 ns, `tACC` 28 ns, `tIS`/`tIH` 0.5 ns, `tDSS`/`tDSH` ±0.4 ns), a package default of
 200 MHz against a KGD default of 250 MHz, and `tCSM` as **4000 ns below 85 °C, 1000 ns
 above** — the temperature dependence that `` `define LA_85C `` switches.
-
-Code references for this part — RTL controllers, software and SoC drivers, and
-simulation models — are surveyed in
-[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
 
 ### Note on fetching from ISSI
 
@@ -325,8 +317,7 @@ Four files that were in this directory but not in this manifest until 2026-08-10
 `HyperBus_Spec_infineon.pdf` is the one to reach for when the question is "what does
 the *bus* require", and the Winbond datasheet when it is "what does *this device* do".
 §5 is explicit that the register map is device-dependent, which is why the same
-numeral means different registers across vendors — see the byte-vs-word trap in
-[`../docs/chips/hyperram/survey.md`](../docs/chips/hyperram/survey.md).
+numeral means different registers across vendors.
 
 ## Configuration flash
 
@@ -382,7 +373,7 @@ figure is the denominator in the host→flash transport gap in
 |---|---|---|
 | `Lattice-ECP5-Family-DataSheet-FPGA-DS-02012.pdf` | ECP5 / ECP5-5G family, FPGA-DS-02012 v1.9, March 2018 | `https://www.latticesemi.com/view_document?document_id=50461` | **108 pages** |
 | `Lattice-ECP5-sysCONFIG-FPGA-TN-02039-2.5.pdf` | sysCONFIG user guide, **FPGA-TN-02039-2.5, January 2026** — configuration modes, timing, and the SPI boot path | mirror (Lattice's own copy is behind a block page) | **75 pages** |
-| `Lattice-ECP5-HighSpeed-IO-FPGA-TN-02035-1.3.pdf` | High-Speed I/O Interface, FPGA-TN-02035-1.3, October 2020 — DDR primitives, `DELAYF`/`DELAYG`, `CLKDIV`, and the input-register modes the HyperRAM PHY is built from | latticesemi.com | **86 pages** |
+| TN-02035 High-Speed I/O | moved to `~/vendors/lattice/` (manifest there) | | |
 | `FPGA-TN-02032-1-4-ECP5-ECP5G-sysIO-Usage-Guide.pdf` | sysIO Usage Guide, FPGA-TN-02032-1.4 — I/O standards, `DELAYG` modes and the sysIO attributes the HyperRAM pins are constrained with | `https://0x04.net/~mwk/doc/lattice/ecp5/FPGA-TN-02032-1-4-ECP5-ECP5G-sysIO-Usage-Guide.pdf` | **30 pages** |
 
 **sysCONFIG 2.5 replaced 2.3 on 2026-08-10**, and the two byte-identical 2.3 copies
