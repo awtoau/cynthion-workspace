@@ -269,6 +269,19 @@ def table():
          S("ctrl", E(check=lambda r, p: None if len(r.data) == 18 else "no descriptor"),
            bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)],
         about="STALL clears on the next SETUP")
+    # #572: the Pixel NAKs unhandled requests, then stops answering SETUP until a bus reset.
+    nak_forever = [
+        S("ctrl", E("nak"), bm=0xC0, req=0x5A, val=0, idx=0, len=2),
+        S("ctrl", E("nak"), bm=0x40, req=0x5A, val=0, idx=0, len=0),
+        S("ctrl", E("nak"), bm=0xC0, req=0x5A, val=0, idx=0, len=64),
+        S("ctrl", E("nak"), bm=0x40, req=0x5A, val=0, idx=0, len=4, out=b"\x01\x02\x03\x04")]
+    add("ctrl_nak_forever_then_good", "ctrl_std",
+        nak_forever + [
+            S("ctrl", E("stall"), bm=0x80, req=0x7F, val=0, idx=0, len=2),
+            S("ctrl", E(length=18), bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)],
+        profiles=("model", "model_fs"), board="vendor request 0x5A is the model's NAK-forever request",
+        about="four requests abandoned after NAKs (data IN, status IN, data IN, data OUT); "
+              "the next SETUPs are ACKed: the host side keeps no state from an abandoned transfer")
 
     # ---- SET_ADDRESS / SET_CONFIGURATION -------------------------------------------
     GD = dict(bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)
