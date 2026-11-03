@@ -391,7 +391,10 @@ async def s_main(checks, b, dev, ctx, periph):
     await b.write("cmd", hrp.OP_FILL)
     v = await b.status()
     checks.check("command while busy refused: BUSY", v["code"] == hrp.CODE_BUSY, str(v))
-    await b.wait_idle(40000)
+    checks.check("the refusal leaves the op in flight busy", v["busy"] == 1, str(v))
+    v = await b.wait_idle(40000)
+    checks.check("the op in flight still reports its own completion",
+                 v is not None and v["code"] == 0 and v["op"] == hrp.OP_FILL, str(v))
 
     # watchdog: the engine ignores `done`, the bound fires, the next op works
     await b.write("errors", 0x1FFF)
