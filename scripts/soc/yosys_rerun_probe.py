@@ -129,7 +129,8 @@ def main() -> int:
     inputs = {name: hashlib.sha256((build / name).read_bytes()).hexdigest()[:12]
               for name in ("top.ys", "top.il", "VexiiRiscv.v")
               if (build / name).exists()}
-    emit(f"re-running yosys {args.runs}x in {build.relative_to(ROOT)}"
+    shown = build.relative_to(ROOT) if build.is_relative_to(ROOT) else build
+    emit(f"re-running yosys {args.runs}x in {shown}"
          + (f", YOSYS_MAX_THREADS={args.yosys_threads}" if args.yosys_threads else ""))
     for name, digest in inputs.items():
         emit(f"  {name} {digest}")

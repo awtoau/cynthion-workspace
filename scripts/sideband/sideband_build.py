@@ -32,6 +32,7 @@ BUILD_DIR = ROOT / "gateware" / "probes" / "sideband" / "build"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from fast_build_env import YOSYS_MAX_THREADS  # noqa: E402
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.
@@ -65,6 +66,7 @@ def main():
 
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
+    env.setdefault("YOSYS_MAX_THREADS", YOSYS_MAX_THREADS)  # #356
 
     # The script does not set baud or drive style: the soak runner has already
     # rewritten the sources. Reporting them here is a cross-check that what was
