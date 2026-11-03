@@ -5,6 +5,7 @@
 
 """Sequential HyperRAM throughput, non-RV path, on Cynthion r1.4.
 
+    ./scripts/hyperram/hyperram_baseline.py sweep          # all CKs, one table (the normal use)
     ./scripts/hyperram/hyperram_baseline.py build --ck 100 120 140 150 160 165
     ./scripts/hyperram/hyperram_baseline.py run --ck 165            # configure + measure
     ./scripts/hyperram/hyperram_baseline.py run --ck 165 --no-configure
@@ -17,6 +18,8 @@
 """
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import selectors
@@ -51,7 +54,10 @@ from top import (APPLET_ID, CK_WINDOW_BITS, MODE_BOTH, MODE_READ, MODE_REG,  # n
 
 WORDS_ALL = 1 << 22          # whole 64 Mbit array, 16-bit words
 CR0_ADDR = 0x800             # datasheet 9.1: CR0 word address
-STALL_S = 60                 # dev-box rule: no output for 60 s = hung build (awto-dan#53)
+# Every reachable rung tried, rated max 166 (165 reachable), then x3, x3.5, x4 of 60 MHz.
+SWEEP_CK = [60, 80, 100, 120, 140, 150, 160, 165, 180, 210, 240]
+RUN_ID = None                # set per invocation; tags results.jsonl rows
+STALL_S = 60                # dev-box rule: no output for 60 s = hung build (awto-dan#53)
 
 
 def say(text):
@@ -199,7 +205,7 @@ def run_case(b, ck, *, mode, burst, total, xor=0, wait=None, start_addr=0, label
         if b.rd("STATUS") & 1:
             done = True
             break
-    row = dict(label=label, ck_mhz=ck, ck_meas_mhz=ck_meas, mode=mode, burst=burst, total=total,
+    row = dict(run_id=RUN_ID, label=label, ck_mhz=ck, ck_meas_mhz=ck_meas, mode=mode, burst=burst, total=total,
                xor=xor, seed=seed, wait=wait, done=done, commit=commit(),
                time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     for name in ("RUN_CYCLES", "WORDS_W", "WORDS_R", "SRC_WAIT", "SINK_WAIT", "XACTS",
@@ -287,7 +293,7 @@ def measure(ck, args):
     set_delay(b, best, args.direction)
     say(f"  ck{ck:g}: measuring at tap {best}; widest clean run {width} taps")
     with RESULTS.open("a") as f:
-        f.write(json.dumps(dict(label="eye", ck_mhz=ck, ck_meas_mhz=ck_meas, tap=best,
+        f.write(json.dumps(dict(run_id=RUN_ID, label="eye", ck_mhz=ck, ck_meas_mhz=ck_meas, tap=best,
                                 width=width, step=args.tap_step, eye=eye, commit=commit())) + "\n")
     kw = dict(burst=max_burst, total=WORDS_ALL, ck_meas=ck_meas)
     run_case(b, ck, mode=MODE_WRITE, label="write all", **kw)
@@ -305,52 +311,82 @@ def measure(ck, args):
     return 0
 
 
-def soak(ck, args):
-    """Whole-array seeded write+read passes until `minutes` of wall time are spent."""
-    b, max_burst, ck_meas = open_board(ck)
-    if b is None:
-        return 1
-    best, width, _ = sweep_eye(b, ck, max_burst, ck_meas, args)
-    set_delay(b, best, args.direction)
-    say(f"  soak ck{ck:g}: tap {best} (eye {width} taps), {args.minutes:g} min")
-    end = time.monotonic() + 60 * args.minutes
-    passes = errors = missing = 0
-    bad_bits = 0
-    while time.monotonic() < end:
-        r = run_case(b, ck, mode=MODE_BOTH, burst=max_burst, total=WORDS_ALL,
-                     label=f"soak {passes}", ck_meas=ck_meas)
-        passes += 1
-        errors += r["errors"]
-        missing += r["missing"]
-        bad_bits |= r["bad_bits"]
-        if not r["done"]:
-            break
-    say(f"  soak ck{ck:g} done: {passes} whole-array write+read passes, "
-        f"{passes * WORDS_ALL} words verified, errors {errors}, missing {missing}, "
-        f"bad bits {bad_bits:#06x}, CK measured {measured_ck(b):.4f} MHz at end")
-    with RESULTS.open("a") as f:
-        f.write(json.dumps(dict(label="soak", ck_mhz=ck, ck_meas_mhz=ck_meas, passes=passes,
-                                errors=errors, missing=missing, tap=best, width=width,
-                                commit=commit(), time=time.strftime("%Y-%m-%dT%H:%M:%S%z"))) + "\n")
-    return 0 if errors == 0 and missing == 0 else 1
+def gateware_rev():
+    """Bitstream cache key: last commit touching the gateware, plus -dirty."""
+    sha = subprocess.run(["git", "log", "-1", "--format=%h", "--", "gateware/hyperram_baseline"],
+                         cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", "gateware/hyperram_baseline"],
+                           cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    return sha + ("-dirty" if dirty else "")
 
 
-def table():
+def sweep(args):
+    """Build what the cache lacks, then load and measure each CK in turn; one table."""
+    global RUN_ID
+    RUN_ID = time.strftime("%Y%m%d-%H%M%S")
+    rev = gateware_rev()
+
+    def cached(ck):
+        stamp = OUT / f"ck{ck:g}" / "gateware_rev"
+        return ((OUT / f"ck{ck:g}" / "top.bit").exists() and stamp.exists()
+                and stamp.read_text().strip() == rev)
+
+    stale = [ck for ck in args.ck if not cached(ck)]
+    say(f"sweep {RUN_ID}: gateware {rev}; CK {args.ck}; building {stale or 'nothing (cached)'}")
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for ck, ok in zip(stale, ex.map(build_one, stale)):
+            if not ok:
+                return 1
+            (OUT / f"ck{ck:g}" / "gateware_rev").write_text(rev + "\n")
+    args.quick = not args.bursts
+    rc = 0
+    for ck in args.ck:
+        if not configure(ck):
+            rc = 1
+            continue
+        rc |= measure(ck, args)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        table(RUN_ID)
+    out = OUT / f"sweep-{RUN_ID}.md"
+    out.write_text(buf.getvalue())
+    print(buf.getvalue())
+    say(f"sweep {RUN_ID} done: table {out}")
+    return rc
+
+
+def table(run_id=None):
     keep = {}
-    for line in RESULTS.read_text().splitlines():
-        r = json.loads(line)
+    rows = [json.loads(line) for line in RESULTS.read_text().splitlines()]
+    if run_id is None:
+        run_id = next((r.get("run_id") for r in reversed(rows) if r.get("run_id")), None)
+    for r in rows:
+        if r.get("run_id") != run_id:
+            continue
         if not r["label"].startswith(("tap", "case", "CR0", "cr0")):
             keep[(r["ck_mhz"], r["label"])] = r
     cks = sorted({k[0] for k in keep if (k[0], "read all") in keep})
-    print("| CK MHz | burst | write MB/s | read MB/s | write+read MB/s | read errors / words | "
-          "write+read errors / words | missing | neg control errors | pin rate MB/s | read % of pin | commit |")
-    print("|" + "---|" * 12)
+
+    def err(r):
+        return f"{r['errors']}" + (f" (bits {r['bad_bits']:#06x})" if r["errors"] else "")
+
+    print("| CK req MHz | CK meas MHz | burst | eye taps (step) | tap | write MB/s | read MB/s | "
+          "write+read MB/s | read errors | write+read errors | missing (r, w+r) | "
+          "xor ctl errors | stale-seed ctl errors | read % of pin (meas) | commit |")
+    print("|" + "---|" * 15)
     for ck in cks:
-        w, r, b, x = (keep[(ck, k)] for k in ("write all", "read all", "write+read", "neg control xor"))
-        print(f"| {ck:g} | {w['burst']} | {w['mb_s']:.1f} | {r['mb_s']:.1f} | {b['mb_s']:.1f} | "
-              f"{r['errors']} / {r['checked']} | {b['errors']} / {b['checked']} | "
-              f"{r['missing'] + b['missing']} | {x['errors']} / {x['checked']} | {2 * ck:g} | "
-              f"{100 * r['mb_s'] / (2 * ck):.1f} | {r['commit']} |")
+        w, r, b, x, s, e = (keep[(ck, k)] for k in (
+            "write all", "read all", "write+read", "neg control xor", "neg control stale seed",
+            "eye"))
+        meas = r["ck_meas_mhz"]
+        print(f"| {ck:g} | {meas:.4f} | {w['burst']} | {e['width']} ({e['step']}) | {e['tap']} | "
+              f"{w['mb_s']:.1f} | {r['mb_s']:.1f} | {b['mb_s']:.1f} | {err(r)} | {err(b)} | "
+              f"{r['missing']}, {b['missing']} | {x['errors']} | {s['errors']} | "
+              f"{100 * r['mb_s'] / (2 * meas):.1f} | {r['commit']} |")
+    print("\nWords per case: 4194304 (whole array); controls must equal it.\n")
+    for ck in cks:
+        e = keep[(ck, "eye")]
+        print(f"| {ck:g} | `" + "".join("." if n == 0 else "X" for _, n, _ in e["eye"]) + "` |")
     sizes = (16, 32, 64, 128, 256, 512)
     print()
     print("| CK MHz | " + " | ".join(f"burst {n} w / r MB/s" for n in sizes) + " |")
@@ -377,12 +413,11 @@ def main():
     pr.add_argument("--tap-step", type=int, default=4)
     pr.add_argument("--direction", type=int, default=0)
     pr.add_argument("--quick", action="store_true", help="skip the burst-length sweep")
-    ps = sub.add_parser("soak")
-    ps.add_argument("--ck", type=float, required=True)
-    ps.add_argument("--minutes", type=float, default=10.0)
-    ps.add_argument("--no-configure", action="store_true")
-    ps.add_argument("--tap-step", type=int, default=4)
-    ps.add_argument("--direction", type=int, default=0)
+    pw = sub.add_parser("sweep", help="every CK in one invocation: build cache, load, measure, table")
+    pw.add_argument("--ck", type=float, nargs="+", default=SWEEP_CK)
+    pw.add_argument("--tap-step", type=int, default=8)
+    pw.add_argument("--direction", type=int, default=0)
+    pw.add_argument("--bursts", action="store_true", help="add the burst-length sweep per CK")
     sub.add_parser("clocks")
     sub.add_parser("table", help="markdown tables from results.jsonl (last run per CK/case)")
     pc = sub.add_parser("case", help="one run on what is loaded: MODE:BURST:TOTAL[:START[:WAIT[:XOR]]] ...")
@@ -396,10 +431,8 @@ def main():
     if args.cmd == "clocks":
         print(reachable(50, 200))
         return 0
-    if args.cmd == "soak":
-        if not args.no_configure and not configure(args.ck):
-            return 1
-        return soak(args.ck, args)
+    if args.cmd == "sweep":
+        return sweep(args)
     if args.cmd == "table":
         return table()
     if args.cmd == "case":
