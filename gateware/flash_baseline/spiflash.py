@@ -301,6 +301,7 @@ class OpEngine(Elaboratable):
         self.busy_sum = Signal(32)
         self.busy_n = Signal(16)
         self.state = Signal(16)
+        self.seq = Signal(16)          # ops started since load: proves a result is this op's
         self.bitmap = Memory(shape=32, depth=BITMAP_WORDS, init=[])
         self.bitmap_rd = self.bitmap.read_port(domain="comb")   # read after `done`
 
@@ -373,6 +374,7 @@ class OpEngine(Elaboratable):
             with m.State("IDLE"):
                 with m.If(self.go):
                     m.d.sync += [self.done.eq(0), offset.eq(0), unit_addr.eq(self.addr),
+                                 self.seq.eq(self.seq + 1),
                                  gen_addr.eq(self.addr), chk_addr.eq(self.addr),
                                  wbyte_idx.eq(0), is_raw.eq(self.op == OP_RAW),
                                  checking.eq(self.op == OP_READ),

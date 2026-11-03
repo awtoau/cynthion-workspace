@@ -24,7 +24,7 @@ REG = dict(ID=1, GO=2, OP=3, DESC=4, MBYTE=5, ADDR=6, LENGTH=7, BURST=8, COUNT=9
            STATUS=32, CK_KHZ=33, PLL_DIV=34, CK_COUNT=35, RUN_CYCLES=36, BYTES=37, TXS=38,
            CHECKED=39, ERRORS=40, BAD_INDEX=41, BAD_GOT_WANT=42, BAD_BITS=43, RESULT=44,
            BUSY_MIN=45, BUSY_MAX=46, BUSY_SUM=47, BUSY_N=48, STATE=49, PHASE_POS=50,
-           BITMAP_DATA=51)
+           BITMAP_DATA=51, SEQ=52)
 
 # CK meter window: 2**19 cycles of the 60 MHz reference (8.74 ms).
 CK_WINDOW_BITS = 19
@@ -221,6 +221,6 @@ class FlashBaselineTop(Elaboratable):
         regs.add_read_only_register(REG["PLL_DIV"], read=pll.div)
         for name in ("RUN_CYCLES", "BYTES", "TXS", "CHECKED", "ERRORS", "BAD_INDEX",
                      "BAD_GOT_WANT", "BAD_BITS", "RESULT", "BUSY_MIN", "BUSY_MAX", "BUSY_SUM",
-                     "BUSY_N", "STATE"):
+                     "BUSY_N", "STATE", "SEQ"):
             regs.add_read_only_register(REG[name], read=getattr(eng, name.lower()))
         return m
