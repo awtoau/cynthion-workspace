@@ -54,7 +54,7 @@ Four lines to the FPGA, no peripheral, three mutually exclusive protocols depend
 
 A data line is not an interrupt source; the receiver's interrupt is (as the console 16550 is the source for USB CDC bytes, not the ULPI pins). Two ports, two sources. Existing pattern `SerialLine` → `StreamBuffer` → `Uart16550` → source; `SerialLine` drops onto an SBU pad unchanged.
 
-## The peripheral — [`gateware/soc/peripherals/sbu.py`](../gateware/soc/peripherals/sbu.py)
+## The peripheral — `gateware/soc/peripherals/sbu.py` (branch `park/sbu-swd`, not on main)
 
 One peripheral per port, one bidirectional pin pair, three modes selected by a register, sharing pads and tristate logic:
 
@@ -65,7 +65,7 @@ One peripheral per port, one bidirectional pin pair, three modes selected by a r
 | **2 swd** | `SWCLK`, always driven | `SWDIO`, turnaround per B4.2 | 52.5 MHz down to 25.6 kHz |
 
 - **Raw** captures every transition with the levels after it and how long the previous levels held; the FIFO reports overflow rather than dropping quietly. It is the fallback for protocols with no engine here.
-- **SWD** is the host side (Cynthion generates `SWCLK`), [#518](https://github.com/awtoau/cynthion-workspace/issues/518). Engine [`peripherals/swd.py`](../gateware/soc/peripherals/swd.py), from ARM IHI 0074E chapter B4 (document: [`sources/README.md`](../sources/README.md)).
+- **SWD** is the host side (Cynthion generates `SWCLK`), [#518](https://github.com/awtoau/cynthion-workspace/issues/518). Engine `peripherals/swd.py` (same branch), from ARM IHI 0074E chapter B4 (document: [`sources/README.md`](../sources/README.md)).
 - **Speed** is an index into a fixed table (OpenOCD `stlink_khz_to_speed_map_swd[]` is twelve `{kHz, divisor}` pairs; ST-Link V2 tops out at 4 MHz). Index 0 is **52.5 MHz**.
 - **`mode.swap`** corrects both reversal causes: flipped cable, and [#517](https://github.com/awtoau/cynthion-workspace/issues/517) row 9.
 
@@ -78,5 +78,5 @@ Bring-up:
 - **Read DPIDR and stop**: that SAMD11 is Apollo; halting it takes the board off USB.
 
 Verification:
-- Simulation only, no hardware yet: [`scripts/soc/swd_host_sim.py`](../scripts/soc/swd_host_sim.py) (37 checks; UNVERIFIED count) drives a spec-derived target model; [`scripts/soc/sbu_port_sim.py`](../scripts/soc/sbu_port_sim.py) (29 checks; UNVERIFIED count) runs both clock domains through the CSR bus.
+- Simulation only, no hardware yet: `scripts/soc/swd_host_sim.py` (37 checks; UNVERIFIED count) drives a spec-derived target model; `scripts/soc/sbu_port_sim.py` (29 checks; UNVERIFIED count) runs both clock domains through the CSR bus.
 - Still to settle on a board: that the round trip through two DPO2036 switches and a cable fits the 9.5 ns half period at index 0 ([#97](https://github.com/awtoau/cynthion-workspace/issues/97) proves DC only); a slower speed index is the fallback.

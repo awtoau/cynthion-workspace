@@ -588,7 +588,7 @@ issuable over JTAG, which is the port we already have.
 - Good copy: **398 pages**, 4,024,302 bytes; `pdftotext -layout` contains
   `sampling is performed on the rising edge of SWCLK` — chapter B4 is what a
   truncated copy loses first
-- Settles every timing and encoding decision in `gateware/soc/peripherals/swd.py`:
+- Settles every timing and encoding decision in `gateware/soc/peripherals/swd.py` (branch `park/sbu-swd`):
   B4.3.1 the target samples AND drives on the **rising** edge (the phrase
   "falling edge" does not appear in the document at all), B4.1.3 line turnaround,
   B4.1.5 LSB first, B4.1.6 even parity over the payload only with ACK excluded,

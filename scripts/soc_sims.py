@@ -81,8 +81,6 @@ SIMS = [
     "soc_jtag_stage_sim",
     "soc_jtag_registers_sim",
     "soc_board_sim",
-    "swd_host_sim",
-    "sbu_port_sim",
     "sideband_link_sim",
     "sideband_advertise_sim",
     "sideband_watchdog_sim",
