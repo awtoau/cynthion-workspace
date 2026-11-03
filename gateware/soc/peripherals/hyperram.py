@@ -104,10 +104,12 @@ class _Engine(Elaboratable):
     RESULTS = ("cycles", "words", "xacts", "checked", "errs", "bad_index",
                "bad_got_want", "missing")
 
-    def __init__(self, *, ck_mhz, pins, rd_port, wr_port, auto_calibrate, cal_words=CAL_WORDS):
+    def __init__(self, *, ck_mhz, pins, auto_calibrate, cal_words=CAL_WORDS):
         self.ck_mhz, self.pins = ck_mhz, pins
         self.cal_words, self.cal_base = cal_words, WORDS - cal_words
-        self.rd_port, self.wr_port = rd_port, wr_port
+        # the window's HyperRAM side: one address per cycle (true dual port), byte lanes
+        self.win_addr, self.win_rdata = Signal(10), Signal(32)
+        self.win_wdata, self.win_we = Signal(32), Signal(4)
         self.auto_calibrate = auto_calibrate
         self.max_burst = max_burst_words(ck_mhz)
         # command (static while `start` is pending), see HyperRAM
@@ -201,8 +203,7 @@ class _Engine(Elaboratable):
         rd_first, rd_valid, rd_half, rd_prev = Signal(), Signal(), Signal(), Signal(16)
         rd_issue = Signal()
         s += [rd_valid.eq(rd_issue), rd_half.eq(rd_q[0])]
-        m.d.comb += self.rd_port.addr.eq(rd_q[1:11])
-        entry = self.rd_port.data
+        entry = self.win_rdata
         win_word = Signal(16)          # bus order: [15:8] window byte 2q, [7:0] byte 2q+1
         m.d.comb += win_word.eq(Mux(rd_half, Cat(entry[24:32], entry[16:24]),
                                     Cat(entry[8:16], entry[0:8])))
@@ -257,13 +258,13 @@ class _Engine(Elaboratable):
         prev_b, prev_b_ok = Signal(8), Signal()
         so_lo, so_half = Signal(16), Signal()
         flush_now = Signal()
-        wp = self.wr_port
+        w_addr = Signal(10)
 
         def win_write(word_q, a_byte, b_byte, en_a, en_b):
             # window word q: byte 2q (A position) and 2q+1 (B position), little-endian entry
-            m.d.comb += [wp.addr.eq(word_q[1:11]),
-                         wp.data.eq(Cat(a_byte, b_byte, a_byte, b_byte)),
-                         wp.en.eq(Mux(word_q[0], Cat(Const(0, 2), en_a, en_b),
+            m.d.comb += [w_addr.eq(word_q[1:11]),
+                         self.win_wdata.eq(Cat(a_byte, b_byte, a_byte, b_byte)),
+                         self.win_we.eq(Mux(word_q[0], Cat(Const(0, 2), en_a, en_b),
                                       Cat(en_a, en_b, Const(0, 2))))]
 
         with m.If(core.rvalid):
@@ -569,7 +570,9 @@ class _Engine(Elaboratable):
                 s += self.ready.eq(0)
                 m.next = "WAIT_READY"
 
-        m.d.comb += self.busy.eq(op_live | cmd_pending)
+        # COPY_OUT reads the window for a whole op; every write is outside one
+        m.d.comb += [self.busy.eq(op_live | cmd_pending),
+                     self.win_addr.eq(Mux(rd_active, rd_q[1:11], w_addr))]
         return m
 
 
@@ -646,7 +649,9 @@ class HyperRAM(wiring.Component):
         for name, (offset, reg) in r.items():
             builder.add(name, reg, offset=offset)
         self._bridge = csr.Bridge(builder.as_memory_map())
-        self._win = memory.Memory(shape=32, depth=WINDOW_BYTES // 4, init=[])
+        # Four byte lanes, each a true-dual-port EBR: one address per side per cycle.
+        self._win = [memory.Memory(shape=8, depth=WINDOW_BYTES // 4, init=[])
+                     for _ in range(4)]
 
         super().__init__({
             "bus":    In(csr.Signature(addr_width=7, data_width=8)),
@@ -660,7 +665,7 @@ class HyperRAM(wiring.Component):
         })
         self.bus.memory_map = self._bridge.bus.memory_map
         wmap = MemoryMap(addr_width=12, data_width=8)
-        wmap.add_resource(name=("window",), size=WINDOW_BYTES, resource=self._win)
+        wmap.add_resource(name=("window",), size=WINDOW_BYTES, resource=self._win[0])
         self.window.memory_map = wmap
 
     def elaborate(self, platform):
@@ -691,20 +696,29 @@ class HyperRAM(wiring.Component):
         m.submodules.abort_ff = FFSynchronizer(abort_hold != 0, abort_hr, o_domain="hr")
 
         # ---- window: CPU port in sync, HyperRAM port in hr
-        m.submodules.win = win = self._win
-        cpu_rp = win.read_port(domain="sync")
-        cpu_wp = win.write_port(domain="sync", granularity=8)
-        hr_rp = win.read_port(domain="hr")
-        hr_wp = win.write_port(domain="hr", granularity=8)
         wb = self.window
-        m.d.comb += [cpu_rp.addr.eq(wb.adr), wb.dat_r.eq(cpu_rp.data),
-                     cpu_wp.addr.eq(wb.adr), cpu_wp.data.eq(wb.dat_w),
-                     cpu_wp.en.eq(wb.sel & (wb.cyc & wb.stb & wb.we).replicate(4))]
+        hr_side = []
+        for lane, mem in enumerate(self._win):
+            m.submodules[f"win{lane}"] = mem
+            cpu_wp = mem.write_port(domain="sync")
+            cpu_rp = mem.read_port(domain="sync", transparent_for=(cpu_wp,))
+            hr_wp = mem.write_port(domain="hr")
+            hr_rp = mem.read_port(domain="hr", transparent_for=(hr_wp,))
+            m.d.comb += [cpu_rp.addr.eq(wb.adr), cpu_wp.addr.eq(wb.adr),
+                         wb.dat_r[8 * lane:8 * lane + 8].eq(cpu_rp.data),
+                         cpu_wp.data.eq(wb.dat_w[8 * lane:8 * lane + 8]),
+                         cpu_wp.en.eq(wb.sel[lane] & wb.cyc & wb.stb & wb.we)]
+            hr_side.append((hr_rp, hr_wp))
         m.d.sync += wb.ack.eq(wb.cyc & wb.stb & ~wb.ack)
 
         # ---- engine
-        eng = _Engine(ck_mhz=self.ck_mhz, pins=self.pins, rd_port=hr_rp, wr_port=hr_wp,
+        eng = _Engine(ck_mhz=self.ck_mhz, pins=self.pins,
                       auto_calibrate=self.auto_calibrate, cal_words=self.cal_words)
+        for lane, (hr_rp, hr_wp) in enumerate(hr_side):
+            m.d.comb += [hr_rp.addr.eq(eng.win_addr), hr_wp.addr.eq(eng.win_addr),
+                         eng.win_rdata[8 * lane:8 * lane + 8].eq(hr_rp.data),
+                         hr_wp.data.eq(eng.win_wdata[8 * lane:8 * lane + 8]),
+                         hr_wp.en.eq(eng.win_we[lane])]
         m.submodules.engine = DomainRenamer("hr")(ResetInserter(abort_hr)(eng))
         m.d.comb += self.delay_tap.eq(eng.delay_tap)
         if not self.sim:
