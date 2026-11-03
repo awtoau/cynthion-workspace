@@ -46,7 +46,7 @@ script in `scripts/` is and whether anything still reaches it.
 - subdirectories: `hyperram/` `soc/` `riscv/` `fabric/` `apollo/` `sideband/` `issues/` `board/` `tools/` `diamond/`
 - scripts import each other by bare module name; `import _paths` puts every subdirectory on `sys.path`
 - a script in a subdirectory first inserts `scripts/` (its `ROOT / "scripts"` line), then imports `_paths`
-- `dev.py` finds a script by bare name (`script("hyperram_verify.py")`); `_paths.find_script(name)` does the same
+- `dev.py` finds a script by bare name (`script("soc_run.py")`); `_paths.find_script(name)` does the same
 
 No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See

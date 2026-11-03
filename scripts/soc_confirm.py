@@ -149,7 +149,7 @@ ENUMERATE_TICK_S = 0.05
 
 # The FIRST command after a boot is swallowed: the banner is held in the log ring
 # and flushed on the first received byte, so it interleaves with the echo. Two
-# asks, not one -- one ask scores a live board dead (see hyperram_pin_axis.py).
+# asks, not one -- one ask scores a live board dead.
 CONSOLE_ASKS = 2
 
 # How far confirmation can go, per bitstream. The caller says which, because
@@ -501,7 +501,7 @@ def prompt(link):
 
     Twice because the FIRST command after a boot is swallowed: the banner is held
     in the log ring and flushed on the first received byte, so it interleaves with
-    the echo. One ask scores a live board dead (`hyperram_pin_axis.py`).
+    the echo. One ask scores a live board dead.
     """
     reply = b""
     try:
@@ -851,7 +851,7 @@ def configure_and_confirm(bitstream, *, tries=3, node=None, expect="shell"):
     """Configure the FPGA and prove a design is running. 0 on success.
 
     THE ONE PATH. Per-script liveness gates were growing after each script got
-    bitten (`hyperram_pin_axis.py`), each with its own idea of what "alive" means.
+    bitten, each with its own idea of what "alive" means.
 
     Retries are for the retryable verdicts only -- JTAG contention and an unbound
     tty. A blank FPGA is retried too: it is the failure that a second configure

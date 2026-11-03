@@ -40,7 +40,7 @@ fails twice is a build that is failing.
 ## What it does NOT do
 
 Nothing here touches the board, so nothing here measures anything. It produces
-bitstreams; `hyperram_ck_sweep.py` and friends do the measuring.
+bitstreams; the board scripts do the measuring.
 """
 
 from __future__ import annotations

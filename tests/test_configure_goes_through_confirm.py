@@ -5,10 +5,9 @@
 
 """No script may invoke `apollo configure` without confirming a design came up.
 
-The gate was per-script, added each time a script got bitten -- `alive()` in
-`hyperram_pin_axis.py` was the only one, and every other path still trusted the
-exit code. `apollo configure` returns 0 with a blank FPGA (#360), so this fails
-when a new caller reaches the CLI directly.
+Every path that configures goes through `soc_confirm.configure_and_confirm`, because
+`apollo configure` returns 0 with a blank FPGA (#360); this fails when a new caller
+reaches the CLI directly.
 
 Structural, because nothing else can be: a board holds one state at a time, so
 no run can demonstrate that all the OTHER call sites are gated.
@@ -79,4 +78,4 @@ def test_every_configure_caller_states_which_confirmation_it_expects():
                                path.read_text()):
             calls += 1
             assert "expect=" in line, f"{path.name}: {line} does not say what it expects"
-    assert calls >= 8, f"only {calls} call sites found; the sweep is not working"
+    assert calls >= 7, f"only {calls} call sites found; the sweep is not working"

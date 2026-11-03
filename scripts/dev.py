@@ -75,13 +75,6 @@ def script(name: str) -> str:
 # the script offered, the mode was added to that script.
 # ---------------------------------------------------------------------------
 STEPS: dict[str, tuple[str, list[str], bool]] = {
-    # THE HyperRAM GATE. Liveness, then latency per CK rung, then the matrix
-    # twice and diffed -- in that order, because a sweep over an axis that does
-    # not reach the part produces rows that mean nothing (#334, #335). Needs a
-    # BIST bitstream on the board.
-    "hyperram-verify": ("verify the HyperRAM BIST rig end to end (needs the board)",
-                 [PY, script("hyperram_verify.py")], True),
-
     # No board needed: builds firmware, bootloader and gateware, compares the
     # bitstream against the firmware just built, then stops.
     "build": ("build firmware, bootloader and gateware (no hardware touched)",
@@ -273,7 +266,7 @@ def cmd_describe(_extra: list[str]) -> int:
                        "125": "step skipped (tool absent)", "other": "failure"},
         # Which commands reach the board, so an agent can tell what is safe to
         # run unattended from what needs hardware present.
-        "needs_hardware": ["board", "run", "console", "flash", "hyperram",
+        "needs_hardware": ["board", "run", "console", "flash",
                            "probe", "test-board", "fw", "stage", "capture",
                            "typec", "optlevel"],
         "commands": {
@@ -365,19 +358,6 @@ def cmd_optlevel(extra: list[str]) -> int:
     return run_tool([PY, script("opt_level_sweep.py")], extra)
 
 
-@command("the HyperRAM harnesses: what each measures, whether it ran, and run one",
-         args="[identify|regfuzz|ceiling|fifo|ladder|measure] "
-              "[-- args]",
-         kind="action")
-def cmd_hyperram(extra: list[str]) -> int:
-    """Bare `./dev.py hyperram` prints the inventory and touches nothing.
-
-    Named in `needs_hardware` because every harness configures the
-    FPGA, so `gate` and `ci` must never acquire it.
-    """
-    return run_tool([PY, script("hyperram_harnesses.py")], extra)
-
-
 @command("build area, timing and configuration in Postgres: status, report, graph",
          args="[status|record|report|graph|flush|show|sql|selftest|collect] "
               "[-- args]",
@@ -428,11 +408,11 @@ def cmd_pin_publish(extra: list[str]) -> int:
     return run_tool([PY, script("submodule_pin_publish.py")], extra)
 
 
-@command("worktree-check with the vendor model advisory: first step of the gate",
+@command("worktree-check: first step of the gate",
          kind="step")
 def cmd_worktree_gate(extra: list[str]) -> int:
-    """Submodules at their pins; a missing gitignored vendor model only warns (#375)."""
-    return run_tool([PY, script("worktree_setup.py"), "check", "--gate"], extra)
+    """Submodules at their pins (#375)."""
+    return run_tool([PY, script("worktree_setup.py"), "check"], extra)
 
 
 @command("make a fresh git worktree buildable: submodules, shared not copied",
