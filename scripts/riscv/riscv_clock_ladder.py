@@ -335,10 +335,10 @@ def main():
 
     rungs, refused = [], []
     for mhz in args.sync:
-        (rungs if clocks.solve_pll(mhz, clocks.USB_PHY_MHZ) else refused
+        (rungs if clocks.solve_pll(float(variant.value('CYNTHION_HYPERRAM_CK_MHZ')), mhz) else refused
          ).append(mhz)
     for mhz in refused:
-        near = clocks.reachable(mhz - 8, mhz + 8, clocks.USB_PHY_MHZ)
+        near = clocks.reachable(mhz - 8, mhz + 8, float(variant.value('CYNTHION_HYPERRAM_CK_MHZ')))
         say(f"SYNC {mhz:g}: no exact PLL solution from the 60 MHz oscillator. "
             f"Reachable nearby: {near}")
 

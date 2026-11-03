@@ -582,12 +582,15 @@ class HyperRAM(wiring.Component):
     `stream_*` (sync) is the #580 ring client; `pair_*` (sync) the JTAG stager's
     write port. Tie off when unused. `sim=True` drops the PLL and PHY: the bench
     drives `hr`, `usb`, `sim_locked`, the PinIntent `pins` and reads `delay_tap`.
+    `ext_clocks=True`: `hr`/`hr90` come from `clocks.SocClocks` and `ext_locked` is its LOCK.
     """
 
     def __init__(self, *, ck_mhz=CK_MHZ, sync_mhz=60.0, sim=False,
                  ck_window_bits=CK_WINDOW_BITS, auto_calibrate=True, cal_words=CAL_WORDS, pll_lock_s=PLL_LOCK_S,
-                 sim_fast_delay=False):
+                 sim_fast_delay=False, ext_clocks=False):
         self.ck_mhz, self.sync_mhz, self.sim = float(ck_mhz), float(sync_mhz), sim
+        self.ext_clocks = ext_clocks
+        self.ext_locked = Signal()
         self.cal_words, self.pll_lock_s = cal_words, pll_lock_s
         self.sim_fast_delay = sim_fast_delay
         self.ck_window_bits, self.auto_calibrate = ck_window_bits, auto_calibrate
@@ -681,6 +684,8 @@ class HyperRAM(wiring.Component):
         locked = Signal()
         if self.sim:
             m.d.comb += locked.eq(self.sim_locked)
+        elif self.ext_clocks:
+            m.d.comb += locked.eq(self.ext_locked)
         else:
             m.submodules.pll = pll = BaselinePLL(domain="hr", mhz=self.ck_mhz,
                                                  clki=ClockSignal("usb"),

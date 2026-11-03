@@ -1,57 +1,17 @@
 #!/usr/bin/env python3
 #
-# `usb` from the oscillator so the CPU clock stops being hostage to it.
+# `usb` from the oscillator; `sync` and the HyperRAM clocks from one PLL.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""SoC clock domains, with the USB PHY on the oscillator rather than a PLL.
+"""SoC clock domains. Two PLLs on this die (docs/chips/ecp5/lfe5u-12f.md):
 
-## The problem this removes
-
-`VariableClockDomainGenerator` solves `sync` and `usb` from ONE PLL. Both divide
-one VCO, so making `usb` land on exactly 60.000 MHz constrains `sync` too --
-across 60..130 MHz only **60, 100 and 120** satisfy both. That is the origin of
-"the CPU can only run at three frequencies", and it is a property of the
-topology, not of the part.
-
-The 0.5% tolerance it enforces on `usb` is not paranoia. A 90 MHz `sync` build
-put `usb` at 63.000 MHz, placed and configured cleanly, and never appeared on the
-USB bus -- while a *higher* 100 MHz build with `usb` at exactly 60.000 enumerated
-at once. A source-synchronous parallel interface has no mechanism to absorb a
-frequency error, and the failure looks exactly like a design that missed timing.
-
-## Why it does not have to exist
-
-**The board's primary clock is a discrete 60 MHz oscillator on A8, and the FPGA
-SOURCES the ULPI clock** -- `clk_dir='o'` on all three PHY resources in
-`cynthion_r1_4.py`. So `usb` can be that oscillator passed straight through:
-exactly 60.000 MHz by construction, with less jitter than a PLL copy, and no
-tolerance left to check.
-
-`sync` is then free, within the PLL's own specification. From a 60 MHz reference
-**13 integer frequencies between 63 and 130 MHz are reachable in spec**:
-
-    70  72  75  80  84  90  96  100  105  108  110  120  130
-
-That is 13 rather than 68 because of `PFD_MIN_MHZ` below, and the difference is
-the point: the other 55 are reachable only by dividing the reference below the
-phase detector's minimum, where the datasheet stops guaranteeing jitter. A
-solver that offered them would be offering configurations that build and then
-misbehave as noise.
-
-13 is four times what sharing a VCO with the USB PHY allows, and the constraint
-is the PLL's published limit rather than an accident of that sharing.
-
-60 MHz appears in this file exactly once, as the USB PHY's requirement. It is
-not the CPU's number and never was.
-
-## What this does NOT do
-
-It does not clock the HyperRAM: that is the second PLL, inside
-`peripherals/hyperram.py`, off the same oscillator. `fast` here is still a second
-output of the SAME PLL as `sync`: the flash PHY runs its logic in that domain.
-
-`fast` is CLKOS and not CLKOS2, which is not interchangeable -- see `elaborate`.
-
+- PLL A (here): CLKOP `hr` (feedback), CLKOS `hr90` (+90 degrees), CLKOS2 `sync`. One VCO,
+  so `sync` must divide it: at HyperRAM CK 180 the VCO is 720 MHz and `sync` 60 = /12.
+- PLL B: the config flash (`peripherals/flash.py`, SCK 190 MHz, runtime capture phase),
+  #593. 190 shares no VCO with 60 or 180 in 400-800 MHz, so it needs its own PLL.
+- `usb` IS the 60 MHz oscillator (A8): the FPGA sources the ULPI clock, so `usb` is exact
+  by construction and no PLL constrains it.
+- Phase detector >= 10 MHz (`PFD_MIN_MHZ`, DS-02012 Table 3.23 note 3): CLKI_DIV <= 6.
 """
 
 import os
@@ -59,359 +19,148 @@ import os
 from amaranth import (ClockDomain, ClockSignal, Elaboratable, Instance, Module,
                       ResetSignal, Signal)
 
-__all__ = ["SocClocks", "solve_pll", "reachable"]
+__all__ = ["SocClocks", "solve_pll", "reachable", "phase_params"]
 
-# EHXPLLL limits. The VCO window is the binding one; the divider ranges are wide
-# enough that they rarely are.
 VCO_MIN_MHZ = 400.0
 VCO_MAX_MHZ = 800.0
 DIV_MAX = 128
-
-# Phase-detector minimum, datasheet FPGA-DS-02012 Table 3.23. `CLKI / CLKI_DIV`
-# must stay at or above this.
-#
-# NOT optional, and it is easy to violate without noticing: the solver will
-# happily divide a 60 MHz reference by 60 to reach an awkward target, giving a
-# 1 MHz phase detector. That configuration builds, and the datasheet's note 3
-# says the jitter figures are simply not guaranteed there -- so it fails, if it
-# fails, as noise rather than as a refusal.
-#
-# Measured before this check existed: 55 of the 68 integer frequencies from 63
-# to 130 MHz were reachable only by breaking it.
 PFD_MIN_MHZ = 10.0
-
-# The ULPI PHY's requirement, and the only reason this number appears here.
 USB_PHY_MHZ = 60.0
 
-# What the FABRIC has been observed to close at, as distinct from what the PLL
-# can produce. The two are different questions and only one of them was being
-# asked.
-#
-# `solve_pll` will happily return dividers for 130 MHz. The design's own recorded
-# timing says the fabric will not follow: an 8 ns bus path, and the BTB closing
-# at 57.55 MHz unrelaxed. So a build could be requested that is guaranteed to
-# fail place-and-route, and the only signal was a synthesis run 90-120 s later
-# with a message about a net rather than about the request.
-#
-# 90 MHz is deliberately generous against the ~65-79 MHz this design has actually
-# measured across placements -- the point is to refuse the absurd, not to
-# second-guess a build that might close.
-#
-# `CYNTHION_SYNC_CEILING_MHZ` raises it, because the ceiling is a measurement of
-# one design at one moment and asking what the DIE does past what nextpnr
-# predicts is a legitimate experiment (#470). Not in `VARIANT_ENV`: it permits a
-# build, it does not change what is elaborated at a given `sync`.
-#
-# Same class as the `fPFD` floor above: the solver knows something the caller
-# does not, and staying silent about it costs a build.
+# What the fabric has closed at, as distinct from what the PLL can produce: a request above
+# it is refused before a two-minute build. `CYNTHION_SYNC_CEILING_MHZ` raises it (#470).
 SYNC_CEILING_MHZ = float(os.environ.get("CYNTHION_SYNC_CEILING_MHZ") or 90.0)
 
-# How long RESETB is held low, in `usb` cycles. The USB334x datasheet Rev 1.2
-# section 5.6.2: cycling RESETB resets the ULPI registers to their defaults and
-# every internal state machine, "by bringing the pin low for a minimum of 1
-# microsecond and then high". 128 cycles is 2.133 us at 60.000 MHz -- twice the
-# minimum, and this clock is the oscillator rather than a PLL output, so the
-# figure is exact rather than rounded.
+# USB334x datasheet rev 1.2: RESETB low >= 1 us (5.6.2); 128 cycles = 2.133 us.
 PHY_PAD_RESET_CYCLES = 128
-
-# How long after RESETB is released before the PHY may be spoken to, in `usb`
-# cycles. TPREP is 1.0..1.2 ms with a 60 MHz REFCLK and LPM disabled (Table 4.3),
-# measured from REFCLK and RESETB both valid to the PHY de-asserting DIR. Until
-# then the bus is not the link's to drive. 72000 cycles is exactly 1.200 ms at
-# 60.000 MHz, which is the specified maximum and not a guess about the typical.
-#
-# Both constants are used twice: here for the power-on sequence, and in
-# `peripherals/ulpi_window.py` for the CSR-driven one. One definition, because a
-# datasheet number copied is a datasheet number that will diverge.
+# TPREP 1.0..1.2 ms (Table 4.3); 72000 cycles = the 1.2 ms maximum. Also used by
+# `peripherals/ulpi_window.py`.
 PHY_PREP_CYCLES = 72_000
 
 
-def solve_pll(target_mhz, input_mhz=60.0, *, ratio=None, tolerance=1e-6):
-    """Dividers for `target_mhz` on CLKOP and `ratio * target` on CLKOS.
+def solve_pll(hr_mhz, sync_mhz, input_mhz=USB_PHY_MHZ, *, tolerance=1e-6):
+    """`(vco, clki_div, clkfb_div, hr_div, sync_div)` or None.
 
-    `FEEDBK_PATH="CLKOP"` means the feedback is taken AFTER the output divider,
-    so CLKOP is `input / CLKI_DIV * CLKFB_DIV` and the VCO is that times
-    CLKOP_DIV. All four outputs divide the one VCO, which is why `ratio` is a
-    property of the pair and not a free choice per output.
-
-    CLKOS rather than CLKOS2 for `fast`: only CLKOP and CLKOS reach an edge
-    clock. See `SocClocks.elaborate` and #314.
-
-    **CLKOS2 is not solved for and does not move the VCO.** `SocClocks` divides
-    whatever VCO this returns; see `swd_mhz` there.
-
-    Returns `(vco, clki_div, clkfb_div, clkop_div, clkos_div)` or None.
-    `clkos_div` is None when no ratio was asked for.
+    CLKOP = `hr` closes the loop, so `hr = input / CLKI_DIV * CLKFB_DIV` and the VCO is
+    `hr * hr_div`. The largest `hr_div` in the VCO window wins (finest static phase, and the
+    720 MHz VCO #588 ran on at CK 180); `sync` must divide that VCO exactly.
     """
     for clki_div in range(1, DIV_MAX + 1):
-        # The phase detector sees the divided reference, and it has a floor.
         if input_mhz / clki_div < PFD_MIN_MHZ:
             break
         for clkfb_div in range(1, DIV_MAX + 1):
-            if abs(input_mhz / clki_div * clkfb_div - target_mhz) > tolerance:
+            if abs(input_mhz / clki_div * clkfb_div - hr_mhz) > tolerance:
                 continue
-            for clkop_div in range(1, DIV_MAX + 1):
-                vco = target_mhz * clkop_div
+            for hr_div in range(DIV_MAX, 0, -1):
+                vco = hr_mhz * hr_div
                 if not (VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ):
                     continue
-                # The second output is the same VCO divided again, so the ratio
-                # is only reachable when it divides CLKOP_DIV exactly. SKIPPED,
-                # not rounded: the search moves to a larger CLKOP_DIV, and if
-                # none fits the VCO window `SocClocks` refuses with the reachable
-                # list. A rounded `fast` corrupts DDR data rather than failing.
-                if ratio is not None and clkop_div % ratio:
-                    continue
-                return (vco, clki_div, clkfb_div, clkop_div,
-                        None if ratio is None else clkop_div // ratio)
+                sync_div = round(vco / sync_mhz)
+                if 1 <= sync_div <= DIV_MAX and abs(vco / sync_div - sync_mhz) <= tolerance:
+                    return vco, clki_div, clkfb_div, hr_div, sync_div
     return None
 
 
-def reachable(low, high, input_mhz=60.0, *, ratio=None):
-    """Every frequency in `low..high` this generator can actually produce."""
-    return sorted({round(input_mhz / ki * kfb, 6)
-                   for ki in range(1, DIV_MAX + 1)
-                   for kfb in range(1, DIV_MAX + 1)
-                   if low <= input_mhz / ki * kfb <= high
-                   and solve_pll(input_mhz / ki * kfb, input_mhz,
-                                 ratio=ratio) is not None})
+def reachable(low, high, hr_mhz, input_mhz=USB_PHY_MHZ):
+    """Every `sync` in `low..high` reachable beside HyperRAM CK `hr_mhz`."""
+    out = set()
+    for hr_div in range(1, DIV_MAX + 1):
+        vco = hr_mhz * hr_div
+        if not (VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ):
+            continue
+        for d in range(1, DIV_MAX + 1):
+            f = vco / d
+            if low <= f <= high and solve_pll(hr_mhz, f, input_mhz) is not None:
+                out.add(round(f, 6))
+    return sorted(out)
+
+
+def phase_params(div, degrees):
+    """CPHASE/FPHASE for a static shift (prjtrellis `ecppll`: VCO steps of 1/8)."""
+    count = degrees / 360.0 * div
+    coarse = int(count)
+    fine = int(round((count - coarse) * 8))
+    if fine == 8:
+        coarse, fine = coarse + 1, 0
+    return div - 1 + coarse, fine
 
 
 class SocClocks(Elaboratable):
-    """`usb` straight off the oscillator, `sync` (and optionally `fast`) on PLL0.
+    """`usb` off the oscillator; `sync`, `hr`, `hr90` on PLL A.
 
-    Parameters
-    ----------
-    sync_mhz : float
-        The CPU clock. Free -- not tied to the PHY's 60 MHz.
-    with_fast : bool
-        Build the `fast` domain. Needed by the flash PHY; nothing else reads it.
-    fast_ratio : int
-        `fast = fast_ratio * sync`, and it must be an integer because both come
-        from one VCO.
-    swd_mhz : float or None
-        Build the `swd` domain on CLKOS2, for `peripherals/sbu.py`. It divides
-        the VCO that `sync` and `fast` already placed and never moves it, so a
-        rate that is not an exact division is refused rather than rounded.
-        105.000 MHz is CLKOS2_DIV = 4 of the shipping 420 MHz VCO.
-    input_mhz : float
-        The board oscillator. 60 MHz on this board, and `usb` IS it.
+    `hr_mhz` is the HyperRAM CK (`peripherals/hyperram.py` takes these domains with
+    `ext_clocks=True`). `locked` is PLL A's LOCK; every domain on it is reset until lock.
     """
 
-    def __init__(self, *, sync_mhz, with_fast=False, fast_ratio=2,
-                 swd_mhz=None, input_mhz=USB_PHY_MHZ,
+    def __init__(self, *, sync_mhz, hr_mhz, input_mhz=USB_PHY_MHZ,
                  ceiling_mhz=SYNC_CEILING_MHZ):
-        # Refused HERE, before a solve that would succeed and a synthesis that
-        # would not. The PLL reaching a frequency says nothing about the fabric
-        # closing at it, and until this existed the two were conflated: an
-        # out-of-reach request produced a place-and-route failure two minutes
-        # later, reported as a message about a net.
         if ceiling_mhz is not None and sync_mhz > ceiling_mhz:
             raise ValueError(
-                f"sync = {sync_mhz:g} MHz is above the {ceiling_mhz:g} MHz this "
-                f"fabric has been observed to close at. The PLL can produce it; "
-                f"place-and-route is not expected to, and the failure would "
-                f"arrive ~2 minutes from now as a message about a net rather "
-                f"than about this number. Measured on this design: 64.5-79.4 MHz "
-                f"across placements. Pass `ceiling_mhz=` to try anyway, or "
-                f"`ceiling_mhz=None` to disable the check.")
-
-        self.sync_mhz = sync_mhz
-        self.with_fast = with_fast
-        self.fast_ratio = fast_ratio
-        self.swd_mhz = swd_mhz
-        self.input_mhz = input_mhz
-
+                f"sync = {sync_mhz:g} MHz is above the {ceiling_mhz:g} MHz this fabric has "
+                f"been observed to close at; pass `ceiling_mhz=` (or "
+                f"CYNTHION_SYNC_CEILING_MHZ) to try anyway.")
         if abs(input_mhz - USB_PHY_MHZ) > 1e-9:
-            raise ValueError(
-                f"`usb` is the {input_mhz:g} MHz oscillator passed through, and "
-                f"the ULPI PHY needs exactly {USB_PHY_MHZ:g} MHz. A board with a "
-                f"different oscillator needs a PLL output for `usb`, and this "
-                f"class is the wrong one for it.")
-
-        solved = solve_pll(sync_mhz, input_mhz,
-                           ratio=fast_ratio if with_fast else None)
+            raise ValueError(f"`usb` is the oscillator and the ULPI PHY needs exactly "
+                             f"{USB_PHY_MHZ:g} MHz, not {input_mhz:g}")
+        solved = solve_pll(hr_mhz, sync_mhz, input_mhz)
         if solved is None:
-            nearby = [f for f in reachable(sync_mhz - 10, sync_mhz + 10,
-                                           input_mhz,
-                                           ratio=fast_ratio if with_fast else None)]
+            near = reachable(sync_mhz - 15, sync_mhz + 15, hr_mhz, input_mhz)
             raise ValueError(
-                f"no PLL configuration gives sync = {sync_mhz:g} MHz"
-                + (f" with fast = {fast_ratio}x it" if with_fast else "")
-                + f"; the VCO must land in {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz. "
-                + (f"Reachable nearby: {[round(f, 3) for f in nearby]}"
-                   if nearby else "Nothing nearby is reachable either."))
-
-        (self.vco_mhz, self.clki_div, self.clkfb_div,
-         self.clkop_div, self.clkos_div) = solved
-
-        # CLKOS2, the third output of the SAME VCO. It takes the VCO as it is
-        # rather than constraining it: `sync` and `fast` are already placed, and
-        # a request that would move the VCO is refused here with what this one
-        # can produce. On the shipping configuration the VCO is 420 MHz, so
-        # CLKOS2_DIV = 4 is 105.000 MHz, exactly.
-        self.clkos2_div = None
-        if swd_mhz is not None:
-            self.clkos2_div = next(
-                (d for d in range(1, DIV_MAX + 1)
-                 if abs(self.vco_mhz / d - swd_mhz) <= 1e-6), None)
-            if self.clkos2_div is None:
-                near = sorted({round(self.vco_mhz / d, 4)
-                               for d in range(1, DIV_MAX + 1)
-                               if 0.5 * swd_mhz <= self.vco_mhz / d
-                               <= 2.0 * swd_mhz})
-                raise ValueError(
-                    f"swd = {swd_mhz:g} MHz is not this VCO divided by an "
-                    f"integer. The VCO is {self.vco_mhz:g} MHz, placed by "
-                    f"sync = {sync_mhz:g}"
-                    + (f" and fast = {fast_ratio}x it" if with_fast else "")
-                    + f". CLKOS2 can produce: {near}")
-
-        # The solver's own invariant, restated where the division is USED. A
-        # `fast` at half of what the gearing expects builds cleanly and returns
-        # wrong data, so this must never be reached by a later edit to `solve_pll`.
-        if with_fast and self.clkop_div % fast_ratio:
-            raise ValueError(
-                f"CLKOP_DIV = {self.clkop_div} is not divisible by "
-                f"fast_ratio = {fast_ratio}; CLKOS divides the same VCO and "
-                f"cannot reach {fast_ratio}x sync from it.")
-
-        # What the hardware will ACTUALLY produce, recomputed from the dividers
-        # rather than echoed from the request. The firmware reports these and the
-        # console baud divisor is derived from `actual_sync_mhz`, so a generator
-        # that returned the requested value would make a rounded clock present as
-        # a mangled console rather than as a wrong number.
-        #
-        # `solve_pll` only accepts an exact match, so today these equal what was
-        # asked for. They are computed anyway: the day that solver learns to
-        # approximate, everything downstream is already reading the truth.
-        self.actual_sync_mhz = input_mhz / self.clki_div * self.clkfb_div
-        self.actual_fast_mhz = (self.vco_mhz / self.clkos_div
-                                if self.clkos_div else None)
-        self.actual_swd_mhz = (self.vco_mhz / self.clkos2_div
-                               if self.clkos2_div else None)
-
-        # `usb` IS the oscillator. Not a PLL output, so there is nothing to
-        # round: it is the input frequency, exactly, by construction.
+                f"no PLL gives sync = {sync_mhz:g} MHz beside HyperRAM CK {hr_mhz:g} MHz "
+                f"(one VCO, {VCO_MIN_MHZ:g}..{VCO_MAX_MHZ:g} MHz). Reachable sync: {near}")
+        self.sync_mhz, self.hr_mhz, self.input_mhz = sync_mhz, hr_mhz, input_mhz
+        (self.vco_mhz, self.clki_div, self.clkfb_div, self.hr_div, self.sync_div) = solved
+        # Recomputed from the dividers, not echoed from the request.
+        self.actual_hr_mhz = input_mhz / self.clki_div * self.clkfb_div
+        self.actual_sync_mhz = self.vco_mhz / self.sync_div
         self.actual_usb_mhz = input_mhz
-
-        # The PLL's LOCK, brought out so something can SEE it. It has existed in
-        # every generator here and never left the module: a PLL that failed to
-        # lock could only be inferred from its consequences, which is how an
-        # unconnected CLKFB cost a two-rebuild bisect.
         self.locked = Signal()
-
-        # The ULPI PHYs' reset pad, active high here and inverted at the pin.
-        # Brought out so `top.py` can OR it with the CSR-driven reset without
-        # either of them owning the pad alone. See `elaborate` for the two
-        # durations and where they come from.
+        # ULPI PHY reset pad (active high here); `top.py` ORs it with the CSR reset.
         self.phy_reset = Signal()
-        # Asserted once the power-on sequence has finished and the PHYs have had
-        # their preparation time. `usb`'s reset is its inverse.
         self.phy_ready = Signal()
 
     def elaborate(self, platform):
         m = Module()
-
         m.domains.usb = ClockDomain()
         m.domains.sync = ClockDomain()
-        if self.with_fast:
-            m.domains.fast = ClockDomain()
-        if self.swd_mhz:
-            m.domains.swd = ClockDomain()
-
-        # The domain the power-on reset itself lives in. It is `usb`'s clock with
-        # no reset, and it has to be: a counter that releases `usb`'s reset
-        # cannot be held by that same reset, or it never counts and the release
-        # never comes.
+        m.domains.hr = ClockDomain()
+        m.domains.hr90 = ClockDomain()
+        # The power-on counter that releases `usb` cannot be held by `usb`'s own reset.
         m.domains.usb_por = ClockDomain(reset_less=True)
 
         osc = Signal()
         if platform is not None:
             m.d.comb += osc.eq(platform.request("clk_60MHz", 0).i)
 
-        clk_sync = Signal()
-        clk_fast = Signal()
-        clk_swd = Signal()
-        locked = Signal()
-
+        clk_hr, clk_hr90, clk_sync, locked = Signal(), Signal(), Signal(), Signal()
+        cph90, fph90 = phase_params(self.hr_div, 90.0)
         m.submodules.pll = Instance(
             "EHXPLLL",
             a_ICP_CURRENT="12", a_LPF_RESISTOR="8",
             a_MFG_ENABLE_FILTEROPAMP="1", a_MFG_GMCREF_SEL="2",
-            # PINNED, and only when there is an edge clock to lose. X2/Y49 is the
-            # one PLL bel on the left ECLK mux, so a placer that swaps this
-            # design's PLLs silently drops `fast` back onto fabric with no error.
-            # Two PLLs both wanting an ECLK cannot coexist: nextpnr then refuses
-            # the bel outright, which is the loud failure and the intended one.
-            **({"a_BEL": "X2/Y49/EHXPLL_LL"} if self.with_fast else {}),
             p_PLLRST_ENA="DISABLED", p_INTFB_WAKE="DISABLED",
             p_STDBY_ENABLE="DISABLED", p_DPHASE_SOURCE="DISABLED",
             p_OUTDIVIDER_MUXA="DIVA", p_OUTDIVIDER_MUXB="DIVB",
             p_OUTDIVIDER_MUXC="DIVC", p_OUTDIVIDER_MUXD="DIVD",
-            p_CLKI_DIV=self.clki_div,
-            p_CLKFB_DIV=self.clkfb_div,
-            p_FEEDBK_PATH="CLKOP",
-            p_CLKOP_ENABLE="ENABLED",
-            p_CLKOP_DIV=self.clkop_div,
-            p_CLKOP_CPHASE=self.clkop_div - 1,
-            p_CLKOP_FPHASE=0,
-            # CLKOS, NOT CLKOS2 -- the edge-clock network cannot see CLKOS2.
-            # The bank ECLK mux takes CLKOP/CLKOS from either left PLL, four
-            # clock pads and two fabric taps; CLKOS2/CLKOS3 are primary-network
-            # only, so an ECLK from CLKOS2 arrives through the fabric tap with
-            # skew nobody bounded, announced as `log_info` and not a warning.
-            # #314
-            **({"p_CLKOS_ENABLE": "ENABLED",
-                "p_CLKOS_DIV": self.clkos_div,
-                "p_CLKOS_CPHASE": self.clkos_div - 1,
-                "p_CLKOS_FPHASE": 0} if self.with_fast else {}),
-            # CLKOS2 is the primary network only, which is all `swd` needs: its
-            # fast path is an output register, not an edge clock. Taking it here
-            # costs no bel -- one VCO already feeds CLKOP and CLKOS, and these
-            # are the third and fourth outputs of the same PLL.
-            **({"p_CLKOS2_ENABLE": "ENABLED",
-                "p_CLKOS2_DIV": self.clkos2_div,
-                "p_CLKOS2_CPHASE": self.clkos2_div - 1,
-                "p_CLKOS2_FPHASE": 0} if self.swd_mhz else {}),
+            p_CLKI_DIV=self.clki_div, p_CLKFB_DIV=self.clkfb_div, p_FEEDBK_PATH="CLKOP",
+            p_CLKOP_ENABLE="ENABLED", p_CLKOP_DIV=self.hr_div,
+            p_CLKOP_CPHASE=self.hr_div - 1, p_CLKOP_FPHASE=0,
+            p_CLKOS_ENABLE="ENABLED", p_CLKOS_DIV=self.hr_div,
+            p_CLKOS_CPHASE=cph90, p_CLKOS_FPHASE=fph90,
+            p_CLKOS2_ENABLE="ENABLED", p_CLKOS2_DIV=self.sync_div,
+            p_CLKOS2_CPHASE=self.sync_div - 1, p_CLKOS2_FPHASE=0,
             i_CLKI=osc,
-            # THE FEEDBACK. `FEEDBK_PATH="CLKOP"` means the loop is closed
-            # through the CLKOP output, so CLKFB must be driven from it. Leaving
-            # it unconnected opens the loop: the PLL never locks, `sync` is held
-            # in reset for ever by the line below, and the design configures
-            # cleanly and does nothing. It cost a bisect to find, because a
-            # bitstream that builds and loads but never runs looks like a
-            # timing failure or a bad frequency rather than a missing wire.
-            i_CLKFB=clk_sync,
+            # FEEDBK_PATH CLKOP: CLKFB must be CLKOP, or the loop is open and never locks.
+            i_CLKFB=clk_hr,
             i_RST=0, i_STDBY=0, i_PHASESEL0=0, i_PHASESEL1=0,
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
-            o_CLKOP=clk_sync,
-            **({"o_CLKOS": clk_fast} if self.with_fast else {}),
-            **({"o_CLKOS2": clk_swd} if self.swd_mhz else {}),
-            o_LOCK=locked,
-        )
+            o_CLKOP=clk_hr, o_CLKOS=clk_hr90, o_CLKOS2=clk_sync, o_LOCK=locked)
         m.d.comb += self.locked.eq(locked)
 
-        # ---- the ULPI PHYs' power-on reset ----------------------------------
-        #
-        # `usb` does not wait for the PLL. It is the oscillator, running before
-        # the PLL is asked for anything, and holding it until an unrelated PLL
-        # locks would reinvent the dependency this topology removes. But it must
-        # not be tied to 0 either: `usb`'s reset is the ONLY reset the three
-        # USB3343s have. Two of the three pads are driven from it -- `top.py`
-        # for TARGET, and LUNA's `UTMITranslator` for AUX -- and all three
-        # declare `rst_invert=True`, so a constant 0 leaves them permanently
-        # de-asserted. Cold power-up survives that on the PHY's own internal POR;
-        # warm reconfiguration does not, because reflashing does not power-cycle
-        # the part, and a PHY carrying a stuck bus turn from the previous
-        # bitstream keeps it.
-        #
-        # The pad pulses low for `PHY_PAD_RESET_CYCLES`, then the FPGA side stays
-        # in reset for the whole of TPREP: everything in `usb` starts on a PHY
-        # that has finished coming up, rather than racing it. On expiry the
-        # domain runs for the rest of the session -- this is a power-on reset,
-        # not a watchdog, and the way back afterwards is the CSR in
-        # `peripherals/ulpi_window.py`.
+        # ULPI PHY power-on reset: pad low PHY_PAD_RESET_CYCLES, then `usb` held through
+        # TPREP. `usb` does not wait for the PLL; warm reconfiguration does not power-cycle
+        # the PHYs, so this pulse is their only reset.
         settled = PHY_PAD_RESET_CYCLES + PHY_PREP_CYCLES
         por = Signal(range(settled + 1))
         with m.If(por != settled):
@@ -419,35 +168,36 @@ class SocClocks(Elaboratable):
         m.d.comb += [
             self.phy_reset.eq(por < PHY_PAD_RESET_CYCLES),
             self.phy_ready.eq(por == settled),
-        ]
-
-        m.d.comb += [
             ClockSignal("usb_por").eq(osc),
             ClockSignal("usb").eq(osc),
-            ClockSignal("sync").eq(clk_sync),
-
-            # `sync` waits for lock; a domain clocked by an unlocked PLL sees a
-            # frequency that drifts as it settles.
-            ResetSignal("sync").eq(~locked),
-
             ResetSignal("usb").eq(~self.phy_ready),
+            ClockSignal("sync").eq(clk_sync),
+            ClockSignal("hr").eq(clk_hr),
+            ClockSignal("hr90").eq(clk_hr90),
         ]
-        if self.with_fast:
-            m.d.comb += [ClockSignal("fast").eq(clk_fast),
-                         ResetSignal("fast").eq(~locked)]
-        if self.swd_mhz:
-            m.d.comb += [ClockSignal("swd").eq(clk_swd),
-                         ResetSignal("swd").eq(~locked)]
+        # LOCK is asynchronous to every domain it resets: synchronised per domain.
+        for name in ("sync", "hr", "hr90"):
+            lock_d = Signal(name=f"lock_{name}")
+            m.submodules[f"lock_{name}_ff"] = _LockSync(locked, lock_d, name)
+            m.d.comb += ResetSignal(name).eq(~lock_d)
 
-        # TELL THE PLACER. Without a constraint nextpnr times a domain against a
-        # default and prints a PASS about a frequency nobody chose -- which has
-        # already happened once in this tree, on a domain whose PLL was dead.
         if platform is not None:
-            platform.add_clock_constraint(clk_sync, self.sync_mhz * 1e6)
-            if self.with_fast:
-                platform.add_clock_constraint(
-                    clk_fast, self.fast_ratio * self.sync_mhz * 1e6)
-            if self.swd_mhz:
-                platform.add_clock_constraint(clk_swd, self.swd_mhz * 1e6)
+            platform.add_clock_constraint(clk_sync, self.actual_sync_mhz * 1e6)
+            platform.add_clock_constraint(clk_hr, self.actual_hr_mhz * 1e6)
+            platform.add_clock_constraint(clk_hr90, self.actual_hr_mhz * 1e6)
+        return m
 
+
+class _LockSync(Elaboratable):
+    """2-FF synchroniser of LOCK into `domain`, itself reset-less (it drives the reset)."""
+
+    def __init__(self, i, o, domain):
+        self.i, self.o, self.domain = i, o, domain
+
+    def elaborate(self, platform):
+        m = Module()
+        a = Signal(reset_less=True, name=f"lock_{self.domain}_a")
+        b = Signal(reset_less=True, name=f"lock_{self.domain}_b")
+        m.d[self.domain] += [a.eq(self.i), b.eq(a)]
+        m.d.comb += self.o.eq(b)
         return m

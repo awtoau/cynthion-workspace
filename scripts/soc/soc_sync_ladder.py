@@ -215,12 +215,12 @@ def main():
     # so an unreachable rung is a refusal minutes in rather than a skip now.
     rungs, refused = [], []
     for mhz in wanted:
-        if clocks.solve_pll(mhz, clocks.USB_PHY_MHZ) is None:
+        if clocks.solve_pll(float(variant.value('CYNTHION_HYPERRAM_CK_MHZ')), mhz) is None:
             refused.append(mhz)
         else:
             rungs.append(mhz)
     for mhz in refused:
-        near = clocks.reachable(mhz - 8, mhz + 8, clocks.USB_PHY_MHZ)
+        near = clocks.reachable(mhz - 8, mhz + 8, float(variant.value('CYNTHION_HYPERRAM_CK_MHZ')))
         emit(f"SYNC_MHZ {mhz:g}: no exact PLL solution from the 60 MHz "
              f"oscillator. Reachable nearby: {near}")
 

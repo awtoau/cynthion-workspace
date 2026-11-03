@@ -126,12 +126,9 @@ def _platform():
 
 def _generators():
     """Every generator that can produce an edge clock, with one configured."""
-    _platform()                                    # puts `gateware/**` on the path
-    from clocks import SocClocks
-
-    return [
-        ("soc/clocks.py `fast`", SocClocks(sync_mhz=60.0, with_fast=True)),
-    ]
+    # None today: `fast` went with the old flash PHY (#593); `hr`/`hr90`/`sync` and the
+    # flash PLL drive no edge clock. A new ECLK generator is added here.
+    return []
 
 
 @pytest.mark.parametrize("name,design", _generators(), ids=lambda arg: arg
