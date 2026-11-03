@@ -119,4 +119,4 @@ Recorded so they are not re-investigated:
 
 ## In context
 
-The capture path is bounded by the slower of USB (48.5 MB/s, direct port) and HyperRAM ([chips/hyperram/w956a8.md](chips/hyperram/w956a8.md)).
+The capture path is bounded by the slower of USB (48.5 MB/s, direct port) and HyperRAM ([chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md), #588).

@@ -22,7 +22,7 @@ Deeper investigations, by area:
 
 - [docs/apollo_samd11_mcu](docs/apollo_samd11_mcu) — the debug MCU and its firmware
 - [linux-on-cynthion](linux-on-cynthion) — booting Linux on this board: analysis, plan, sweeps
-- [docs/chips/ecp5](docs/chips/ecp5) — flash, HyperRAM, USB and BRAM in depth
+- [docs/chips/ecp5](docs/chips/ecp5) — flash, USB and BRAM in depth
 - [docs/chips/vexiiriscv-cpu.md](docs/chips/vexiiriscv-cpu.md) — the soft CPU
 - [docs/upstream-boundary.md](docs/upstream-boundary.md) — what we take from upstream and
   what we have replaced
@@ -46,7 +46,7 @@ script in `scripts/` is and whether anything still reaches it.
 - subdirectories: `hyperram/` `soc/` `riscv/` `fabric/` `apollo/` `sideband/` `issues/` `board/` `tools/` `diamond/`
 - scripts import each other by bare module name; `import _paths` puts every subdirectory on `sys.path`
 - a script in a subdirectory first inserts `scripts/` (its `ROOT / "scripts"` line), then imports `_paths`
-- `dev.py` finds a script by bare name (`script("hyperram_verify.py")`); `_paths.find_script(name)` does the same
+- `dev.py` finds a script by bare name (`script("hyperram_baseline.py")`); `_paths.find_script(name)` does the same
 
 No virtualenv: packages install into the default free-threaded interpreter, so
 plain `python3` and the `cynthion` / `apollo` console scripts all agree. See

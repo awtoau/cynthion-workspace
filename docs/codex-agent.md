@@ -13,6 +13,5 @@
 | issue | result |
 |---|---|
 | [#144](https://github.com/awtoau/cynthion-workspace/issues/144) | job queue and runner: `flock`, `/proc` holder detection, demo passing both the positive and the deliberately-wrong expectation |
-| [#90](https://github.com/awtoau/cynthion-workspace/issues/90) | HyperRAM Wishbone window, 8 MiB at `0x20000000`, `main=1 exe=1`; sims 396 -> 424 |
 
-Both landed with the rules followed and verification scoped to what it could run. Both needed a human to commit.
+It landed with the rules followed and verification scoped to what it could run. It needed a human to commit.
