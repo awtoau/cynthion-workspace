@@ -619,12 +619,12 @@ async def run_case(backend, case, prof, emit):
         return "UNSUPPORTED", why
     if prof.name not in case.profiles:
         return "SKIP", f"profile {prof.name} not in {case.profiles}"
-    started = time.monotonic()
+    started = backend.case_clock()
     try:
         await backend.ensure(case.needs)
         for n, step in enumerate(case.steps):
-            if time.monotonic() - started > CASE_STALL_S:
-                return "FAIL", f"stall guard: {CASE_STALL_S:.0f} s, step {n} {step.op}"
+            if backend.case_stalled(started):
+                return "FAIL", f"stall guard: case over its limit, step {n} {step.op}"
             res = await backend.op(step.op, **step.args)
             if step.exp is None:
                 continue
@@ -694,6 +694,12 @@ class Backend:
     """Shared bus-level bookkeeping. Subclasses implement `op` and set `self.level`."""
 
     level = NONE
+
+    def case_clock(self):
+        return time.monotonic()
+
+    def case_stalled(self, started):
+        return self.case_clock() - started > CASE_STALL_S
 
     async def reset_bus(self, then_enumerate):
         """Bus reset; if the engine or bus is wedged, escalate once to a role cycle (regs, host)."""

@@ -54,6 +54,7 @@ RESP_ACK, RESP_NAK, RESP_STALL, RESP_TIMEOUT, RESP_CRC, RESP_OVERFLOW = 1, 2, 3,
 
 # Poll budgets: each is an upper bound with a known expected duration (reads are 2 sync ticks).
 DONE_POLLS = 800            # one transaction < 12k usb cycles (shim_sim: DONE_POLLS)
+CASE_STALL_CYCLES = 250_000   # longest case measured 182_419 usb cycles (reset_x3, #592); x1.37; sim time, not wall, so load cannot trip it
 RX_SPINS_PER_BYTE = 8       # RX_TAG polls per byte while the 128-entry FIFO refills from the SIE
 NAK_TRIES = 40              # stands for the driver's 100 ms NAK window; a NAK is ~ a transaction
 ERROR_TRIES = 3             # firmware TRIES: timeouts / CRC errors per stage
@@ -71,12 +72,19 @@ def set_fault(fault, ctx, mode):
 class SimBackend(Backend):
     name = "sim"
 
-    def __init__(self, ctx, bench, pc, fault, prof, phy_writes):
+    def __init__(self, ctx, bench, pc, fault, prof, phy_writes, clock):
         self.ctx, self.bench, self.pc, self.fault, self.prof = ctx, bench, pc, fault, prof
+        self.clock = clock
         self.phy_writes = phy_writes
         self.in_quirk = False
         self.level = NONE
         self.forget()
+
+    def case_clock(self):
+        return self.clock[0]
+
+    def case_stalled(self, started):
+        return self.clock[0] - started > CASE_STALL_CYCLES
 
     def forget(self):
         self.addr, self.mps0, self.tog_in, self.tog_out = 0, 8, 0, 0
@@ -367,11 +375,14 @@ def run_group(name, args):
     started_group = time.monotonic()
     bench, fault, dev = make_bench(prof)
     results, phy_writes = [], []
+    worst = [0]
+    clock = [0]                             # usb cycles since reset: the case guard's time base
 
     async def watch_phy(ctx):
         last = int(ctx.get(bench.phy.func_ctrl))
         while True:
             await ctx.tick("usb")
+            clock[0] += 1
             now = int(ctx.get(bench.phy.func_ctrl))
             if now != last:
                 phy_writes.append(now)
@@ -379,7 +390,7 @@ def run_group(name, args):
 
     async def testbench(ctx):
         pc = shim.Csr(ctx, bench.port.bus)
-        backend = SimBackend(ctx, bench, pc, fault, prof, phy_writes)
+        backend = SimBackend(ctx, bench, pc, fault, prof, phy_writes, clock)
         up = await shim.host_up(pc)
         if up is None:
             results.append((None, "FAIL", "host never reached reset_done"))
@@ -387,8 +398,10 @@ def run_group(name, args):
         backend.level = DEFAULT
         for case in cases:
             started = time.monotonic()
+            c0 = clock[0]
             status, detail = await tc.run_case(backend, case, prof, emit)
             results.append((case, status, detail, time.monotonic() - started))
+            worst[0] = max(worst[0], clock[0] - c0)
             if status in ("FAIL", "XFAIL"):
                 set_fault(fault, ctx, "none")
                 ctx.set(dev.present, 1) if prof.name != "aoa_phone" else None
@@ -396,7 +409,8 @@ def run_group(name, args):
 
     shim.run(bench, testbench, extra=(watch_phy,), platform=shim.BoardPlatform())
     checks = Checks(emit)
-    emit(f"  {name}: profile {profile}, {len(cases)} cases, {time.monotonic() - started_group:.0f} s")
+    emit(f"  {name}: profile {profile}, {len(cases)} cases, {time.monotonic() - started_group:.0f} s, "
+         f"longest case {worst[0]} usb cycles")
     if not results:
         results.append((None, "FAIL", "testbench produced no results (hang or empty selection)"))
     for item in results:
