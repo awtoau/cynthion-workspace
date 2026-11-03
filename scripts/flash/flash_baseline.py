@@ -231,6 +231,8 @@ class Flash:
         self.go_bit = b.rd("GO") & 1
         self.pstep_bit = b.rd("PHASE_STEP") >> 31
         self.pos = b.rd_stable("PHASE_POS")
+        self.seq = b.rd_stable("SEQ")
+        self.seq_bad = 0
         b.wr("CSH", math.ceil(10e-9 * self.hz) | math.ceil(50e-9 * self.hz) << 8, force=True)
         b.wr("TS", 0, force=True)
         b.wr("MBYTE", 0xF0, force=True)
@@ -288,6 +290,15 @@ class Flash:
             row[name.lower()] = b.rd_stable(name) if done else b.rd(name)
         for name in ALL_RESULT_REGS:
             row.setdefault(name.lower(), 0)
+        # Freshness: the engine counts ops it started; a result is this op's only if the
+        # count moved by exactly one.
+        self.seq = (self.seq + 1) & 0xFFFF
+        row["seq"] = b.rd_stable("SEQ") if done else b.rd("SEQ")
+        row["seq_ok"] = row["seq"] == self.seq
+        if not row["seq_ok"]:
+            self.seq_bad += 1
+            say(f"  {label}: SEQ {row['seq']} != expected {self.seq}: result not this op's")
+            self.seq = row["seq"]
         if not done:
             say(f"  {label}: HUNG after {1.25 * expect_s + JTAG_S:.2f} s, state {row['state']:#06x}")
         return row
@@ -673,6 +684,57 @@ def sweep(args):
     return rc
 
 
+def diag(args):
+    """Is the measurement path honest? (1) register write/read-back and constant ID over
+    JTAG, (2) op freshness (SEQ) with ID read around each op, (3) PHASESTEP: the EBh eye
+    walked for 3 turns of 8 x DIV steps, one row per turn, to show whether a turn repeats."""
+    global RUN_ID
+    RUN_ID = time.strftime("%Y%m%d-%H%M%S")
+    if not build_cached([args.sck]) or not configure(args.sck):
+        return 1
+    fl = open_board(args.sck)
+    b = fl.b
+    pats = [0, 0xFFFFFFFF, 0xAAAAAAAA, 0x55555555] + [1 << k for k in range(32)] \
+        + [~(1 << k) & 0xFFFFFFFF for k in range(32)]
+    pats += [int.from_bytes(os.urandom(4), "little") for _ in range(args.n - len(pats))]
+    bad_rw = bad_id = 0
+    for v in pats:
+        b.wr("SEED", v, force=True)
+        bad_rw += b.rd("SEED") != v
+        bad_id += b.rd("ID") != APPLET_ID
+    say(f"  readout: {len(pats)} write/read-backs of SEED: {bad_rw} wrong; ID read "
+        f"{len(pats)} times: {bad_id} wrong")
+    best, _ = eye(fl, lambda: jedec_ok(fl), "JEDEC x1", max(1, fl.n_steps // 4), lats=range(0, 8))
+    if best is None:
+        return 1
+    bad_op = bad_id_op = 0
+    for _ in range(args.ops):
+        bad_id_op += b.rd("ID") != APPLET_ID
+        bad_op += not jedec_ok(fl)
+        bad_id_op += b.rd("ID") != APPLET_ID
+    say(f"  ops: {args.ops} JEDEC reads at {best}: {bad_op} wrong, SEQ mismatches "
+        f"{fl.seq_bad}, ID around ops wrong {bad_id_op}")
+    seed = last_seed()
+    lat0 = best[1]
+    stride = max(1, fl.n_steps // 16)
+    turns = {}
+    for lat in range(max(0, lat0 - 1), lat0 + 2):
+        for turn in range(3):
+            row = ""
+            for _ in range(0, fl.n_steps, stride):
+                fl.set_capture((fl.phase() + stride) % fl.n_steps, lat)
+                r = fl.op(OP_READ, d=READ_MODES[EYE_MODE], addr=TEST_BASE, length=EYE_BYTES,
+                          burst=EYE_BYTES, check=CHECK_PATTERN, seed=seed, quick=True,
+                          expect_s=fl.read_s(EYE_MODE, EYE_BYTES, EYE_BYTES), label="diag")
+                row += "." if r["done"] and r["errors"] == 0 and r["checked"] == EYE_BYTES else "X"
+            turns[(lat, turn)] = row
+            say(f"    lat {lat} turn {turn} (steps {fl.pos - fl.n_steps}..{fl.pos}): {row}")
+    record(dict(label="diag", sck=args.sck, sck_meas=fl.f, n=len(pats), bad_rw=bad_rw,
+                bad_id=bad_id, ops=args.ops, bad_op=bad_op, seq_bad=fl.seq_bad,
+                bad_id_op=bad_id_op, turns={f"{k[0]},{k[1]}": v for k, v in turns.items()}))
+    return 0
+
+
 def scan_only(args):
     global RUN_ID
     RUN_ID = time.strftime("%Y%m%d-%H%M%S")
@@ -747,6 +809,10 @@ def main():
     pw.add_argument("--sck", type=float, nargs="+", default=SWEEP_SCK)
     ps = sub.add_parser("scan", help="read-only: ID, status registers, sector map")
     ps.add_argument("--sck", type=float, default=20)
+    pd = sub.add_parser("diag", help="readout, op freshness and PHASESTEP repeatability")
+    pd.add_argument("--sck", type=float, default=100)
+    pd.add_argument("--n", type=int, default=300)
+    pd.add_argument("--ops", type=int, default=100)
     sub.add_parser("clocks")
     pt = sub.add_parser("table")
     pt.add_argument("--run")
@@ -759,6 +825,8 @@ def main():
         return 0 if build_cached(args.sck) else 1
     if args.cmd == "scan":
         return scan_only(args)
+    if args.cmd == "diag":
+        return diag(args)
     if args.cmd == "table":
         return table(args.run)
     return sweep(args)
