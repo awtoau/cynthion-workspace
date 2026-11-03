@@ -20,7 +20,7 @@ This is the inventory of standalone FPGA experiments under `gateware/`.
 | `hyperram/hyperram_stress.py` | bulk, retention and random-access fill/verify | syntax | **VOID** — the pattern used an 8-bit address and repeated every 256 words across a 4 Mi-word part, so any displacement beyond 256 words scored correct. Fixed since; **not re-run** (#214) | JTAG registers; no dedicated current runner | predates the DQS PHY, legal burst cap and shared control measurement. This row read "hardware required" until #189; the file has not changed since the run |
 | `hyperram/hyperram_identify.py` | ID registers, density and bank aliasing | syntax | recorded identification result | `scripts/hyperram/hyperram_identify.py` | diagnostic retained; uses the non-DQS LUNA interface |
 | `hyperram/hyperram_regfuzz.py` | configuration-register write/read behaviour | syntax | recorded probe result | `scripts/hyperram/hyperram_regfuzz.py` | diagnostic retained; register semantics remain device-specific |
-| `qspi/qspi_gateware.py` | quad-flash read modes, runtime divisor, byte capture and ceiling | syntax | recorded silicon sweep | `scripts/hyperram/qspi_burst.py`, `qspi_ladder.py`, `flash_ceiling.py`, `flash_modes.py` | retained; current Apollo QSPI reader and variable clock replace rebuild-per-rate probes |
+| `qspi/qspi_gateware.py` | quad-flash read modes, runtime divisor, byte capture and ceiling | syntax | recorded silicon sweep | `scripts/fabric/qspi_burst.py`, `qspi_ladder.py`, `flash_ceiling.py`, `flash_modes.py` | retained; current Apollo QSPI reader and variable clock replace rebuild-per-rate probes |
 | `sideband/sideband_gateware.py` | full FPGA_ADV responder, flash paths and diagnostic state | syntax | recorded silicon protocol/soak results | `scripts/sideband_read.py`, `sideband_soak.py`, `sideband_speed_ladder.py`, `sideband_build.py` | retained as the diagnostic bitstream; shipping designs use the smaller `sideband_link.py` block |
 | `adv_uart/adv_uart_gateware.py` | Apollo UART advertisement heartbeat and release | syntax | recorded silicon result | JTAG stop register plus Apollo observation | retained narrow end-to-end test; advertiser implementation lives in Apollo FPGA |
 | `adv_speed/adv_speed_gateware.py` | FPGA_ADV error rate versus baud and drive mode | syntax | recorded silicon ceiling | `scripts/sideband_speed_ladder.py` and capture tools | retained measurement bitstream; receiver baud is an Apollo firmware setting |
@@ -46,7 +46,7 @@ tree.
 
 | source | role | status |
 |---|---|---|
-| `bist.py` | shared JTAG BIST command/status and comparator | retained; simulated by `scripts/hyperram/bist_sim.py` |
+| `bist.py` | shared JTAG BIST command/status and comparator | retained; simulated by `scripts/fabric/bist_sim.py` |
 | `jtag_registers.py` | the JTAG register transport every applet reads through, clocked by TCK | replaces luna's `JTAGRegisterInterface` (#204); simulated by `scripts/soc/soc_jtag_registers_sim.py` |
 | `riscv/*.py` except the four designs above | SoC peripherals, PHYs and CPU wrappers | covered by `scripts/soc_sims.py` and SoC integration |
 | `sideband_advertise.py`, `sideband_link.py`, `sideband_debug.py` | drop-in FPGA_ADV blocks | covered by dedicated simulations and active SoC integration |
