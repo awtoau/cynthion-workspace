@@ -56,6 +56,7 @@ BUILD_DIR = ROOT / "tmp" / "fabric" / "build"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from fast_build_env import YOSYS_MAX_THREADS  # noqa: E402
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.
@@ -175,6 +176,7 @@ def main():
 
     env = dict(os.environ)
     env["PATH"] = f"{OSS_CAD}:{env['PATH']}"
+    env.setdefault("YOSYS_MAX_THREADS", YOSYS_MAX_THREADS)  # #356
 
     # Amaranth reads its tool overrides from AMARANTH_<name> before it looks at
     # the build kwargs, and this platform's `toolchain_prepare` already passes
