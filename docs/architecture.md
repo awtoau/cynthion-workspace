@@ -65,7 +65,7 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 | I2C | one controller plus a mux, OpenCores rev 0.9 map | written | forced — the parts share one bus |
 | device protocols | one owner, cached reads | written | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md), [#123](https://github.com/awtoau/cynthion-workspace/issues/123) |
 | SPI flash | crossbar, chip-select hold, quad `0xEB` | written | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), [#89](https://github.com/awtoau/cynthion-workspace/issues/89) |
-| HyperRAM | register interface on the #581 core at CK 180, `0xf0000800` (#588) | written | [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md), [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| HyperRAM | register interface on the #581 core at CK 180, `0xf0000800` window 0x80, IRQ 18 (#588) | written | [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md), [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | sideband | FPGA_ADV, one wire, three commands | written | [`chips/cynone-sideband.md`](chips/cynone-sideband.md), [#137](https://github.com/awtoau/cynthion-workspace/issues/137) |
 | ULPI window | register access on `target_phy`, no packet path | written | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | GPIO, VBUS, `fabric_status`, I2C mux | | written | [`hardware.md`](hardware.md#register-reference) |

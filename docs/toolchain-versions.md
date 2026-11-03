@@ -110,7 +110,7 @@ Free-threaded CPython as the default `python3`. **No virtualenv**; PATH ordering
 
 No `rust-toolchain.toml` anywhere, so firmware builds against whatever `stable` is.
 
-Own crates (`firmware/cynthion-boot`, `cynthion-payload`, `cynthion-soc`, `cynthion-soc-pac`) are on current dependencies deliberately (the memory map is ours, so no upstream to stay compatible with): `riscv` 0.16.1, `riscv-rt` 0.18.0, `embedded-hal` 1.0.0, `critical-section` 1.2.0.
+Own crates (`firmware/cynthion-boot`, `cynthion-soc`, `cynthion-soc-pac`) are on current dependencies deliberately (the memory map is ours, so no upstream to stay compatible with): `riscv` 0.16.1, `riscv-rt` 0.18.0, `embedded-hal` 1.0.0, `critical-section` 1.2.0.
 
 `repos/cynthion/firmware/moondancer` is upstream's and six major versions behind: `riscv = "0.10"`, `riscv-rt = "0.11"`, `zerocopy = "0.7"` (own TODO to bump), `rust-version = "1.68"`. Built by the `rust` check.
 
