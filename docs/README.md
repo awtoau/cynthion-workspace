@@ -106,6 +106,7 @@ in its §13 got there in the first place.
 * **[`chips/bus-speed-audit.md`](chips/bus-speed-audit.md) — every interface: what the part supports, what this board allows, what we configure**
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32 — the configuration flash
+* [`chips/flash-baseline.md`](chips/flash-baseline.md) — config flash clean-room baseline (#590): every read mode, 20-260 MHz climb, 190 MHz operating point, program/erase times
 * [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) — Winbond W956A8MBYA6I — the HyperRAM
 
 ### The ECP5, beyond the part itself
