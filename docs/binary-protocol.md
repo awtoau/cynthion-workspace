@@ -34,21 +34,20 @@ against; the order of work is at the end.
 | a second CDC | LUNA's `USBSerialDevice` is single-function; a new descriptor set and endpoint pair. Worth doing *after* the format has a consumer |
 | USB bulk from the SoC | there is no USB device controller — `firmware/cynthion-soc/src/usb.rs:14-18` |
 | FPGA_ADV sideband | Apollo is master and the FPGA cannot initiate ([#176](https://github.com/awtoau/cynthion-workspace/issues/176)). Fixed-length CRC-8 commands, no push path |
-| JTAG | ER1's `JTAGStager` holds the CPU in reset (`gateware/soc/top.py:1456`); it cannot observe a running board |
+| JTAG | ER2 is the CPU debug module; no stream path into running firmware |
 
 Two rules protect the one diagnostic path a person has:
 
 * **Records only in binary mode**, entered by a text command and left by one
-  byte. Precedent: `load <hex>` (`firmware/cynthion-soc/src/staging.rs:26-91`).
+  byte.
 * **No interleaving with text.** `tio_user.py:293` writes the same bytes to the
   operator's terminal with `decode("ascii", "replace")`, so a record on the wire
   is replacement characters on their screen. Async log lines that must escape
   during a stream go out as `TEXT` records instead.
 
-Two defects in `load` not to repeat, both at `staging.rs:42-72`: it spins for
-`len` bytes with **no timeout and no abort**, and it holds RTIC's `devices` lock
-throughout (`rtic_app.rs:319-321`). The stream loop polls `irq::pop`
-non-blockingly between records, so a host that stops reading does not wedge it.
+A binary-mode loop needs a **timeout and an abort**, and must not hold RTIC's
+`devices` lock throughout. The stream loop polls `irq::pop` non-blockingly
+between records, so a host that stops reading does not wedge it.
 
 ## The frame
 
@@ -62,7 +61,7 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 * **SLIP framing**, RFC 1055: `END = 0xC0`, `ESC = 0xDB`, `ESC END = 0xDC`,
   `ESC ESC = 0xDD`. Escaping applies to header, body and CRC alike.
 * Minimum frame is 16 bytes unescaped (12 + 4); an empty body is legal.
-* `MAX_BODY = 256`. Fixes the firmware's staging array — there is no allocator.
+* `MAX_BODY = 256`. Fixes the firmware's frame buffer — there is no allocator.
   A host refuses a longer `len` rather than growing to meet it.
 
 ### Why SLIP
@@ -79,11 +78,8 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 
 ### Why CRC-32, and why there is one at all
 
-* **Already in the image.** `firmware/cynthion-soc/src/hyperram.rs:100-118` is a
-  bitwise CRC-32 — init `0xffffffff`, reflected `0xedb88320`, final NOT. That is
-  CRC-32/ISO-HDLC, so the host side is `zlib.crc32` and neither end hand-rolls a
-  loop. Reusing it costs no new `.text`; a CRC-16 would be a new implementation
-  on both sides to save two bytes a record.
+* **CRC-32/ISO-HDLC** — init `0xffffffff`, reflected `0xedb88320`, final NOT —
+  so the host side is `zlib.crc32`. A CRC-16 saves two bytes a record.
 * **Two independent places drop bytes silently**, and either leaves a truncated
   frame that still looks plausible:
   * `Uart::put` abandons a byte after 200,000 spins (`uart.rs:329-339`) — no TX
@@ -128,7 +124,6 @@ producers, and their layouts arrive at run time.
 | `0x04` | ERROR | `<II` — `code, value`; the stream's own faults |
 | `0x10` | POWER | `<IiIiIiIiI` — `bus_mv, current_ua` per channel, then the latching tick |
 | `0x20` | EVENT | `<IQI` — the event ring slot verbatim: `code, value, at_ms` |
-| `0x30` | BIST | allocated, **layout deliberately unspecified** — no producer exists, and the catalogue means one need not be frozen first |
 
 Notes that are the difference between a right and a wrong reading:
 
@@ -270,7 +265,7 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
 ## Cost
 
 * **On the board today: zero.** Nothing here is implemented in firmware.
-* The CRC is free — already linked (`hyperram.rs:100`, used by `staging::load`).
+* The CRC is a bitwise CRC-32 loop on the board, `zlib.crc32` on the host.
 * The only measurement that exists is [#250](https://github.com/awtoau/cynthion-workspace/issues/250)'s prototype: **1,382 B `.text`, 372 B
   `.rodata`**, `riscv32imac-unknown-none-elf`, `opt-level = "z"`, `lto = true`,
   `codegen-units = 1`. It used different framing and a different CRC from this
@@ -304,4 +299,4 @@ reached from the host through vendor request `0xc3` (`vendor.c:388-435`).
    sets `serial.tx.last.eq(1)`, one USB IN transaction per byte — correct for a
    console, and the throughput ceiling for anything else. Only then decide
    whether a packing bit, a second CDC or bulk is needed.
-4. `EVENT`, then `BIST`.
+4. `EVENT`.

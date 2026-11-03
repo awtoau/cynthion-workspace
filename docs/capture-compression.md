@@ -1,10 +1,10 @@
 # Capture-path compression in the FPGA: design
 
 **Status:** stage 1 (codec) and stage 2 (per-transaction framer, ring, record-aligned blocks, see [stage 2](#implementation-stage-2-framer-ring-block-feeder)) built and simulated: modules only (`gateware/soc/capture/`), standalone, NOT in `top.py`, HyperRAM or the shell; nothing run on hardware (U). Tap, block packer, index, CSRs: not built. See [Implementation: stage 1](#implementation-stage-1). Requirement (Dan, 2026-11-02): compression is essential; it must be **switchable**; the RISC-V must be able to **sample data before it is compressed**; data is **stored compressed in HyperRAM**; the RISC-V reads **uncompressed** data through a **gateware decompressor** (no software decompression).
-**Index:** [`aoa-adaptor.md`](aoa-adaptor.md) · [`upstream-watch.md`](upstream-watch.md) (upstream has no compression anywhere on the capture path) · [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md)
+**Index:** [`aoa-adaptor.md`](aoa-adaptor.md) · [`upstream-watch.md`](upstream-watch.md) (upstream has no compression anywhere on the capture path) · [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md)
 
 ## Why
-- Today's non-DQS HyperRAM path writes at ~5-7 MB/s through the RISC-V window; raw gateware ceilings are unmeasured/void. A saturated high-speed bus is ~40-50 MB/s of captured bytes. Compression is what raises the effective capture rate and buffer depth.
+- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588). A saturated high-speed bus is ~40-50 MB/s of captured bytes. Compression is what raises the effective capture rate and buffer depth.
 - Upstream analyzer: raw 16 KiB reads, no compression ([`upstream-watch.md`](upstream-watch.md)); it stops when its buffer fills.
 
 ## Path
