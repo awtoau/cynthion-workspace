@@ -377,6 +377,7 @@ pub fn set_interval_ms(ms: u32) -> u32 {
     // Gap statistics measured against another period describe a different
     // experiment.
     crate::metrics::forget_polls();
+    crate::sched::forget(crate::sched::POWER);
     ms
 }
 

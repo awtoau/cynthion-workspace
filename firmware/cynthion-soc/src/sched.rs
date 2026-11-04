@@ -294,6 +294,16 @@ pub fn boot_complete(uart: &mut Uart) {
     metrics::restart();
 }
 
+/// Clear one task's counters, for a change that makes its history describe a
+/// different experiment (the poll rate, #598). Lateness and gap are cleared
+/// together: one without the other compares a stale lateness to an empty gap.
+pub fn forget(task: usize) {
+    RUNS[task].store(0, RELAXED);
+    RELEASES[task].store(0, RELAXED);
+    WORST_LATE[task].store(0, RELAXED);
+    TOTAL_LATE[task].store(0, RELAXED);
+}
+
 /// `cpu status` -- is the OS alive, and how promptly (#411).
 ///
 /// **The same statics the `rtic` table reads, formatted for one question.** Not
