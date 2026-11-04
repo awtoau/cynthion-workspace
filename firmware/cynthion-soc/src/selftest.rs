@@ -439,7 +439,7 @@ fn atomics(uart: &mut Uart, report: &mut Report) {
 /// DATA line survives that -- every address still reads back what it wrote --
 /// and needs one bit walked across a single word.
 ///
-/// The free space between `__ebss` and the stack, rather than a static buffer.
+/// The free space between `__euninit` and the stack, rather than a static buffer.
 /// A buffer big enough to reach address bit 14 would be 32 KiB permanently
 /// spent out of a 63 KiB region; this costs nothing and covers the same bits,
 /// because the gap is what is left of block RAM once this image is in it --
@@ -450,9 +450,9 @@ fn atomics(uart: &mut Uart, report: &mut Report) {
 /// damage it would be testing the one thing that must not be under test.
 fn ram(uart: &mut Uart, report: &mut Report) {
     unsafe extern "C" {
-        /// End of `.bss`, from riscv-rt's link.x. Everything above it up to
-        /// `_stack_start` is stack that this image has not grown into.
-        static __ebss: u8;
+        /// End of `.uninit`, which riscv-rt places after `.bss`; RTIC keeps its
+        /// resources there, so `__ebss` would walk over the shell (#597).
+        static __euninit: u8;
         static _stack_start: u8;
     }
 
@@ -468,7 +468,7 @@ fn ram(uart: &mut Uart, report: &mut Report) {
 
     // Aligned up to 4 KiB so the one-hot offsets land on addresses whose low
     // bits are the walked bit and nothing else.
-    let base = (((&raw const __ebss) as usize) + 0xfff) & !0xfff;
+    let base = (((&raw const __euninit) as usize) + 0xfff) & !0xfff;
     let top = ((&raw const _stack_start) as usize) - STACK_RESERVE;
     let size = top.saturating_sub(base);
 
