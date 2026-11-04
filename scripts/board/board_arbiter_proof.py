@@ -48,9 +48,9 @@ LOG = ROOT / "tmp" / "logs" / "board-proof.log"
 VARIANTS = ("ck80-sync60",
             "ck72-sync60")
 
-# `bist all 8` measured 4.59 s over 4096 cells on this board (2026-08-12).
+# `hr test` measured 4.59 s over 4096 cells on this board (2026-08-12).
 # Long enough to be preempted mid-command, and its budget is 1.3x the measure.
-SWEEP = "bist all 8"
+SWEEP = "hr test"
 SWEEP_BUDGET_S = 6.0
 
 # How long after the idle job is submitted the preempting job goes in.
@@ -105,7 +105,7 @@ def proof_cold() -> bool:
             time.sleep(0.05)                    # the listener closing, not a wait
     ok = report("port down before submitting", not arbiter.reachable(),
                 f"nothing on {arbiter.PORT}")
-    record = run_job(VARIANTS[0], ["bist smoke"], label="proof-cold")
+    record = run_job(VARIANTS[0], ["hr status"], label="proof-cold")
     provenance = record.get("provenance") or {}
     bitstream = provenance.get("bitstream") or {}
     board = provenance.get("board") or {}
@@ -187,7 +187,7 @@ def proof_blank() -> bool:
                  f"{len(shell.get('transcript') or [])} command(s) recorded")
 
     say("  restoring the board")
-    restored = run_job(VARIANTS[0], ["bist smoke"], label="proof-blank-restore")
+    restored = run_job(VARIANTS[0], ["hr status"], label="proof-blank-restore")
     ok &= report("recovered", restored.get("status") == "passed",
                  str(restored.get("status")))
     return ok

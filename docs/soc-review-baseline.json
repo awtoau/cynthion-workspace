@@ -1,7 +1,7 @@
 {
-  "recorded": "2026-08-12T13:56:04+10:00",
-  "commit": "432d29b",
-  "variant": "bist0-ck160-dqs1-merge0-sync60",
+  "recorded": "2026-11-03T16:26:02+11:00",
+  "commit": "e8be8af",
+  "variant": "ck180-sync60-fdrive8-fslewSLOW",
   "tools": {
     "yosys": "Yosys 0.65+57 (git sha1 9d0cdb855, clang++ 18.1.8 -fPIC -O3)",
     "nextpnr-ecp5": "\"nextpnr-ecp5\" -- Next Generation Place and Route (Version nextpnr-0.10-74-gee605e2b)"
@@ -10,32 +10,32 @@
     "windows": [
       "ram",
       "spiflash",
-      "hyperram",
       "console",
       "spi0",
       "flash_probe",
-      "hyperram_probe",
-      "bootram",
       "apollo_uart",
       "board",
-      "plic",
+      "hyperram",
+      "intc",
+      "usb_host",
+      "hyperram_window",
       "clint"
     ],
-    "claimed": 16908624,
-    "mapped": 12648628,
-    "silent": 4259996,
-    "err": 264175280
+    "claimed": 4297112,
+    "mapped": 4231413,
+    "silent": 65699,
+    "err": 8416872
   },
   "dead": {
     "dead": [],
     "c_only": [
-      "FLASH_PROBE",
-      "SPI0"
+      "FLASH_PROBE"
     ]
   },
   "duplication": {
     "map_decoded_in": [
-      "gateware/soc/bus/fault.py"
+      "gateware/soc/bus/fault.py",
+      "gateware/soc/top.py"
     ],
     "fifo_behind_fifo": [
       "apollo_rx_buf(StreamBuffer) -> apollo_uart(Uart16550)",
@@ -44,14 +44,12 @@
       "console_rx_buf(StreamBuffer) -> console(Uart16550)"
     ]
   },
-  "build": "tmp/trim-delta/baseline-0",
+  "build": "tmp/awto_soc/build/ck180-sync60-fdrive8-fslewSLOW",
   "cells": {
-    "TRELLIS_COMB": 15509,
-    "TRELLIS_FF": 7830,
-    "DP16KD": 49,
-    "TRELLIS_RAMW": 219
+    "TRELLIS_COMB": 21313,
+    "TRELLIS_FF": 10487,
+    "DP16KD": 31,
+    "TRELLIS_RAMW": 299
   },
-  "warnings": [
-    "ABC: Error: Abc_FrameUpdateGia(): Transformation has failed."
-  ]
+  "warnings": []
 }

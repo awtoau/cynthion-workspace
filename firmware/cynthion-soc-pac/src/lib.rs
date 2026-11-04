@@ -37,24 +37,6 @@ impl core::fmt::Debug for FlashProbe {
 }
 #[doc = "flash_probe: 6 registers at 0xf0000200"]
 pub mod flash_probe;
-#[doc = "hyperram_probe: 13 registers at 0xf0000280"]
-pub type HyperramProbe = crate::Periph<hyperram_probe::RegisterBlock, 0xf000_0280>;
-impl core::fmt::Debug for HyperramProbe {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("HyperramProbe").finish()
-    }
-}
-#[doc = "hyperram_probe: 13 registers at 0xf0000280"]
-pub mod hyperram_probe;
-#[doc = "bootram: 6 registers at 0xf0000400"]
-pub type Bootram = crate::Periph<bootram::RegisterBlock, 0xf000_0400>;
-impl core::fmt::Debug for Bootram {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("Bootram").finish()
-    }
-}
-#[doc = "bootram: 6 registers at 0xf0000400"]
-pub mod bootram;
 #[doc = "apollo_uart: 8 registers at 0xf0000500"]
 pub type ApolloUart = crate::Periph<apollo_uart::RegisterBlock, 0xf000_0500>;
 impl core::fmt::Debug for ApolloUart {
@@ -136,24 +118,15 @@ impl core::fmt::Debug for BoardClocks {
 }
 #[doc = "board/clocks: 2 registers at 0xf0000660"]
 pub mod board_clocks;
-#[doc = "hyperram_bist: 64 registers at 0xf0000800"]
-pub type HyperramBist = crate::Periph<hyperram_bist::RegisterBlock, 0xf000_0800>;
-impl core::fmt::Debug for HyperramBist {
+#[doc = "hyperram: 41 registers at 0xf0000800"]
+pub type Hyperram = crate::Periph<hyperram::RegisterBlock, 0xf000_0800>;
+impl core::fmt::Debug for Hyperram {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("HyperramBist").finish()
+        f.debug_struct("Hyperram").finish()
     }
 }
-#[doc = "hyperram_bist: 64 registers at 0xf0000800"]
-pub mod hyperram_bist;
-#[doc = "hyperram_ck: 4 registers at 0xf0000a00"]
-pub type HyperramCk = crate::Periph<hyperram_ck::RegisterBlock, 0xf000_0a00>;
-impl core::fmt::Debug for HyperramCk {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("HyperramCk").finish()
-    }
-}
-#[doc = "hyperram_ck: 4 registers at 0xf0000a00"]
-pub mod hyperram_ck;
+#[doc = "hyperram: 41 registers at 0xf0000800"]
+pub mod hyperram;
 #[doc = "intc: 2 registers at 0xf0000c00"]
 pub type Intc = crate::Periph<intc::RegisterBlock, 0xf000_0c00>;
 impl core::fmt::Debug for Intc {
@@ -192,10 +165,6 @@ pub struct Peripherals {
     pub spi0: Spi0,
     #[doc = "FLASH_PROBE"]
     pub flash_probe: FlashProbe,
-    #[doc = "HYPERRAM_PROBE"]
-    pub hyperram_probe: HyperramProbe,
-    #[doc = "BOOTRAM"]
-    pub bootram: Bootram,
     #[doc = "APOLLO_UART"]
     pub apollo_uart: ApolloUart,
     #[doc = "BOARD_GPIO"]
@@ -214,10 +183,8 @@ pub struct Peripherals {
     pub board_fabric: BoardFabric,
     #[doc = "BOARD_CLOCKS"]
     pub board_clocks: BoardClocks,
-    #[doc = "HYPERRAM_BIST"]
-    pub hyperram_bist: HyperramBist,
-    #[doc = "HYPERRAM_CK"]
-    pub hyperram_ck: HyperramCk,
+    #[doc = "HYPERRAM"]
+    pub hyperram: Hyperram,
     #[doc = "INTC"]
     pub intc: Intc,
     #[doc = "USB_HOST"]
@@ -249,8 +216,6 @@ impl Peripherals {
             console: Console::steal(),
             spi0: Spi0::steal(),
             flash_probe: FlashProbe::steal(),
-            hyperram_probe: HyperramProbe::steal(),
-            bootram: Bootram::steal(),
             apollo_uart: ApolloUart::steal(),
             board_gpio: BoardGpio::steal(),
             board_i2c: BoardI2c::steal(),
@@ -260,8 +225,7 @@ impl Peripherals {
             board_vbus: BoardVbus::steal(),
             board_fabric: BoardFabric::steal(),
             board_clocks: BoardClocks::steal(),
-            hyperram_bist: HyperramBist::steal(),
-            hyperram_ck: HyperramCk::steal(),
+            hyperram: Hyperram::steal(),
             intc: Intc::steal(),
             usb_host: UsbHost::steal(),
             clint: Clint::steal(),

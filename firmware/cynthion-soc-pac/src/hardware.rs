@@ -28,12 +28,6 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 1,
     },
     Peripheral {
-        name: "hyperram",
-        base: 0x20000000,
-        size: 0x00800000,
-        registers: 1,
-    },
-    Peripheral {
         name: "console",
         base: 0xf0000000,
         size: 0x00000008,
@@ -48,18 +42,6 @@ pub static PERIPHERALS: &[Peripheral] = &[
     Peripheral {
         name: "flash_probe",
         base: 0xf0000200,
-        size: 0x00000020,
-        registers: 6,
-    },
-    Peripheral {
-        name: "hyperram_probe",
-        base: 0xf0000280,
-        size: 0x00000040,
-        registers: 13,
-    },
-    Peripheral {
-        name: "bootram",
-        base: 0xf0000400,
         size: 0x00000020,
         registers: 6,
     },
@@ -118,16 +100,10 @@ pub static PERIPHERALS: &[Peripheral] = &[
         registers: 2,
     },
     Peripheral {
-        name: "hyperram_bist",
+        name: "hyperram",
         base: 0xf0000800,
-        size: 0x00000200,
-        registers: 64,
-    },
-    Peripheral {
-        name: "hyperram_ck",
-        base: 0xf0000a00,
-        size: 0x00000010,
-        registers: 4,
+        size: 0x00000080,
+        registers: 41,
     },
     Peripheral {
         name: "intc",
@@ -140,6 +116,12 @@ pub static PERIPHERALS: &[Peripheral] = &[
         base: 0xf0001000,
         size: 0x00000020,
         registers: 27,
+    },
+    Peripheral {
+        name: "hyperram_window",
+        base: 0xf0010000,
+        size: 0x00001000,
+        registers: 1,
     },
     Peripheral {
         name: "clint",

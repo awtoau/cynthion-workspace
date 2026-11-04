@@ -42,7 +42,7 @@ Every ER1 data shift is one frame. Bits arrive LSB first, which is what
                      the CPU
     0xa2     write   address[15:0]  address[31:16]  image, one word each
 
-Addresses are HyperRAM 16-bit word addresses, matching `HyperRAMBoot`. `nop` exists
+Addresses are HyperRAM 16-bit word addresses (byte address / 2). `nop` exists
 so the status below can be read without writing, and so a frame of all-zeroes or
 all-ones -- what an idle or floating chain shifts -- does nothing.
 
@@ -73,16 +73,14 @@ actually had, and no other field distinguishes it.
     stage                   rate
     ----------------------  ---------------------------------------
     Apollo's JTAG SCK       12 MHz -> 750 kword/s (`firmware/src/jtag.c:904`)
-    one HyperRAM write      ~22 `sync` cycles -> 2.7 Mword/s at 60 MHz
+    one pair write (#588)   ~25 `sync` cycles -> 4.8 Mword/s at 60 MHz
 
-The sink drains 3.6x faster than JTAG can fill it, so the FIFO is a clock crossing
+The sink drains 6x faster than JTAG can fill it, so the FIFO is a clock crossing
 and a jitter buffer rather than a store, and 32 entries is generous. A JTAG shift
 cannot be stalled, so `overflow` records the case where that margin is wrong
 instead of losing words silently.
 
-Measured end to end by `scripts/soc/soc_jtag_stage.py`: 32 KiB in 85 ms, 377 KiB/s. For
-comparison, on the same board in the same session a register interface moves a 16-bit
-word in 28 ms and `apollo configure` moves a bitstream at 294 KiB/s.
+End-to-end rate: `scripts/soc/soc_jtag_stage.py` measures it (#588 re-based the drain).
 """
 
 from amaranth           import Cat, ClockDomain, ClockSignal, Const, Elaboratable
@@ -169,8 +167,8 @@ class JTAGStager(Elaboratable):
     tdo : Signal, output
         Status, LSB first.
     req, addr, data : Signal, output
-        A HyperRAM write request, held until `ack`. Same shape as the arbiter side
-        of `HyperRAMBoot`, so `BootRAM` serves both the same way.
+        A HyperRAM pair write, held until `ack`: the `pair_*` port of
+        `peripherals/hyperram.py` (#588).
     ack : Signal, input
         The word was taken.
     cpu_reset : Signal, output

@@ -32,16 +32,6 @@
       </addressBlock>
     </peripheral>
     <peripheral>
-      <name>HYPERRAM</name>
-      <description>hyperram: 8388608 bytes of memory at 0x20000000</description>
-      <baseAddress>0x20000000</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x800000</size>
-        <usage>buffer</usage>
-      </addressBlock>
-    </peripheral>
-    <peripheral>
       <name>CONSOLE</name>
       <description>console: 8 registers at 0xf0000000</description>
       <baseAddress>0xF0000000</baseAddress>
@@ -445,372 +435,6 @@
               <description>strobe [0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
-    </peripheral>
-    <peripheral>
-      <name>HYPERRAM_PROBE</name>
-      <description>hyperram_probe: 13 registers at 0xf0000280</description>
-      <baseAddress>0xF0000280</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x40</size>
-        <usage>registers</usage>
-      </addressBlock>
-      <registers>
-        <register>
-          <name>STARTS</name>
-          <description>HYPERRAM_PROBE.STARTS, 16 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>BEATS</name>
-          <description>HYPERRAM_PROBE.BEATS, 16 bits at +0x02</description>
-          <addressOffset>0x2</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>BURST_BEATS</name>
-          <description>HYPERRAM_PROBE.BURST_BEATS, 16 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>MAX_RUN</name>
-          <description>HYPERRAM_PROBE.MAX_RUN, 16 bits at +0x06</description>
-          <addressOffset>0x6</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>WORDS</name>
-          <description>HYPERRAM_PROBE.WORDS, 16 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>BUSY</name>
-          <description>HYPERRAM_PROBE.BUSY, 32 bits at +0x0c</description>
-          <addressOffset>0xC</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>WANT</name>
-          <description>HYPERRAM_PROBE.WANT, 32 bits at +0x10</description>
-          <addressOffset>0x10</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>ARMING</name>
-          <description>HYPERRAM_PROBE.ARMING, 32 bits at +0x14</description>
-          <addressOffset>0x14</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CYC</name>
-          <description>HYPERRAM_PROBE.CYC, 32 bits at +0x18</description>
-          <addressOffset>0x18</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>STATUS</name>
-          <description>HYPERRAM_PROBE.STATUS, 1 bits at +0x1c</description>
-          <addressOffset>0x1C</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>RWDS_ASK</name>
-              <description>rwds_ask [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>STALLS</name>
-          <description>HYPERRAM_PROBE.STALLS, 32 bits at +0x20</description>
-          <addressOffset>0x20</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CLEAR</name>
-          <description>HYPERRAM_PROBE.CLEAR, 1 bits at +0x24</description>
-          <addressOffset>0x24</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>STROBE</name>
-              <description>strobe [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>RWDS_AT</name>
-          <description>HYPERRAM_PROBE.RWDS_AT, 4 bits at +0x25</description>
-          <addressOffset>0x25</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>CYCLE</name>
-              <description>cycle [3:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>4</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
-    </peripheral>
-    <peripheral>
-      <name>BOOTRAM</name>
-      <description>bootram: 6 registers at 0xf0000400</description>
-      <baseAddress>0xF0000400</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x20</size>
-        <usage>registers</usage>
-      </addressBlock>
-      <registers>
-        <register>
-          <name>ADDR</name>
-          <description>BOOTRAM.ADDR, 32 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>32</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>ADDR</name>
-              <description>addr [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>ADDR_RD</name>
-          <description>BOOTRAM.ADDR_RD, 32 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>ADDR</name>
-              <description>addr [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CTRL</name>
-          <description>BOOTRAM.CTRL, 1 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>FETCH</name>
-              <description>fetch [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>STATUS</name>
-          <description>BOOTRAM.STATUS, 1 bits at +0x0c</description>
-          <addressOffset>0xC</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>VALID</name>
-              <description>valid [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DATA</name>
-          <description>BOOTRAM.DATA, 32 bits at +0x10</description>
-          <addressOffset>0x10</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>DATA</name>
-              <description>data [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>WDATA</name>
-          <description>BOOTRAM.WDATA, 32 bits at +0x14</description>
-          <addressOffset>0x14</addressOffset>
-          <size>32</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>DATA</name>
-              <description>data [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
               <access>write-only</access>
             </field>
           </fields>
@@ -1881,162 +1505,276 @@
       </registers>
     </peripheral>
     <peripheral>
-      <name>HYPERRAM_BIST</name>
-      <description>hyperram_bist: 64 registers at 0xf0000800</description>
+      <name>HYPERRAM</name>
+      <description>hyperram: 41 registers at 0xf0000800</description>
       <baseAddress>0xF0000800</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x200</size>
+        <size>0x80</size>
         <usage>registers</usage>
       </addressBlock>
+      <interrupt>
+        <name>HYPERRAM</name>
+        <value>18</value>
+      </interrupt>
       <registers>
         <register>
-          <name>P00</name>
-          <description>HYPERRAM_BIST.P00, 32 bits at +0x00</description>
+          <name>ID</name>
+          <description>HYPERRAM.ID, 32 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P01</name>
-          <description>HYPERRAM_BIST.P01, 32 bits at +0x04</description>
+          <name>CK_KHZ</name>
+          <description>HYPERRAM.CK_KHZ, 32 bits at +0x04</description>
           <addressOffset>0x4</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P02</name>
-          <description>HYPERRAM_BIST.P02, 32 bits at +0x08</description>
+          <name>STATUS</name>
+          <description>HYPERRAM.STATUS, 16 bits at +0x08</description>
           <addressOffset>0x8</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
+          <size>16</size>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>BUSY</name>
+              <description>busy [0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>READY</name>
+              <description>ready [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>LOCKED</name>
+              <description>locked [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CAL_VALID</name>
+              <description>cal_valid [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>STREAM_ON</name>
+              <description>stream_on [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>HR_BUSY</name>
+              <description>hr_busy [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>_PAD</name>
+              <description>_pad [7:6]</description>
+              <bitOffset>6</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CODE</name>
+              <description>code [11:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>OP</name>
+              <description>op [15:12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P03</name>
-          <description>HYPERRAM_BIST.P03, 32 bits at +0x0c</description>
+          <name>CMD</name>
+          <description>HYPERRAM.CMD, 4 bits at +0x0c</description>
           <addressOffset>0xC</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
+          <size>8</size>
+          <access>write-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>OP</name>
+              <description>op [3:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>4</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>HYPERRAM.CTRL, 1 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ABORT</name>
+              <description>abort [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EVENTS</name>
+          <description>HYPERRAM.EVENTS, 2 bits at +0x0e</description>
+          <addressOffset>0xE</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P04</name>
-          <description>HYPERRAM_BIST.P04, 32 bits at +0x10</description>
+          <name>IRQ_EN</name>
+          <description>HYPERRAM.IRQ_EN, 2 bits at +0x0f</description>
+          <addressOffset>0xF</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ERRORS</name>
+          <description>HYPERRAM.ERRORS, 13 bits at +0x10</description>
           <addressOffset>0x10</addressOffset>
-          <size>32</size>
+          <size>16</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x1FFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [12:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>13</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P05</name>
-          <description>HYPERRAM_BIST.P05, 32 bits at +0x14</description>
+          <name>HR_ADDR</name>
+          <description>HYPERRAM.HR_ADDR, 23 bits at +0x14</description>
           <addressOffset>0x14</addressOffset>
           <size>32</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x7FFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [22:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>23</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P06</name>
-          <description>HYPERRAM_BIST.P06, 32 bits at +0x18</description>
+          <name>WIN_ADDR</name>
+          <description>HYPERRAM.WIN_ADDR, 12 bits at +0x18</description>
           <addressOffset>0x18</addressOffset>
-          <size>32</size>
+          <size>16</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0xFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [11:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>12</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P07</name>
-          <description>HYPERRAM_BIST.P07, 32 bits at +0x1c</description>
+          <name>LEN</name>
+          <description>HYPERRAM.LEN, 24 bits at +0x1c</description>
           <addressOffset>0x1C</addressOffset>
           <size>32</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0xFFFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [23:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>24</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P08</name>
-          <description>HYPERRAM_BIST.P08, 32 bits at +0x20</description>
+          <name>FILL_VALUE</name>
+          <description>HYPERRAM.FILL_VALUE, 32 bits at +0x20</description>
           <addressOffset>0x20</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2044,8 +1782,8 @@
           <resetMask>0xFFFFFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
               <access>read-write</access>
@@ -2053,1159 +1791,558 @@
           </fields>
         </register>
         <register>
-          <name>P09</name>
-          <description>HYPERRAM_BIST.P09, 32 bits at +0x24</description>
+          <name>MODE</name>
+          <description>HYPERRAM.MODE, 5 bits at +0x24</description>
           <addressOffset>0x24</addressOffset>
-          <size>32</size>
+          <size>8</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x1F</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>FILL</name>
+              <description>fill [1:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>TEST</name>
+              <description>test [3:2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>INJECT_HANG</name>
+              <description>inject_hang [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0A</name>
-          <description>HYPERRAM_BIST.P0A, 32 bits at +0x28</description>
+          <name>REG_SEL</name>
+          <description>HYPERRAM.REG_SEL, 2 bits at +0x25</description>
+          <addressOffset>0x25</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x2</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LATENCY</name>
+          <description>HYPERRAM.LATENCY, 5 bits at +0x26</description>
+          <addressOffset>0x26</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0xD</resetValue>
+          <resetMask>0x1F</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [4:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>5</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>DELAY</name>
+          <description>HYPERRAM.DELAY, 7 bits at +0x27</description>
+          <addressOffset>0x27</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x7F</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [6:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>7</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SEED</name>
+          <description>HYPERRAM.SEED, 16 bits at +0x28</description>
           <addressOffset>0x28</addressOffset>
-          <size>32</size>
+          <size>16</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0xFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>16</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0B</name>
-          <description>HYPERRAM_BIST.P0B, 32 bits at +0x2c</description>
+          <name>XOR</name>
+          <description>HYPERRAM.XOR, 16 bits at +0x2a</description>
+          <addressOffset>0x2A</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>BURST</name>
+          <description>HYPERRAM.BURST, 16 bits at +0x2c</description>
           <addressOffset>0x2C</addressOffset>
-          <size>32</size>
+          <size>16</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0xFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>16</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0C</name>
-          <description>HYPERRAM_BIST.P0C, 32 bits at +0x30</description>
+          <name>REG_WDATA</name>
+          <description>HYPERRAM.REG_WDATA, 16 bits at +0x2e</description>
+          <addressOffset>0x2E</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x8F2F</resetValue>
+          <resetMask>0xFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>REG_RDATA</name>
+          <description>HYPERRAM.REG_RDATA, 16 bits at +0x30</description>
           <addressOffset>0x30</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
+          <size>16</size>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0D</name>
-          <description>HYPERRAM_BIST.P0D, 32 bits at +0x34</description>
+          <name>CAL</name>
+          <description>HYPERRAM.CAL, 17 bits at +0x34</description>
           <addressOffset>0x34</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>TAP</name>
+              <description>tap [6:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <bitWidth>7</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>_PAD</name>
+              <description>_pad [7]</description>
+              <bitOffset>7</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>WIDTH</name>
+              <description>width [15:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>VALID</name>
+              <description>valid [16]</description>
+              <bitOffset>16</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0E</name>
-          <description>HYPERRAM_BIST.P0E, 32 bits at +0x38</description>
+          <name>CAL_MAP0</name>
+          <description>HYPERRAM.CAL_MAP0, 32 bits at +0x38</description>
           <addressOffset>0x38</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P0F</name>
-          <description>HYPERRAM_BIST.P0F, 32 bits at +0x3c</description>
+          <name>CAL_MAP1</name>
+          <description>HYPERRAM.CAL_MAP1, 32 bits at +0x3c</description>
           <addressOffset>0x3C</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P10</name>
-          <description>HYPERRAM_BIST.P10, 32 bits at +0x40</description>
+          <name>CAL_MAP2</name>
+          <description>HYPERRAM.CAL_MAP2, 32 bits at +0x40</description>
           <addressOffset>0x40</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P11</name>
-          <description>HYPERRAM_BIST.P11, 32 bits at +0x44</description>
+          <name>CAL_MAP3</name>
+          <description>HYPERRAM.CAL_MAP3, 32 bits at +0x44</description>
           <addressOffset>0x44</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P12</name>
-          <description>HYPERRAM_BIST.P12, 32 bits at +0x48</description>
+          <name>CYCLES</name>
+          <description>HYPERRAM.CYCLES, 32 bits at +0x48</description>
           <addressOffset>0x48</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P13</name>
-          <description>HYPERRAM_BIST.P13, 32 bits at +0x4c</description>
+          <name>WORDS</name>
+          <description>HYPERRAM.WORDS, 32 bits at +0x4c</description>
           <addressOffset>0x4C</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P14</name>
-          <description>HYPERRAM_BIST.P14, 32 bits at +0x50</description>
+          <name>XACTS</name>
+          <description>HYPERRAM.XACTS, 32 bits at +0x50</description>
           <addressOffset>0x50</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P15</name>
-          <description>HYPERRAM_BIST.P15, 32 bits at +0x54</description>
+          <name>CHECKED</name>
+          <description>HYPERRAM.CHECKED, 32 bits at +0x54</description>
           <addressOffset>0x54</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P16</name>
-          <description>HYPERRAM_BIST.P16, 32 bits at +0x58</description>
+          <name>ERRS</name>
+          <description>HYPERRAM.ERRS, 32 bits at +0x58</description>
           <addressOffset>0x58</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P17</name>
-          <description>HYPERRAM_BIST.P17, 32 bits at +0x5c</description>
+          <name>BAD_INDEX</name>
+          <description>HYPERRAM.BAD_INDEX, 32 bits at +0x5c</description>
           <addressOffset>0x5C</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P18</name>
-          <description>HYPERRAM_BIST.P18, 32 bits at +0x60</description>
+          <name>BAD_GOT_WANT</name>
+          <description>HYPERRAM.BAD_GOT_WANT, 32 bits at +0x60</description>
           <addressOffset>0x60</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P19</name>
-          <description>HYPERRAM_BIST.P19, 32 bits at +0x64</description>
+          <name>BAD_BITS</name>
+          <description>HYPERRAM.BAD_BITS, 16 bits at +0x64</description>
           <addressOffset>0x64</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
+          <size>16</size>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1A</name>
-          <description>HYPERRAM_BIST.P1A, 32 bits at +0x68</description>
+          <name>STATE</name>
+          <description>HYPERRAM.STATE, 16 bits at +0x66</description>
+          <addressOffset>0x66</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>MISSING</name>
+          <description>HYPERRAM.MISSING, 32 bits at +0x68</description>
           <addressOffset>0x68</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1B</name>
-          <description>HYPERRAM_BIST.P1B, 32 bits at +0x6c</description>
+          <name>CK_COUNT</name>
+          <description>HYPERRAM.CK_COUNT, 32 bits at +0x6c</description>
           <addressOffset>0x6C</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
               <bitWidth>32</bitWidth>
-              <access>read-write</access>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1C</name>
-          <description>HYPERRAM_BIST.P1C, 32 bits at +0x70</description>
+          <name>STREAM_BASE</name>
+          <description>HYPERRAM.STREAM_BASE, 22 bits at +0x70</description>
           <addressOffset>0x70</addressOffset>
           <size>32</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x3FFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [21:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>22</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1D</name>
-          <description>HYPERRAM_BIST.P1D, 32 bits at +0x74</description>
+          <name>STREAM_MASK</name>
+          <description>HYPERRAM.STREAM_MASK, 22 bits at +0x74</description>
           <addressOffset>0x74</addressOffset>
           <size>32</size>
           <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetValue>0xFFFFF</resetValue>
+          <resetMask>0x3FFFFF</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [21:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>22</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1E</name>
-          <description>HYPERRAM_BIST.P1E, 32 bits at +0x78</description>
+          <name>STREAM_CTRL</name>
+          <description>HYPERRAM.STREAM_CTRL, 1 bits at +0x78</description>
           <addressOffset>0x78</addressOffset>
-          <size>32</size>
+          <size>8</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
+          <resetMask>0x1</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>1</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>P1F</name>
-          <description>HYPERRAM_BIST.P1F, 32 bits at +0x7c</description>
+          <name>STREAM_LEVEL</name>
+          <description>HYPERRAM.STREAM_LEVEL, 23 bits at +0x7c</description>
           <addressOffset>0x7C</addressOffset>
           <size>32</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0xFFFFFFFF</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q00</name>
-          <description>HYPERRAM_BIST.Q00, 32 bits at +0x100</description>
-          <addressOffset>0x100</addressOffset>
-          <size>32</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>W</name>
-              <description>w [31:0]</description>
+              <name>V</name>
+              <description>v [22:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q01</name>
-          <description>HYPERRAM_BIST.Q01, 32 bits at +0x104</description>
-          <addressOffset>0x104</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q02</name>
-          <description>HYPERRAM_BIST.Q02, 32 bits at +0x108</description>
-          <addressOffset>0x108</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q03</name>
-          <description>HYPERRAM_BIST.Q03, 32 bits at +0x10c</description>
-          <addressOffset>0x10C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q04</name>
-          <description>HYPERRAM_BIST.Q04, 32 bits at +0x110</description>
-          <addressOffset>0x110</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q05</name>
-          <description>HYPERRAM_BIST.Q05, 32 bits at +0x114</description>
-          <addressOffset>0x114</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q06</name>
-          <description>HYPERRAM_BIST.Q06, 32 bits at +0x118</description>
-          <addressOffset>0x118</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q07</name>
-          <description>HYPERRAM_BIST.Q07, 32 bits at +0x11c</description>
-          <addressOffset>0x11C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q08</name>
-          <description>HYPERRAM_BIST.Q08, 32 bits at +0x120</description>
-          <addressOffset>0x120</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q09</name>
-          <description>HYPERRAM_BIST.Q09, 32 bits at +0x124</description>
-          <addressOffset>0x124</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0A</name>
-          <description>HYPERRAM_BIST.Q0A, 32 bits at +0x128</description>
-          <addressOffset>0x128</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0B</name>
-          <description>HYPERRAM_BIST.Q0B, 32 bits at +0x12c</description>
-          <addressOffset>0x12C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0C</name>
-          <description>HYPERRAM_BIST.Q0C, 32 bits at +0x130</description>
-          <addressOffset>0x130</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0D</name>
-          <description>HYPERRAM_BIST.Q0D, 32 bits at +0x134</description>
-          <addressOffset>0x134</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0E</name>
-          <description>HYPERRAM_BIST.Q0E, 32 bits at +0x138</description>
-          <addressOffset>0x138</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q0F</name>
-          <description>HYPERRAM_BIST.Q0F, 32 bits at +0x13c</description>
-          <addressOffset>0x13C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q10</name>
-          <description>HYPERRAM_BIST.Q10, 32 bits at +0x140</description>
-          <addressOffset>0x140</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q11</name>
-          <description>HYPERRAM_BIST.Q11, 32 bits at +0x144</description>
-          <addressOffset>0x144</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q12</name>
-          <description>HYPERRAM_BIST.Q12, 32 bits at +0x148</description>
-          <addressOffset>0x148</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q13</name>
-          <description>HYPERRAM_BIST.Q13, 32 bits at +0x14c</description>
-          <addressOffset>0x14C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q14</name>
-          <description>HYPERRAM_BIST.Q14, 32 bits at +0x150</description>
-          <addressOffset>0x150</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q15</name>
-          <description>HYPERRAM_BIST.Q15, 32 bits at +0x154</description>
-          <addressOffset>0x154</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q16</name>
-          <description>HYPERRAM_BIST.Q16, 32 bits at +0x158</description>
-          <addressOffset>0x158</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q17</name>
-          <description>HYPERRAM_BIST.Q17, 32 bits at +0x15c</description>
-          <addressOffset>0x15C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q18</name>
-          <description>HYPERRAM_BIST.Q18, 32 bits at +0x160</description>
-          <addressOffset>0x160</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q19</name>
-          <description>HYPERRAM_BIST.Q19, 32 bits at +0x164</description>
-          <addressOffset>0x164</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1A</name>
-          <description>HYPERRAM_BIST.Q1A, 32 bits at +0x168</description>
-          <addressOffset>0x168</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1B</name>
-          <description>HYPERRAM_BIST.Q1B, 32 bits at +0x16c</description>
-          <addressOffset>0x16C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1C</name>
-          <description>HYPERRAM_BIST.Q1C, 32 bits at +0x170</description>
-          <addressOffset>0x170</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1D</name>
-          <description>HYPERRAM_BIST.Q1D, 32 bits at +0x174</description>
-          <addressOffset>0x174</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1E</name>
-          <description>HYPERRAM_BIST.Q1E, 32 bits at +0x178</description>
-          <addressOffset>0x178</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>Q1F</name>
-          <description>HYPERRAM_BIST.Q1F, 32 bits at +0x17c</description>
-          <addressOffset>0x17C</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>W</name>
-              <description>w [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
-    </peripheral>
-    <peripheral>
-      <name>HYPERRAM_CK</name>
-      <description>hyperram_ck: 4 registers at 0xf0000a00</description>
-      <baseAddress>0xF0000A00</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x10</size>
-        <usage>registers</usage>
-      </addressBlock>
-      <registers>
-        <register>
-          <name>CTRL</name>
-          <description>HYPERRAM_CK.CTRL, 32 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
-          <resetValue>0x10</resetValue>
-          <resetMask>0x1FFFB</resetMask>
-          <fields>
-            <field>
-              <name>SEL</name>
-              <description>sel [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>BIST</name>
-              <description>bist [1]</description>
-              <bitOffset>1</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>REFUSED_CLEAR</name>
-              <description>refused_clear [2]</description>
-              <bitOffset>2</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-            <field>
-              <name>REGS</name>
-              <description>regs [3]</description>
-              <bitOffset>3</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>FIXED</name>
-              <description>fixed [4]</description>
-              <bitOffset>4</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>LATENCY</name>
-              <description>latency [10:5]</description>
-              <bitOffset>5</bitOffset>
-              <bitWidth>6</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>LOW_LATENCY</name>
-              <description>low_latency [16:11]</description>
-              <bitOffset>11</bitOffset>
-              <bitWidth>6</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>RESERVED</name>
-              <description>reserved [31:17]</description>
-              <bitOffset>17</bitOffset>
-              <bitWidth>15</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>STATUS</name>
-          <description>HYPERRAM_CK.STATUS, 32 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>LOCKED</name>
-              <description>locked [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>MODE</name>
-              <description>mode [1]</description>
-              <bitOffset>1</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>REFUSED</name>
-              <description>refused [2]</description>
-              <bitOffset>2</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>RESERVED</name>
-              <description>reserved [3]</description>
-              <bitOffset>3</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>RUNGS</name>
-              <description>rungs [7:4]</description>
-              <bitOffset>4</bitOffset>
-              <bitWidth>4</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>PAD</name>
-              <description>pad [31:8]</description>
-              <bitOffset>8</bitOffset>
-              <bitWidth>24</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>RUNG0</name>
-          <description>HYPERRAM_CK.RUNG0, 32 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>KHZ</name>
-              <description>khz [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>RUNG1</name>
-          <description>HYPERRAM_CK.RUNG1, 32 bits at +0x0c</description>
-          <addressOffset>0xC</addressOffset>
-          <size>32</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>KHZ</name>
-              <description>khz [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>23</bitWidth>
               <access>read-only</access>
             </field>
           </fields>
@@ -3224,7 +2361,7 @@
       <registers>
         <register>
           <name>ENABLE</name>
-          <description>INTC.ENABLE, 18 bits at +0x00</description>
+          <description>INTC.ENABLE, 19 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -3233,16 +2370,16 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [17:0]</description>
+              <description>mask [18:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>18</bitWidth>
+              <bitWidth>19</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
           <name>PENDING</name>
-          <description>INTC.PENDING, 18 bits at +0x04</description>
+          <description>INTC.PENDING, 19 bits at +0x04</description>
           <addressOffset>0x4</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -3251,9 +2388,9 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [17:0]</description>
+              <description>mask [18:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>18</bitWidth>
+              <bitWidth>19</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
@@ -3859,6 +2996,16 @@
           </fields>
         </register>
       </registers>
+    </peripheral>
+    <peripheral>
+      <name>HYPERRAM_WINDOW</name>
+      <description>hyperram_window: 4096 bytes of memory at 0xf0010000</description>
+      <baseAddress>0xF0010000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x1000</size>
+        <usage>buffer</usage>
+      </addressBlock>
     </peripheral>
     <peripheral>
       <name>CLINT</name>

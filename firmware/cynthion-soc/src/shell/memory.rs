@@ -69,8 +69,6 @@ fn read(uart: &mut Uart, region: Region, arg: &[u8]) {
         Some(word) => {
             let _ = writeln!(uart, "{} @{:06x} {:08x}", region.name(), offset, word);
         }
-        // The same sentence `bench hyperram` prints when the port is silent, for
-        // the same reason and from the same probe.
         None => {
             let _ = writeln!(uart, "{} did not answer", region.name());
         }
@@ -114,7 +112,7 @@ fn info(uart: &mut Uart, region: Region) {
                 status(uart, &spi);
             }
         }
-        Region::Hyperram => crate::shell::hr::registers(uart),
+        Region::Hyperram => crate::shell::hr::command(uart, b"status"),
         Region::Bram => {
             let _ = writeln!(uart, "  {:9} fabric block RAM: no identity and no \
                                     configuration to read", "id");

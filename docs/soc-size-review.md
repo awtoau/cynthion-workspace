@@ -7,7 +7,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 | script | answers |
 |---|---|
 | [soc_peripheral_area.py](../scripts/soc/soc_peripheral_area.py) | each peripheral synthesised alone (upper bound) |
-| [soc_instrumentation_cost.py](../scripts/soc/soc_instrumentation_cost.py) | the three instrumentation peripherals in context (delta) |
 | [soc_upstream_copy_check.py](../scripts/soc/soc_upstream_copy_check.py) | is our copy of luna_soc's SPI PHY still verbatim |
 | [pnr_noise.py](../scripts/soc/pnr_noise.py) | how much of an Fmax difference is placement luck |
 | [soc_icache_model.py](../scripts/soc/soc_icache_model.py) | I-cache misses of a `.text` layout |
@@ -40,7 +39,7 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 ## 2. Measuring fabric area
 
 - Out of context: one module alone; upper bound (alone it keeps logic neighbours would fold). `soc_peripheral_area.py`.
-- In context: build the whole SoC twice, diff utilisation; the only number worth acting on. `soc_instrumentation_cost.py` subclasses the modules under test with an empty `elaborate`.
+- In context: build the whole SoC twice, diff utilisation; the only number worth acting on.
 - DFF is exact in both; LUT4 is mapping and depends on neighbours. Read DFF first.
 - A/B needs nothing pinned: identity is the ECP5 USERCODE plus `gateware/usercode_map.py` ([#447](https://github.com/awtoau/cynthion-workspace/issues/447), [#443](https://github.com/awtoau/cynthion-workspace/issues/443)). Gate: [soc_repro_check.py](../scripts/soc/soc_repro_check.py) (two builds byte-compared; `check.py` `repro`).
 

@@ -46,15 +46,12 @@ not the CPU's number and never was.
 
 ## What this does NOT do
 
-It does not give the HyperRAM its own clock. `fast` here is still a second output
-of the SAME PLL as `sync`: the flash PHY runs its logic in that domain.
+It does not clock the HyperRAM: that is the second PLL, inside
+`peripherals/hyperram.py`, off the same oscillator. `fast` here is still a second
+output of the SAME PLL as `sync`: the flash PHY runs its logic in that domain.
 
 `fast` is CLKOS and not CLKOS2, which is not interchangeable -- see `elaborate`.
 
-`hyperram_clocks.HyperRAMDomains` is the second PLL, and composes with this one:
-both take the oscillator as their reference, so neither is fed from the other's
-output. Instantiating it is what makes CK sweepable without touching the CPU, and
-it is not wired into `top.py` yet (#230).
 """
 
 import os

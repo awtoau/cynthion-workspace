@@ -7,11 +7,11 @@
 The client for the board arbiter. Starts the server itself if it is not up.
 
     ./scripts/board/board.py run --variant ck80-sync60 \\
-                           "bist smoke" "bist latency 8"
+                           "hr status" "hr calibrate"
     ./scripts/board/board.py shell "info"          # no configure; whatever is loaded
     ./scripts/board/board.py confirm               # is a design running, and which
     ./scripts/board/board.py configure --variant <slug>
-    ./scripts/board/board.py idle --variant <slug> --repeat 20 --budget 40 "bist all 8"
+    ./scripts/board/board.py idle --variant <slug> --repeat 20 --budget 40 "hr test"
     ./scripts/board/board.py status
     ./scripts/board/board.py stop
 

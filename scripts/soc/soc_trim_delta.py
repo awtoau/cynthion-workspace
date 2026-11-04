@@ -237,23 +237,6 @@ import top as _top
 _top.I2C_SCL_HZ = 999_000
 """,
 
-    # THE POSITIVE CONTROL. `HyperRAMProbe` is twelve counters and a large CSR
-    # block; if stubbing it does not move the total either, the harness is not
-    # measuring removals and no other row in this table means anything.
-    "hyperram-probe": """
-import peripherals.hyperram_probe as hyperram_probe
-from amaranth import Module
-from amaranth.lib import wiring
-
-class _Hyper(hyperram_probe.HyperRAMProbe):
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-        return m
-
-hyperram_probe.HyperRAMProbe = _Hyper
-""",
 }
 
 

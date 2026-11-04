@@ -50,9 +50,9 @@ which would mean testing less.
 
 ## What this cannot say
 
-The HyperRAM here is a testbench that acknowledges after a fixed delay, not
-`HyperRAMController`. It says the sink issues the right writes in the right order; it
-does not say the controller performs them. The evidence for that pair is a staged
+The HyperRAM here is a testbench that acknowledges after a fixed delay. It says the
+sink issues the right writes in the right order; `hyperram_peripheral_sim.py` covers
+the peripheral's pair port that serves them. The evidence for that pair is a staged
 image whose CRC checks out on the board -- `scripts/soc/soc_jtag_stage.py`.
 """
 
@@ -86,13 +86,8 @@ from bus.jtag_stage import (CMD_NOP, CMD_RESET, CMD_WRITE,  # noqa: E402
 SYNC_HZ = 60e6
 JTCK_HZ = 12e6
 
-# Cycles a HyperRAM word write takes, counted off `HyperRAMController`'s FSM: IDLE,
-# LATCH_RWDS, three SHIFT_COMMAND states, thirteen of HANDLE_LATENCY, WRITE_DATA,
-# RECOVERY, plus `BootRAM`'s own handshake. Used as the testbench's latency so the
-# overflow check runs against a plausible drain rate rather than an instant one.
-#
-# RECOVERY is now tCSHI rather than one cycle -- at sync 60 that is still one, and
-# a drain rate this testbench uses as a plausible figure does not turn on it.
+# Cycles the testbench takes to acknowledge a pair: a plausible drain rate for the
+# overflow check (one #588 pair transaction is ~45 hr cycles = 15 sync + handshake).
 HYPERRAM_CYCLES = 22
 
 # Where the bootloader looks, from `firmware/cynthion-soc/src/hyperram.rs`. In

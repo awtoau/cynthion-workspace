@@ -20,7 +20,7 @@
 //!     region     a word comes from        bounded by               identify
 //!     bram       a load from the window   target::BRAM_SIZE        nothing to identify
 //!     flash      target::flash_word       target::FLASH_SIZE       the first word
-//!     hyperram   the CSR staging port     target::HYPERRAM_SIZE    no JEDEC on HyperBus
+//!     hyperram   COPY_IN to the window    target::HYPERRAM_SIZE    no JEDEC on HyperBus
 //!
 //! `flash id` is the only identify that exists, and the other two say why rather
 //! than being registered as commands that print nothing. HyperBus has no JEDEC
@@ -37,7 +37,6 @@
 //! and folding it in here would make the safe half wait for the dangerous one.
 
 
-use crate::bench;
 use crate::hyperram;
 use crate::target;
 
@@ -60,10 +59,6 @@ impl Region {
         match word {
             b"bram" => Some(Region::Bram),
             b"flash" => Some(Region::Flash),
-            // Not a region on the BIST variant: `top.py` decodes no window there,
-            // and a load to an undecoded address never acks -- the CPU stalls with
-            // no console left to say so. `mem hyperram` and `bench hyperram` both
-            // arrive through here, so one arm covers both (#226).
             b"hyperram" => Some(Region::Hyperram),
             _ => None,
         }
@@ -95,10 +90,7 @@ impl Region {
     /// Where the region starts. Same rule as [`size`](Self::size): from
     /// `src/target.rs`, so it is the map the gateware built rather than a
     /// literal that has to be kept in step with it.
-    /// `None` for HyperRAM: it IS decoded at a window, but nothing in this
-    /// firmware reaches it that way -- every access goes over the bounded CSR
-    /// staging port. Reporting the window would name an address no command
-    /// here uses.
+    /// `None` for HyperRAM: it has no CPU address (#588), only the window + COPY.
     pub(crate) fn base(self) -> Option<usize> {
         match self {
             Region::Bram => Some(0),
@@ -135,33 +127,8 @@ impl Region {
                 core::ptr::read_volatile((target::BRAM_BASE + offset) as *const u32)
             }),
             Region::Flash => Some(target::flash_word(offset)),
-            Region::Hyperram => {
-                // Over the CSR staging port, not the memory window at 0x20000000,
-                // and the difference matters here. Every spin in
-                // `hyperram::read_pair` is bounded, so a part or a controller that
-                // never answers costs milliseconds and returns 0xffff; a load from
-                // the memory window would stall the bus with nothing in this
-                // firmware able to give up on it. A shell that hangs is worse than
-                // one that says it got nothing.
-                //
-                // The two halves are assembled by the same `read_u32` the staging
-                // header is read with, so this cannot disagree with the bootloader
-                // about which half is which. Its address is in 16-bit words,
-                // because the part is 16 bits wide.
-                let word = hyperram::read_u32(offset as u32 / 2);
-
-                // 0xffff_ffff is what the guard returns on a timeout AND what a
-                // never-written part reads as, so the value alone cannot tell a
-                // dead port from empty memory. The probe -- one word out and back
-                // through bench's scratch area, well above anything staged -- is
-                // what separates them, and it runs only in the ambiguous case, so
-                // a read that answered stays a read and writes nothing.
-                if word == 0xffff_ffff && !bench::hyper_present() {
-                    None
-                } else {
-                    Some(word)
-                }
-            }
+            // One COPY_IN of 4 bytes, bounded; `None` if the op failed.
+            Region::Hyperram => hyperram::read_u32(offset as u32),
         }
     }
 }

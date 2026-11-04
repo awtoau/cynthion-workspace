@@ -838,9 +838,8 @@ def main():
                    # that separates each from its `init`.
                    b"[status|floor|alert|rate|detect|limit|samples|bracket"
                    b"|hispeed|reset]",
-                   # `clear` is the destructive one. `status` is the only
-                   # identify (6e46cd2): there is no `id` verb on any region.
-                   b"[status|cr0|cr1|rwds|read|test|cross|ramp|bench|clear]",
+                   # `hr` (#588); `test` and `inject` are the destructive ones.
+                   b"[abort|calibrate|delay|errors|fill|inject|read|reg|results|status|test|write]",
                    # `input` went with the selector that reached no pin (#305).
                    b"[status|off|control|both|charge]"]
         command("help", listing, "`help` lists every command")
@@ -1005,20 +1004,15 @@ def main():
         command("cpu check", [b"sum   acf13568 ok"],
                 "the shell still answers after a bus fault")
 
-        # The verb that started #409, on a build with no engine behind it.
-        #
-        # `bist status` must not call `describe()`, which reads f0000800 -- a
-        # window the shipping variant does not decode. The gate is the cargo
-        # feature, not `Bist::present()`, because `present()` answers by reading
-        # the same address. So the assertion is BOTH halves: the sentence, and no
-        # trap line, which is what proves nothing touched the bus.
-        reply = command("bist status",
-                        [b"bist: this target has no engine"],
-                        "`bist` on an engineless build says so")
-        check("`bist` touches no bus on an engineless build",
-              b"*** TRAP" not in reply,
-              f"a trap line means the verb read the absent engine anyway:\n"
-              f"{show(reply)}")
+        # The HyperRAM peripheral (#588): on QEMU there is none, and `hr` says so
+        # without touching the bus; on the board it reports itself.
+        if board:
+            command("hr status", [b"hyperram id", b"cal tap"],
+                    "`hr status` reports CK, calibration and errors")
+        else:
+            reply = command("hr status", [b"hr: no HyperRAM peripheral on this target"],
+                            "`hr` on a target with no peripheral says so")
+            check("`hr` touches no bus on QEMU", b"*** TRAP" not in reply, show(reply))
 
         # --- info -------------------------------------------------------------
         # Shape, not values. The hash, the branch, the timestamp and the
@@ -2103,26 +2097,8 @@ def main():
                  b"reads CORRECT -- @0 615000ff @40 2a558800"],
                 "`bench flash` reads the window and checks known content")
 
-        # The HyperRAM answer here is the REFUSAL, and asserting it is worth
-        # more than asserting a walk would be. The QEMU backend is a `.bss`
-        # array sized for a staged image, about 32k words; `bench` walks at
-        # word 0x10000, deliberately above anything staging uses, so on this
-        # target the port does not answer. What that exercises is the guard:
-        # every spin in `hyperram::read_word` is bounded at 100_000 rather
-        # than unbounded, so a dead port makes the walks take about a minute
-        # instead of failing -- which reads as a hung shell. The probe is
-        # what turns that into a sentence, and this is the check that it
-        # short-circuits rather than grinding.
-        # ON THE BOARD THE PORT ANSWERS, so this inverts into the assertion
-        # worth having on real silicon: the walk completes and the pattern
-        # survives it. Measured 0.79-1.03 MB/s with 0 words wrong over 8 KiB.
-        if board:
-            command("hyperram bench", [b"words wrong"],
-                    "`hyperram bench` walks the part and checks the pattern")
-        else:
-            command("hyperram bench", [b"hyperram did not answer"],
-                    "`hyperram bench` refuses a port that does not answer "
-                    "instead of spinning on it")
+        command("hyperram bench", [b"measured by `hr test`"],
+                "`hyperram bench` points at `hr test`")
         # `bench` is device-major now -- `hyperram bench`, not `bench hyperram`
         # -- so an unknown REGION is an unknown command, and an unknown VERB on a
         # real region is what the usage line answers.
@@ -2179,8 +2155,9 @@ def main():
         # line; the HyperRAM one decodes the part's own ID registers.
         command("bram status", [b"no identity"],
                 "`bram status` says there is nothing to identify")
-        command("hyperram status", [b"id0", b"cr0"],
-                "`hyperram status` decodes the part's own registers")
+        command("hyperram status",
+                [b"cal tap"] if board else [b"no HyperRAM peripheral"],
+                "`hyperram status` is `hr status`")
         # And the verbs that were removed are refused, not silently answered.
         command("bram id", [b"usage: bram status|read"],
                 "`bram id` is gone: it gets the usage line")
@@ -2191,25 +2168,14 @@ def main():
         command("bram read zz", [b"usage: bram status|read <hex offset>"],
                 "a malformed offset is refused rather than read as zero")
 
-        # The HyperRAM read, and here the two targets genuinely differ.
-        #
-        # Under QEMU the backend is a `.bss` array of about 32k words, so byte
-        # offset 0x20000 -- word 0x10000, the area `bench` walks -- is above it
-        # and the port does not answer. That is the assertion worth having:
-        # every spin in `hyperram::read_word` is bounded, so a dead port
-        # produces a sentence in milliseconds instead of a shell that looks
-        # hung. The reply must also not be a plausible-looking `ffffffff`,
-        # which is why the firmware probes before believing that value.
-        #
-        # ON THE BOARD the port answers, so the same command must come back
-        # with a word rather than a refusal.
+        # The HyperRAM read: one COPY_IN through the window on the board; past the
+        # QEMU stand-in (the staging area only) the copy fails and says so.
         if board:
             command("hyperram read 20000", [b"hyperram @020000"],
-                    "`hyperram read` reads the part over the staging port")
+                    "`hyperram read` reads the part through the window")
         else:
             command("hyperram read 20000", [b"hyperram did not answer"],
-                    "`hyperram read` reports a silent port instead of "
-                    "spinning on it")
+                    "`hyperram read` past the stand-in reports a failed copy")
 
         # --- backspace --------------------------------------------------------
         # Type a command with one wrong character, rub it out, and require the

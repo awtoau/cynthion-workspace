@@ -12,7 +12,7 @@
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, DomainRenamer, Elaboratable,
                       Instance, Module, Mux, ResetSignal, Signal)
-from amaranth.lib.cdc import FFSynchronizer, PulseSynchronizer
+from amaranth.lib.cdc import FFSynchronizer, PulseSynchronizer, ResetSynchronizer
 from amaranth.lib.fifo import AsyncFIFO
 
 from hyperbus import ECP5HyperBusPHY, HyperBusCore, PinIntent
@@ -281,18 +281,22 @@ class SeqEngine(Elaboratable):
 class _PLL(Elaboratable):
     """EHXPLLL: CLKOP -> `domain`, optional CLKOS at +`phase90_domain` 90 degrees; reset until lock."""
 
-    def __init__(self, *, domain, mhz, clki, phase90_domain=None):
+    def __init__(self, *, domain, mhz, clki, phase90_domain=None, sync_reset=False):
+        # sync_reset: reset each domain through a ResetSynchronizer on ~LOCK (async assert,
+        # synchronous release; review on #590). Off = the #581 reference as measured.
         self.domain, self.mhz, self.clki, self.d90 = domain, mhz, clki, phase90_domain
+        self.sync_reset = sync_reset
         solved = solve_pll(mhz)
         if solved is None:
             raise ValueError(f"no PLL configuration gives {mhz} MHz; reachable near it: "
                              f"{reachable(mhz - 10, mhz + 10)}")
         self.clki_div, self.fb_div, self.div = solved
+        self.locked = Signal(name=f"lock_{domain}")   # EHXPLLL LOCK, for a reader that wants it
 
     def elaborate(self, platform):
         m = Module()
         m.domains += ClockDomain(self.domain)
-        clk, locked = Signal(name=f"clk_{self.domain}"), Signal(name=f"lock_{self.domain}")
+        clk, locked = Signal(name=f"clk_{self.domain}"), self.locked
         extra = {}
         if self.d90:
             m.domains += ClockDomain(self.d90)
@@ -300,7 +304,11 @@ class _PLL(Elaboratable):
             cph, fph = phase_params(self.div, 90.0)
             extra = dict(p_CLKOS_ENABLE="ENABLED", p_CLKOS_DIV=self.div,
                          p_CLKOS_CPHASE=cph, p_CLKOS_FPHASE=fph, o_CLKOS=clk90)
-            m.d.comb += [ClockSignal(self.d90).eq(clk90), ResetSignal(self.d90).eq(~locked)]
+            m.d.comb += ClockSignal(self.d90).eq(clk90)
+            if self.sync_reset:
+                m.submodules.rst90 = ResetSynchronizer(~locked, domain=self.d90)
+            else:
+                m.d.comb += ResetSignal(self.d90).eq(~locked)
             if platform is not None:
                 platform.add_clock_constraint(clk90, self.mhz * 1e6)
         m.submodules.pll = Instance(
@@ -319,7 +327,11 @@ class _PLL(Elaboratable):
             i_PHASEDIR=1, i_PHASESTEP=1, i_PHASELOADREG=1,
             i_PLLWAKESYNC=0, i_ENCLKOP=0,
             o_CLKOP=clk, o_LOCK=locked, **extra)
-        m.d.comb += [ClockSignal(self.domain).eq(clk), ResetSignal(self.domain).eq(~locked)]
+        m.d.comb += ClockSignal(self.domain).eq(clk)
+        if self.sync_reset:
+            m.submodules.rst = ResetSynchronizer(~locked, domain=self.domain)
+        else:
+            m.d.comb += ResetSignal(self.domain).eq(~locked)
         if platform is not None:
             platform.add_clock_constraint(clk, self.mhz * 1e6)
         return m

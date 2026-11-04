@@ -52,8 +52,8 @@ from pathlib import Path
 FLAG = "flag"
 TEXT = "text"
 
-# One rung below the fabric ceiling. Ladder: #410.
-CK_DEFAULT_MHZ = "80"
+# HyperRAM CK, MHz: clean in the #581 sweep, decided in #588.
+CK_DEFAULT_MHZ = "180"
 
 # (environment variable, default, directory tag, kind)
 #

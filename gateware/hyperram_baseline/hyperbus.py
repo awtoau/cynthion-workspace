@@ -66,13 +66,16 @@ class PinIntent:
 class HyperBusCore(Elaboratable):
     """Burst engine at the pin-intent level, in `sync` (rename to `hr`)."""
 
-    def __init__(self, *, ck_mhz, pins=None):
+    def __init__(self, *, ck_mhz, pins=None, reg_write=False, masked=False):
+        # reg_write: register WRITE (zero latency, RWDS not driven; A01-006 s7.4, Fig 32).
+        # masked: `wmask` drives RWDS per byte on writes (Fig 7). Both off = the #581 core.
         self.ck_mhz = ck_mhz
+        self.reg_write, self.masked = reg_write, masked
         self.pins = pins or PinIntent()
         self.max_burst = max_burst_words(ck_mhz)
         self.start = Signal()               # taken while `idle`
         self.write = Signal()
-        self.reg = Signal()                 # register space, one word, reads only
+        self.reg = Signal()                 # register space, one word; reads unless reg_write
         self.addr = Signal(32)              # word address
         self.n = Signal(16)
         self.wait = Signal(5, init=WAIT_DEFAULT)
@@ -81,6 +84,7 @@ class HyperBusCore(Elaboratable):
         self.done = Signal()                # one cycle, transaction over
         self.wdata = Signal(16)             # taken on cycles where `wready`
         self.wready = Signal()
+        self.wmask = Signal(2)              # with `masked`: [1] masks byte A, [0] byte B
         self.rvalid = Signal()
         self.rdata = Signal(16)
         self.missing = Signal(16)           # words of the last read the tail filled
@@ -105,6 +109,8 @@ class HyperBusCore(Elaboratable):
         listen = Signal()                   # read data may be arriving
 
         m.d.comb += data_start.eq(3 + wait)
+        reg_w = Const(int(self.reg_write), 1)
+        drive_rwds = is_write & ~is_reg
         rst_cycles = int(RESET_NS * self.ck_mhz / 1000.0)
         rst_cnt = Signal(range(2 * rst_cycles + 1), init=2 * rst_cycles)
 
@@ -124,10 +130,11 @@ class HyperBusCore(Elaboratable):
                     m.next = "RESET"
                 with m.Elif(self.start):
                     m.d.sync += [
-                        is_write.eq(self.write & ~self.reg), is_reg.eq(self.reg),
-                        n.eq(Mux(self.reg, 1, self.n)), wait.eq(self.wait),
+                        is_write.eq(self.write & (~self.reg | reg_w)), is_reg.eq(self.reg),
+                        n.eq(Mux(self.reg, 1, self.n)),
+                        wait.eq(Mux(self.reg & self.write & reg_w, 0, self.wait)),
                         ca.eq(Cat(self.addr[0:3], Const(0, 13), self.addr[3:32],
-                                  Const(1, 1), self.reg, ~self.write | self.reg)),
+                                  Const(1, 1), self.reg, ~self.write | (self.reg & ~reg_w))),
                         cnt.eq(0), k.eq(0), received.eq(0), self.missing.eq(0),
                         p.cs.eq(1)]
                     m.next = "PRE"
@@ -146,16 +153,18 @@ class HyperBusCore(Elaboratable):
                     m.d.sync += [p.dq_oe.eq(is_write | (k < data_start - 4)),
                                  p.rwds_oe.eq(is_write & (k >= 7))]
                 with m.Else():
-                    m.d.sync += [p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write)]
+                    m.d.sync += [p.dq_oe.eq(is_write), p.rwds_oe.eq(drive_rwds)]
                     with m.If(is_write):
                         m.d.comb += self.wready.eq(1)
                         m.d.sync += p.dq_o.eq(self.wdata)
+                        if self.masked:
+                            m.d.sync += p.rwds_o.eq(self.wmask)
                 with m.If(k == data_start + n - 1):
                     m.d.sync += cnt.eq(0)
                     m.next = "TAIL"
             with m.State("TAIL"):
                 m.d.comb += listen.eq(1)
-                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write),
+                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(drive_rwds),
                              cnt.eq(cnt + 1)]
                 with m.If(is_write | (received == n)):
                     m.d.sync += cnt.eq(0)
@@ -169,7 +178,7 @@ class HyperBusCore(Elaboratable):
                     m.d.sync += [cnt.eq(0), filling.eq(0)]
                     m.next = "POST"
             with m.State("POST"):
-                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(is_write),
+                m.d.sync += [p.cs.eq(1), p.dq_oe.eq(is_write), p.rwds_oe.eq(drive_rwds),
                              cnt.eq(cnt + 1)]
                 with m.If(cnt == POST_GUARD_CYCLES - 1):
                     m.d.sync += cnt.eq(0)

@@ -18,9 +18,7 @@ Method and its limits:
 * Matching is by NAME, not by object: `obj.x.eq(` drives, any other `.x` reads.
   Names collide across classes, so every hit is a candidate to confirm by hand.
 * It UNDER-reports one shape: a mux that forwards a field counts as a driver,
-  so a chain ending at an undriven face reads as wired. `latency_clocks` is the
-  live example -- `hyperram_share.py:191` drives the controller from
-  `stage`/`bist`, and neither face is driven by anything. Object-level, and out
+  so a chain ending at an undriven face reads as wired. Object-level, and out
   of this scan's reach.
 * `--check` asserts known-dangling ports are found AND known-wired ports are
   not, so a pass carries information ([`docs/instruments.md`](../docs/instruments.md)).
@@ -61,19 +59,12 @@ CONSTANT = re.compile(r"\.eq\(\s*(?:0|1|-1|0[xb][0-9a-fA-F_]+|\d+|C\(|Const\()")
 
 # --check expectations. A control in each direction.
 MUST_FIND = {
-    "register_space": "constant",   # #319/#531: the bit is allocated, tied to 0
     "armed": "unread",              # serial_line.py, declared a diagnostic
     "frame_errors": "unread",       # serial_line.py, declared a diagnostic
     "phy_ready": "unread",          # clocks.py, the 1.2 ms ULPI preparation
-    "recovery_cycles": "undriven",  # #341's tCSHI lever, added and never wired
-    "read_stall_cycles": "undriven",  # bootram.py, the sink for `sel` bits 5:4
 }
 MUST_NOT_FIND = {
-    "rwds_at",        # hyperram_probe.rwds_at -> the share mux: the exemplar, wired
-    "start_transfer", # driven every transaction
-    "final_word",
-    "write_ready",
-    "perform_write",
+    "pair_ack",       # hyperram.py: the stager's handshake, wired in top.py
 }
 
 

@@ -74,8 +74,8 @@ the repo, and the recipe below is printed with it filled in.
 The `builds` table declares only identity -- when, which commit, which branch,
 dirty or not, how long. Every measured column and every configuration column is
 added by `ensure_columns()` on first sight, with its type taken from the Python
-value. Adding `HYPERRAM_BIST` to `gateware/soc/top.py` therefore adds a
-`hyperram_bist` column to the table on the next build and needs no migration, no
+value. Adding `FLASH_FULL_SCK` to `gateware/soc/top.py` therefore adds a
+`flash_full_sck` column to the table on the next build and needs no migration, no
 DDL and no edit here. Same for a new VexiiRiscv generator flag.
 
 That is deliberate and it is the reason the table is allowed to be as wide as it
@@ -740,7 +740,8 @@ BRAM_GROUPS = [
     (r"Btb", "cpu btb"),
     (r"ila", "ila"),
     (r"^serial\.usb|usb", "usb buffers"),
-    (r"^bootram|^flash", "flash / bootram"),
+    (r"^hyperram", "hyperram"),
+    (r"^flash", "flash"),
     (r"^cpu\.", "cpu (other)"),
 ]
 

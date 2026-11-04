@@ -491,9 +491,9 @@ def cross_check(peripherals, emit):
         "CLINT": soc_module.CLINT_BASE,
         "SPIFLASH": soc_module.FLASH_BASE,
         "HYPERRAM": soc_module.HYPERRAM_BASE,
+        "HYPERRAM_WINDOW": soc_module.HYPERRAM_WINDOW_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
         "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
-        "BOOTRAM": soc_module.BOOTRAM_BASE,
     }
 
     ok = True
@@ -551,9 +551,9 @@ def cross_check(peripherals, emit):
     # addresses must come from the register walk. Checking the references as well
     # as the generated file makes a reintroduced literal fail immediately.
     hyperram = (src / "hyperram.rs").read_text()
-    for name in ("ADDR", "CTRL", "STATUS", "DATA", "WDATA"):
+    for name in ("STATUS", "CMD", "HR_ADDR", "WIN_ADDR", "LEN"):
         if f"offset::{name}" not in hyperram:
-            emit(f"  hyperram.rs no longer refers to bootram::offset::{name}")
+            emit(f"  hyperram.rs no longer refers to hyperram::offset::{name}")
             firmware_ok = False
 
     for crate_src in sorted((ROOT / "firmware").glob("*/src")):
@@ -661,6 +661,12 @@ def variant_constants():
     return sync_hz, prescale_for(sync_hz, soc_module.I2C_SCL_HZ), soc_module.I2C_SCL_HZ
 
 
+def hyperram_ck_hz():
+    """HyperRAM CK of this variant (`CYNTHION_HYPERRAM_CK_MHZ`), for the driver's bounds."""
+    import top as soc_module
+    return round(soc_module.HYPERRAM_CK_MHZ * 1e6)
+
+
 def render_variant():
     """The constants that follow `CYNTHION_SYNC_MHZ`, as one includable file.
 
@@ -687,6 +693,10 @@ def render_variant():
         "/// Getting it wrong gives a bus that violates its own setup times and",
         "/// answers most of the time.",
         f"pub const I2C_PRESCALE: u16 = {prescale};",
+        "",
+        "/// HyperRAM CK, in Hz (`CYNTHION_HYPERRAM_CK_MHZ`): the driver's wait bounds",
+        "/// convert hr cycles to `rdtime` ticks with it.",
+        f"pub const HYPERRAM_CK_HZ: u32 = {hyperram_ck_hz()};",
         "",
     ])
 

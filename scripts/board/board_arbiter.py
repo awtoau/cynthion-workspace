@@ -6,7 +6,7 @@
 """
 One process owns the board -- the tty, Apollo JTAG, and what is configured.
 
-    ./scripts/board/board.py run --variant <slug> "bist smoke"     # the client
+    ./scripts/board/board.py run --variant <slug> "hr status"     # the client
     ./scripts/board/board_arbiter.py --serve                       # the server
 
 ## THE RULE
@@ -110,7 +110,7 @@ SCHEMA_IDLE = "board-idle-observation"
 # bound `soc_shell.REPLY_S` and `soc_confirm.CONSOLE_REPLY_S` already carry.
 # On expiry: the command is recorded `timeout` with the limit and the elapsed,
 # the job FAILS, and the board is marked unknown so the next job reconfigures.
-# A sweep takes seconds and MUST state its own budget -- `bist all 1` is 4.4 s.
+# A sweep takes seconds and MUST state its own budget -- `hr test` is 4.4 s.
 DEFAULT_COMMAND_S = 2.0
 
 # How often the command reader looks for bytes and for a preemption.
@@ -422,8 +422,6 @@ class Board:
         `info` is read by the arbiter itself rather than being a job command,
         so no transcript can exist without it.
         """
-        import hyperram_matrix_diff as matrix
-
         # ASKED TWICE. The banner is flushed on the first byte received after a
         # boot, so it can arrive mid-reply and carry the prompt this read stops
         # at -- `info`'s own output then lands after the read finished. Seen on
@@ -431,10 +429,10 @@ class Board:
         for _attempt in range(2):
             reply, status, _ = self.ask(link, "info", DEFAULT_COMMAND_S, None)
             text = reply.decode("ascii", "replace")
-            image = matrix.IMAGE.search(text)
+            image = IMAGE.search(text)
             if status == "ok" and image:
                 break
-        gateware = matrix.GATEWARE.search(text)
+        gateware = GATEWARE.search(text)
         die = DIE_C.search(text)
         if status != "ok" or not image:
             raise Refused(
@@ -453,19 +451,20 @@ class Board:
 # ---------------------------------------------------------------------------
 # Idle observations: EVENTS, never rows
 # ---------------------------------------------------------------------------
+
+# What the BOARD says it is running, from `info` (#430).
+IMAGE = re.compile(r"^\s*image\s+(\S+)\s+(clean|dirty)", re.M)
+GATEWARE = re.compile(r"^\s*gateware\s+(\S+)\s+(clean|dirty)", re.M)
 #
 # An idle run is not a measurement and must be incapable of being quoted as one.
-# Separate directory, separate schema, and `hyperram_matrix_diff.load` refuses
-# to read one -- `tests/test_idle_is_not_a_measurement.py` proves the refusal.
-# What it earns its board time with is events: a wedge with the causing state
-# still loaded, a tally that moved between identical runs, a cell that changed
-# verdict, a die temperature that drifted.
+# Separate directory, separate schema. What it earns its board time with is
+# events: a wedge with the causing state still loaded, a build that changed
+# under it, a die temperature that drifted.
 
 # How much of a reply an idle observation keeps.
 #
-# `bist all 1` prints 343 KB; a soak of hundreds of runs would be gigabytes of
-# rows nobody may quote. The tail carries the summary line and the last cells,
-# which is what an event is derived from; the full byte count is recorded.
+# A soak of hundreds of runs would be gigabytes of rows nobody may quote; the
+# tail carries the summary, and the full byte count is recorded.
 IDLE_REPLY_TAIL = 2000
 
 # How far the die may drift before it is an event, in Celsius.
@@ -502,15 +501,8 @@ def build_change(record: dict, previous: dict) -> str:
 
 
 def idle_observe(record: dict, previous: dict | None) -> dict:
-    """Fill an idle record's `tally`, `verdict_classes` and `events`.
-
-    Keys are deliberately NOT a matrix run's (`summary`, `failures`, `pins`):
-    a run recorded here cannot be fed to the diff even if the refusal in
-    `hyperram_matrix_diff.load` were removed.
-    """
-    import bist_rows
-
-    events, tally, classes, flapped = [], {}, {}, {}
+    """Fill an idle record's `events` (and empty `tally`/`verdict_classes`)."""
+    events, tally, classes = [], {}, {}
     for step in record.get("transcript", []):
         text = step.get("reply", "")
         key = f"{step['command']}#{step['pass']}"
@@ -520,23 +512,6 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
                 f"{record['request']['budget_s']:.1f} s after "
                 f"{step['elapsed_s']:.1f} s. The state that caused it is still "
                 "on the board until the next job configures.")
-        summary = bist_rows.SUMMARY.search(text)
-        if summary:
-            tally[key] = {name: int(value) for name, value
-                          in summary.groupdict().items()}
-        for row in bist_rows.rows(text):
-            cell = "{lat},{mode},{drive},{clk},{sel}".format(**row)
-            verdict = row["verdict"]
-            seen = ("fail" if verdict.startswith("fail")
-                    else "pass" if verdict.startswith("PASS")
-                    else "no result")
-            # A cell that disagrees with ITSELF across this job's own passes is
-            # the strongest marginality evidence there is: same configuration,
-            # same board, seconds apart.
-            if cell in classes and classes[cell] != seen:
-                flapped.setdefault(cell, set()).add(classes[cell])
-                flapped[cell].add(seen)
-            classes[cell] = seen
         step["reply_bytes"] = len(text)
         step["reply"] = text[-IDLE_REPLY_TAIL:]
 
@@ -546,35 +521,11 @@ def idle_observe(record: dict, previous: dict | None) -> dict:
     board = (record.get("provenance") or {}).get("board") or {}
     record["tally"] = tally
     record["verdict_classes"] = classes
-    if flapped:
-        events.append(
-            f"{len(flapped)} cell(s) disagreed with themselves WITHIN this run: "
-            + ", ".join(f"{cell} {'/'.join(sorted(seen))}"
-                        for cell, seen in sorted(flapped.items())[:8])
-            + (" ..." if len(flapped) > 8 else ""))
-
     if previous and not same_build(record, previous):
         events.append(build_change(record, previous))
         previous = None                 # nothing below may compare across it
 
     if previous:
-        for key, counts in tally.items():
-            was = (previous.get("tally") or {}).get(key)
-            if was and was != counts:
-                events.append(f"TALLY MOVED for {key}: {was} -> {counts}")
-        # ONLY cells both runs reached. An idle sweep is abandoned mid-command,
-        # so its cell set is a prefix -- a union would report every cell the
-        # shorter run never got to as having changed verdict.
-        before = previous.get("verdict_classes") or {}
-        moved = sorted(cell for cell in set(before) & set(classes)
-                       if before[cell] != classes[cell])
-        if moved:
-            events.append(
-                f"{len(moved)} cell(s) changed verdict against "
-                f"{previous['id']}: "
-                + ", ".join(f"{cell} {before.get(cell)}->{classes.get(cell)}"
-                            for cell in moved[:8])
-                + (" ..." if len(moved) > 8 else ""))
         was_die = ((previous.get("provenance") or {}).get("board") or {}).get("die_c")
         if was_die is not None and board.get("die_c") is not None \
                 and abs(board["die_c"] - was_die) >= DIE_DRIFT_C:

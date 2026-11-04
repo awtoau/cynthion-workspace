@@ -1,6 +1,7 @@
 //! The resident bootloader: the only thing at 0x0, and the only thing that never moves.
 //!
-//! - reads the staging header out of HyperRAM -- magic, length, CRC32
+//! - waits for the HyperRAM peripheral (#588) to be ready and calibrated
+//! - reads the staging header out of HyperRAM through its window -- magic, length, CRC32
 //! - checksums the staged image on the way OUT, which is the check that covers the
 //!   HyperRAM round trip rather than only the transfer that filled it
 //! - copies it into the image region, then `fence` + `fence.i`
@@ -77,20 +78,8 @@
 //!
 //! ## Measured size
 //!
-//! | symbol / section | bytes |
-//! |------------------|-------|
-//! | `pass`           | 188   |
-//! | `boot`           | 132   |
-//! | `hyperram::read_u32` | 48 |
-//! | `hyperram::backend::read_pair` | 48 |
-//! | `enter_image`    | 64    |
-//! | `_start`         | 12    |
-//! | `.rodata`, `.data`, `.bss` | 0, and `memory.x` asserts the last two |
-//! | **image total**  | **492** |
-//!
-//! 1 KiB is allocated. Re-measure with `./scripts/soc_boot_size.py` (also covers the
-//! profile ablations behind these numbers); `Cargo.toml` holds what each setting is
-//! worth.
+//! 1 KiB is allocated; `memory.x` asserts the stack floor. `./scripts/soc_boot_size.py`
+//! measures it.
 
 #![no_std]
 #![no_main]
@@ -131,7 +120,7 @@ enum Status {
     Crc = 2,
     /// Magic present, length zero or past the image region: a corrupt header.
     Length = 3,
-    /// HyperRAM never answered. Every word read back as all ones.
+    /// HyperRAM was not ready and calibrated in time, or an op failed.
     Silent = 4,
     /// This image panicked, which nothing in it can currently do.
     Panicked = 5,
@@ -149,11 +138,6 @@ enum Status {
     /// Not an error. It means: your staged image was fine, and it is not what is
     /// running. Program flash instead -- `./dev.py run` does, in seconds.
     FlashResident = 6,
-    /// The part could not be taken back from the BIST engine, so nothing was
-    /// read. A warm `reset` out of a BIST run leaves the mode where the shell
-    /// left it, and a staging access in that mode is answered all-ones (#432)
-    /// -- which would otherwise be reported as `Silent`.
-    Owned = 7,
     /// The image verified, and then the COPY read back something else.
     ///
     /// The copy pass re-reads HyperRAM, so on a part that does not read the same
@@ -217,28 +201,18 @@ unsafe extern "C" fn _start() -> ! {
 /// loops that can stop agreeing.
 fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
     let mut crc = hyperram::Crc32::new();
-    hyperram::seek_image();
-
+    let mut reader = hyperram::Reader::new(hyperram::IMAGE_BYTE);
     let mut done: u32 = 0;
     while done < length {
-        // The staging port moves a 32-bit pair and the address auto-increments in
-        // gateware, so a sequential read is one fetch per four bytes with no address
-        // bookkeeping.
-        let word = hyperram::read_pair();
-        for shift in [0u32, 8, 16, 24] {
-            if done < length {
-                let byte = (word >> shift) as u8;
-                crc.push(byte);
-                if let Some(dest) = dest {
-                    // SAFETY: `done` is bounded by `length`, which `staged()` has
-                    // already limited to the image region's size.
-                    unsafe { write_volatile(dest.add(done as usize), byte) };
-                }
-                done += 1;
-            }
+        let byte = reader.byte();
+        crc.push(byte);
+        if let Some(dest) = dest {
+            // SAFETY: `done` is bounded by `length`, which `staged()` has
+            // already limited to the image region's size.
+            unsafe { write_volatile(dest.add(done as usize), byte) };
         }
+        done += 1;
     }
-
     crc.finish()
 }
 
@@ -248,18 +222,10 @@ fn pass(length: u32, dest: Option<*mut u8>) -> u32 {
 /// real: a single pass that checksummed while copying would have already overwritten
 /// the image region by the time it discovered the CRC was wrong, leaving a half-written
 /// image as the only thing to fall back to.
-///
-/// The extra read is one more pass over the staged bytes, and only on a boot that has
-/// an image staged. `docs/architecture.md` section 15 measures the CPU-side HyperRAM port
-/// at roughly 8 ms for 32 KiB at 60 MHz, so the largest image this will accept costs
-/// about 16 ms more than a single pass would.
 fn boot() -> ! {
-    // TAKE THE PART BACK FIRST. The mode survives a warm reboot -- the CPU
-    // jumps to `_start` and the CSR keeps what the shell wrote -- so a reset
-    // after a BIST run would read the staged image through a mux that is not
-    // pointing at the staging path.
-    if !hyperram::claim(false) {
-        enter_image(Status::Owned);
+    // The peripheral calibrates itself after PLL lock; reads are refused before that.
+    if !hyperram::backend::wait_ready() {
+        enter_image(Status::Silent);
     }
 
     let status = match hyperram::staged() {
