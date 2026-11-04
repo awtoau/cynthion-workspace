@@ -74,5 +74,8 @@ def test_the_check_labels_passes_still_run(tmp_path):
     opts = fast_build_env.OVERRIDES["AMARANTH_synth_opts"]
     after = fast_build_env.OVERRIDES["AMARANTH_script_after_synth"]
     log, _ = _synth(tmp_path, "fast", opts, after)
-    for executed in ("Executing HIERARCHY", "Executing CHECK", "Executing BLACKBOX"):
+    # `blackbox` writes no header line, so it is covered by the build still
+    # succeeding on a distributed RAM (test above), not by the log. `stat` feeds
+    # the pre-pack LUT/FF counts the build records (top.rpt); without it they read 0.
+    for executed in ("Executing HIERARCHY", "Executing CHECK", "Printing statistics"):
         assert executed in log, executed
