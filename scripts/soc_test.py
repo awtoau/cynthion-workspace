@@ -789,27 +789,28 @@ def main():
               f"received: {show(session.snapshot()[mark:]) or '(nothing)'}")
 
         # --- help -----------------------------------------------------------
-        def command(text, needles, name):
+        def command(text, needles, name, budget=None):
             """Send a line, require every needle in what comes back."""
+            budget = REPLY_S if budget is None else budget
             mark = len(session.snapshot())
             session.send(text.encode() + b"\r")
             # Each needle's whole LINE, so a check that parses past its needle
             # is not reading one still on the wire.
             missing = [n for n in needles
-                       if expect_line(session, n, REPLY_S, mark) is None]
+                       if expect_line(session, n, budget, mark) is None]
             # And then the prompt: the needles say the reply STARTED, this says
             # the handler has finished and `reply` is all of it.
             #
             # ASSERTED, not merely waited for: discard the return and a handler
             # that never comes back reads exactly like one that did.
-            prompt = session.expect(PROMPT, REPLY_S, mark)
+            prompt = session.expect(PROMPT, budget, mark)
             reply = session.snapshot()[mark:]
             check(name, not missing and prompt is not None,
                   f"sent: {text!r}\n"
                   f"missing: {missing}\n"
                   f"prompt: {'yes' if prompt is not None else 'NO PROMPT -- '
                              'the handler did not return inside the budget'}\n"
-                  f"received in {REPLY_S}s: {show(reply) or '(nothing)'}")
+                  f"received in {budget}s: {show(reply) or '(nothing)'}")
             return reply
 
         # ONE LINE PER FAMILY, since the root listing collapsed: `flash [id|read]`
@@ -1389,8 +1390,11 @@ def main():
             # So assert the INVARIANT, which is what the drop counter is for:
             # every record is either pushed or counted as lost, and none
             # silently vanishes.
-            session.send(b"log 20\r")
-            session.expect(b"> ", REPLY_S, mark)
+            session.send(b"cpu log 20\r")
+            # The result line first: a bare `> ` matches the echo redraw, which
+            # comes before the command's output.
+            expect_line(session, b"log pushed", REPLY_S, mark)
+            session.expect(PROMPT, REPLY_S, mark)
             reply = session.snapshot()[mark:]
             pushed = re.search(rb"log pushed (\d+) of (\d+)", reply)
             dropped = re.search(rb"dropped (\d+)", reply)
@@ -1561,7 +1565,12 @@ def main():
               "conversation.\n"
               f"received: {show(reply) or '(nothing)'}")
 
-        check("no interrupt source is left claimed", b"pending 00000000" in reply,
+        # pending AND enabled: a masked source (power ALERT before
+        # `alert_pin_enable`) can latch an edge but can never be claimed.
+        bits = re.search(rb"pending ([0-9a-f]{8}) enabled ([0-9a-f]{8})", reply)
+        check("no interrupt source is left claimed",
+              bits is not None
+              and int(bits.group(1), 16) & int(bits.group(2), 16) == 0,
               "a bit set in `pending` while the shell is idle is a source that "
               "asserted and was never serviced, or -- worse -- a claim that was "
               "taken and never completed. The second kind is permanent: that "
@@ -1595,6 +1604,20 @@ def main():
         # unchanged; only the setup is explicit now.
         command("pac1954 rate 50", [b"rate     50 ms"],
                 "the poll can be turned on, for the timing checks below")
+
+        # The first run is the priming cycle, 1 ms before the next, so `gap worst`
+        # over two runs is that 1 ms. Wait for 3 runs (2 x 50 ms x 1.25 after the
+        # first) so the gap holds a real period; expiry falls through to the
+        # checks, which then fail.
+        gap_deadline = time.monotonic() + 2 * 0.050 * 1.25 + REPLY_S
+        while time.monotonic() < gap_deadline:
+            mark = len(session.snapshot())
+            session.send(b"rtic\r")
+            session.expect(PROMPT, REPLY_S, mark)
+            runs = re.search(rb"power_refresh prio \d+ period \d+ ms\s+runs (\d+)",
+                             session.snapshot()[mark:])
+            if runs and int(runs.group(1)) >= 3:
+                break
 
         reply = command("rtic",
                         [b"model    rtic", b"task     power_refresh",
@@ -2088,14 +2111,22 @@ def main():
         # It CANNOT say anything about speed. `virt` has no D-cache to prove
         # live and `flash_word` is a two-value stand-in rather than an SPI
         # part. Timing evidence is the board's.
+        # Each walk runs for 1 s (bench.rs SECONDS default; fd4ec2e): 8 walks
+        # for bram, 4 for flash. Budget = walks x 1 s x 1.25 + the reply budget.
         command("bram bench",
                 [b"region", b"cycles/acc", b"bram", b"read seq",
                  b"read rnd", b"write seq", b"write rnd",
                  b"0 words wrong"],
-                "`bench bram` walks block RAM and the pattern survives it")
+                "`bench bram` walks block RAM and the pattern survives it",
+                budget=8 * 1.0 * 1.25 + REPLY_S)
+        # The word at 0x40 is the loaded bitstream's, so only the QEMU stand-in
+        # has a fixed value; the board's `CORRECT` already checks it is neither
+        # 00000000 nor ffffffff (bench.rs).
+        word40 = b"" if board else b"2a558800"
         command("flash bench", [b"flash", b"read seq", b"read rnd",
-                 b"reads CORRECT -- @0 615000ff @40 2a558800"],
-                "`bench flash` reads the window and checks known content")
+                 b"reads CORRECT -- @0 615000ff @40 " + word40],
+                "`bench flash` reads the window and checks known content",
+                budget=4 * 1.0 * 1.25 + REPLY_S)
 
         command("hyperram bench", [b"measured by `hr test`"],
                 "`hyperram bench` points at `hr test`")
@@ -2124,12 +2155,12 @@ def main():
         # the assertion is then about real silicon without changing.
         command("flash status", [b"flash @0 615000ff", b"4096 KiB"],
                 "`flash status` reports the first word and the size of the window")
-        command("flash read 40", [b"flash @000040 2a558800"],
+        command("flash read 40", [b"flash @000040 " + word40],
                 "`flash read` names the region and the offset it read")
         # Aligned DOWN to the containing word rather than refused: 0x42 is
         # inside the word at 0x40, and the reply says 000040 so which word was
         # read is never in doubt.
-        command("flash read 42", [b"flash @000040 2a558800"],
+        command("flash read 42", [b"flash @000040 " + word40],
                 "`flash read` aligns an unaligned offset and says so")
 
         # The bound, per region, and flash is the one that matters: above
@@ -2233,6 +2264,11 @@ def main():
         check("CRLF is actually present",
               b"\r\n" in whole,
               "no CRLF at all -- the console produced nothing line-shaped")
+
+        # Leave the board as found: the poll defaults to OFF (#286), and one left
+        # running logs into the next run's echo (#598).
+        command("pac1954 rate off", [b"rate     off"],
+                "the poll is switched back off")
 
         transcript = session.snapshot()
     finally:
