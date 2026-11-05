@@ -97,6 +97,30 @@ def test_the_probe_reads_both_versions_including_nextpnr_on_stderr(tmp_path):
     assert "Yosys FAKE 1.0" in seen and "nextpnr FAKE 2.0" in seen
 
 
+def script_identity(tmp_path, techmap_text):
+    """The post-synth part of the identity when the script names a techmap file."""
+    suite = tmp_path / "suite"
+    fake_tool(suite / "bin", "yosys", "Yosys FAKE 1.0")
+    fake_tool(suite / "bin", "nextpnr-ecp5", "nextpnr FAKE 2.0", ">&2")
+    (suite / "environment").write_text(f'export PATH="{suite / "bin"}:$PATH"\n')
+    techmap = tmp_path / "fix.v"
+    techmap.write_text(techmap_text)
+    env = {"PATH": "/usr/bin:/bin", "CYNTHION_OSS_CAD_SUITE": str(suite),
+           "AMARANTH_script_after_synth": f"techmap -max_iter 1 -map {techmap}"}
+    done = subprocess.run(
+        [sys.executable, "-c", "import soc_run; print(repr(soc_run.toolchain_identity()))"],
+        cwd=SCRIPTS, env=env, capture_output=True, text=True, check=True, timeout=120)
+    return done.stdout.strip().splitlines()[-1]
+
+
+def test_editing_a_techmap_the_script_names_changes_the_identity(tmp_path):
+    before = script_identity(tmp_path, "module a; endmodule\n")
+    same = script_identity(tmp_path, "module a; endmodule\n")
+    after = script_identity(tmp_path, "module b; endmodule\n")
+    assert before == same
+    assert before != after
+
+
 def test_a_nextpnr_override_is_the_one_identified(tmp_path):
     seen = identity(tmp_path, nextpnr_override="nextpnr OLD 0.1")
     assert "nextpnr OLD 0.1" in seen and "nextpnr FAKE 2.0" not in seen
