@@ -5,11 +5,9 @@
 """
 What the host engine is exercised against, since there is no packet path here.
 
-This SoC has no USB controller of any kind: `gateware/soc/peripherals/ulpi_window.py`
-reads a USB3343's registers and cannot send or receive a packet
-(`docs/rtic-usb-port.md` section 1). So a host engine cannot be tested against
-anything already in the tree, and the model below is what stands in for the bus
-and for the device on the far end of it.
+The SoC's USB host port is `gateware/soc/peripherals/usb_host.py`
+(`docs/architecture.md`). This model stands in for the bus and the device on
+the far end of it, so the host engine is tested without a PHY.
 
 ## Three pieces
 
