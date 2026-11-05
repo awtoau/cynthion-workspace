@@ -1,0 +1,46 @@
+diff --git a/passes/opt/clean/cells_all.cc b/passes/opt/clean/cells_all.cc
+index f95ffb8c2..83ad3c781 100644
+--- a/passes/opt/clean/cells_all.cc
++++ b/passes/opt/clean/cells_all.cc
+@@ -247,7 +247,12 @@ struct MemAnalysis {
+ void fixup_unused_cells_and_mems(CellAnalysis& analysis, MemAnalysis& mem_analysis, CellTraversal& traversal, AnalysisContext& actx, CleanRunContext &clean_ctx) {
+ 	// Processes the cell queue in batches, traversing input cones by enqueuing more cells
+ 	// Discover and mark used memories and cells
+-	actx.subpool.run([&analysis, &mem_analysis, &traversal, &actx, &clean_ctx](const ParallelDispatchThreadPool::RunCtx &ctx) {
++	// The workers only read these two dicts, through const references: a non-const
++	// operator[], at() or find() can rehash lazily (hashlib do_lookup), which races
++	// with the other workers reading the same dict.
++	const dict<std::string, int> &mem_indices = mem_analysis.indices;
++	const dict<std::string, pool<int>> &mem2cells = traversal.mem2cells;
++	actx.subpool.run([&analysis, &mem_analysis, &mem_indices, &mem2cells, &traversal, &actx, &clean_ctx](const ParallelDispatchThreadPool::RunCtx &ctx) {
+ 		pool<SigBit> bits;
+ 		pool<std::string> mems;
+ 		while (true) {
+@@ -263,10 +268,10 @@ void fixup_unused_cells_and_mems(CellAnalysis& analysis, MemAnalysis& mem_analys
+ 
+ 				if (cell->type.in(ID($memrd), ID($memrd_v2))) {
+ 					std::string mem_id = cell->getParam(ID::MEMID).decode_string();
+-					if (mem_analysis.indices.count(mem_id)) {
+-						int mem_index = mem_analysis.indices[mem_id];
++					auto mem_it = mem_indices.find(mem_id);
++					if (mem_it != mem_indices.end()) {
+ 						// Memory fixup
+-						if (mem_analysis.unused[mem_index].exchange(false, std::memory_order_relaxed))
++						if (mem_analysis.unused[mem_it->second].exchange(false, std::memory_order_relaxed))
+ 							mems.insert(mem_id);
+ 					}
+ 				}
+@@ -282,10 +287,11 @@ void fixup_unused_cells_and_mems(CellAnalysis& analysis, MemAnalysis& mem_analys
+ 			bits.clear();
+ 
+ 			for (auto mem : mems) {
+-				if (traversal.mem2cells.count(mem) == 0)
++				auto cells_it = mem2cells.find(mem);
++				if (cells_it == mem2cells.end())
+ 					continue;
+ 				// Cells fixup
+-				for (int cell_idx : traversal.mem2cells.at(mem))
++				for (int cell_idx : cells_it->second)
+ 					analysis.mark_used_and_enqueue(cell_idx, traversal.queue, ctx);
+ 			}
+ 			mems.clear();
