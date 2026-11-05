@@ -49,9 +49,12 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - Timeout: longest stall from the code is 100 ms (`board_delay(100)` in `usb_switch.c`), not measured on a board; 500 ms is 5x.
 - Flash 13736 of 14336 (ceiling 13748): `scripts/apollo/apollo_budget_check.py`, `verify_vectors.py`, `repos/apollo/firmware/test` `test_hang_wd` pass.
 - `usb_recover.py` first rung: `leave bootloader` (`exit-dfu`, `force-offline`) when Apollo shows as the bootloader.
-- Bisect (`./scripts/apollo/hang_bisect.py`, 2026-11-05): `X` padded with zeros to `B`'s length loaded and passed, so length is not the trigger. `B` truncated to `X`'s length also left Apollo alive (the arbiter reported PASSED although a truncated stream cannot configure, so only the transfer of `B`'s first 477 KB is shown harmless). The trigger is in `B`'s last 17 KB or in the complete design running.
-- Open hypothesis: the running design drives a pin Apollo's firmware spins on (an interrupt storm on `FPGA_ADV`'s EIC or SERCOM1 handler would starve the main loop); UART mode did not prevent it, so a storm would have to be the SERCOM1 receive handler. Untested.
-- Why the main loop stops during that load is open: see [`yosys-070-upgrade.md`](yosys-070-upgrade.md).
+- Root cause (found 2026-11-05 with the experiment build `repos/apollo` branch `exp-hang-pc`: WDT early-warning and HardFault handlers saving the stacked PC, the request history and the bytes after `comms` into RAM above the stack): `jtag_scan_finish_step` stored the bit-banged tail's TDO byte at `jtag_in_buffer + slow_offset` even for scans that discard TDO. `jtag_in_buffer` is the second 512 bytes of the 1024-byte `comms` region and `slow_offset` reaches the chunk length, so a final chunk over 513 bytes wrote past the region.
+  - `isolate B`'s final chunk is 692 bytes: the byte landed on the last byte of `_ctrl_xfer.complete_cb`. TDO was high (`0xFF`), giving `0xff003851`; the next control-transfer ACK called it: HardFault at `0xff003874`, the USB stack dead, the device still enumerated.
+  - Why only some loads hung: the offset depends on the final chunk length (X's 818 bytes lands elsewhere) and on TDO (`X` padded to `B`'s length and the invalid stream read TDO low, writing `0x00`, a NULL callback that TinyUSB skips).
+  - Fix `repos/apollo` `a476c69` (test `703e450`): the tail's destination is NULL for discard scans (`jtag_tail.h`), `jtag_tap_shift` skips a NULL output. Flash 13744 of 14336 (ceiling 13748). `isolate B`, `X`, `B` all load and pass on the flashed build.
+- The watchdog stays: it turns any other main-loop stop into a software-recoverable reset. A HardFault is also in `Dummy_Handler`'s spin, which the watchdog now ends.
+- Instruments kept: [`wd_capture.py`](../scripts/apollo/wd_capture.py) (needs the experiment firmware), [`hang_bisect.py`](../scripts/apollo/hang_bisect.py), [`wd_timing.py`](../scripts/apollo/wd_timing.py), [`adv_health.py`](../scripts/apollo/adv_health.py).
 
 ## Not done
 - A controller-wide reset (`xhci_hcd` unbind/bind): never run, because it drops every USB device on the host.

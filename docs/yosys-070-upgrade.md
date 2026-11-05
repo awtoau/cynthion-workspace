@@ -10,12 +10,8 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
   - `stable`: the installed suite, no workaround.
 - `-nowidelut` on the board (yosys 0.70, seed 6): `soc_test --board` 132/132, `hyperram_board_test` 13/13, COMB 20893 (86.0%).
 - The bitstream cache key includes the yosys and nextpnr versions and the synth / placer options ([#603](https://github.com/awtoau/cynthion-workspace/issues/603)), so a toolchain change builds instead of reusing another toolchain's bitstream.
-- nextpnr 0.11.1 is not adopted: the old yosys netlist placed by it (`isolate B`) kills Apollo. New-yosys images built with 0.11.1 were silent, but those carried the first version of the techmap (below), so they say nothing about 0.11.1.
-- What is known about that hang (2026-11-05):
-  - The configuration is not different: [`scripts/ecp5_config_diff.py`](../scripts/ecp5_config_diff.py) on 0.10-74 vs 0.11.1 output for the same netlist, constraints and seed finds identical pin, bank, PLL and block-RAM-init content; only logic placement and routing-input selects differ. `ecppack` old and new give a byte-identical bitstream.
-  - Every job that loads `isolate B` killed Apollo (5 of 5: with and without a preceding `force-offline`, with different designs running); every other load that day worked (more than 8).
-  - In 4 of the 5 the FPGA was never wiped (no console disconnect in the kernel log): Apollo's `GET_ID` already timed out when `apollo configure` started. So the bitstream's streaming is not the trigger; something in the job's inputs is (the file, or the `usercode.json` fabricated beside it).
-  - Next: the same bitstream bytes as a known-good image in a fabricated directory (`tmp/isolate-X`), then `isolate B`.
+- nextpnr 0.11.1 is not adopted yet, but the Apollo hang is not its fault: `isolate B` (old yosys netlist placed by 0.11.1) ended its configure with a 692-byte final chunk, and Apollo's JTAG tail stored its TDO byte 179 bytes past the end of its `comms` buffer, onto the USB control struct's callback pointer ([`board-usb-recovery.md`](board-usb-recovery.md)). Fixed in Apollo (`repos/apollo` `a476c69`); `isolate B` now loads and passes. 0.11.1 has not been re-evaluated since.
+- New-yosys images built with 0.11.1 were silent, but those carried the first version of the techmap (below), so they say nothing about 0.11.1.
 
 ## Toolchains
 - Active: `~/opt/oss-cad-suite` — yosys 0.65+57, nextpnr 0.10-74.
