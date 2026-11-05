@@ -4,7 +4,7 @@
 - Clocks: one EHXPLLL from the 60 MHz pin. CLKOP = `sck` (engine, pin registers),
   CLKOS = `cap` (read capture, runtime phase via PHASESTEP), CLKOS2 = +180 degrees, driven
   to MCLK through a DCCA gate and USRMCLK (FPGA-TN-02039 6.1.2). One SCK per bitstream.
-- Registers: LUNA's public JTAGRegisterInterface in `sync` (the 60 MHz pin), read by
+- Registers: our `JTAGRegisterInterface` (gateware/probes/jtag_registers.py, clocked by TCK) in `sync` (the 60 MHz pin), read by
   `apollo_fpga` over Apollo's JTAG (same pattern as gateware/hyperram_baseline/top.py).
 - Controls are static while an op runs; `go` crosses by PulseSynchronizer, results are read
   once `done` (FFSynchronizer, masked from go until the engine clears it).
@@ -15,6 +15,12 @@ from amaranth import (Cat, ClockDomain, ClockSignal, Const, DomainRenamer, Elabo
 from amaranth.lib.cdc import FFSynchronizer, PulseSynchronizer
 
 from spiflash import FlashPHY, FlashPins, OpEngine, TxEngine
+
+# `jtag_registers` lives in gateware/probes (ours, #204); appended so nothing there shadows a local module.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent.parent / "probes"))
+from jtag_registers import JTAGRegisterInterface  # noqa: E402
 
 APPLET_ID = 0x464C4231   # "FLB1"
 
@@ -110,8 +116,6 @@ class FlashBaselineTop(Elaboratable):
         self.sck_mhz = float(sck_mhz)
 
     def elaborate(self, platform):
-        from luna.gateware.interface.jtag import JTAGRegisterInterface
-
         m = Module()
         clk60 = platform.request(platform.default_clk).i
         m.domains.sync = ClockDomain("sync")

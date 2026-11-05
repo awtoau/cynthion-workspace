@@ -7,7 +7,7 @@
 - Modes: 1 write, 2 read, 3 write/read alternating per burst, 4 register read (`reg_addr`).
 - A burst starts only when the FIFO holds (write) or has room for (read) all of it:
   the data phase cannot stall.
-- Readout: LUNA's public JTAGRegisterInterface, read by `apollo_fpga` over Apollo's JTAG.
+- Readout: our `JTAGRegisterInterface` (gateware/probes/jtag_registers.py), read by `apollo_fpga` over Apollo's JTAG.
 """
 
 from amaranth import (Cat, ClockDomain, ClockSignal, Const, DomainRenamer, Elaboratable,
@@ -16,6 +16,12 @@ from amaranth.lib.cdc import FFSynchronizer, PulseSynchronizer, ResetSynchronize
 from amaranth.lib.fifo import AsyncFIFO
 
 from hyperbus import ECP5HyperBusPHY, HyperBusCore, PinIntent
+
+# `jtag_registers` lives in gateware/probes (ours, #204); appended so nothing there shadows a local module.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.append(str(_Path(__file__).resolve().parent.parent / "probes"))
+from jtag_registers import JTAGRegisterInterface  # noqa: E402
 
 APPLET_ID = 0x48524231   # "HRB1"
 
@@ -343,8 +349,6 @@ class BaselineTop(Elaboratable):
         self.ck_mhz, self.sync_mhz = float(ck_mhz), float(sync_mhz)
 
     def elaborate(self, platform):
-        from luna.gateware.interface.jtag import JTAGRegisterInterface
-
         m = Module()
         clk60 = platform.request(platform.default_clk).i
         m.submodules.sync_pll = _PLL(domain="sync", mhz=self.sync_mhz, clki=clk60)
