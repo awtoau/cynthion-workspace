@@ -1078,8 +1078,11 @@ def main():
         # A whole OSS CAD Suite other than the installed one, side by side, to try a
         # yosys / nextpnr upgrade (docs/yosys-070-upgrade.md). Said in the log.
         suite = oss_cad_suite()
-        if "CYNTHION_OSS_CAD_SUITE" in os.environ:
+        if "CYNTHION_OSS_CAD_SUITE" in _EXPLICIT_ENV:
             emit(f"OSS CAD Suite OVERRIDDEN: {suite}")
+        else:
+            emit(f"toolchain profile {TOOLCHAIN}: suite {suite}"
+                 + (f", nextpnr {nextpnr_ecp5()}" if nextpnr_ecp5() else ""))
         yosys_version, nextpnr_version = toolchain_identity()[:2]
         emit(f"toolchain: {yosys_version} / {nextpnr_version}")
         build = (f'source "{suite}/environment" && '
