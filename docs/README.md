@@ -91,6 +91,7 @@ in its §13 got there in the first place.
 * [`capture-compression.md`](capture-compression.md) — FPGA capture-path compression (switchable, RV tap before it, gateware decompressor): requirement, path, codec options, verification
 * [`upstream-bugs.md`](upstream-bugs.md) — Every bug we found in upstream code or tools (cynthion, moondancer, facedancer, luna, luna-soc, apollo, yosys, nextpnr, GUH, ...), each with our issue, state and whether reported
 * [`yosys-opt-clean-race.md`](yosys-opt-clean-race.md) — yosys `opt_clean` memory data race (upstream #6418): the patch, stress/TSAN/netlist tests, risks
+* [`board-usb-recovery.md`](board-usb-recovery.md) — Reviving a silent Apollo without touching cables: the `usb_recover.py` ladder (port power cycle, hub reset), its safety rules, and what actually worked on this host
 * [`yosys-070-upgrade.md`](yosys-070-upgrade.md) — yosys 0.70 / nextpnr 0.11: speed gain, the abc9 `M`-tie blocker and its workaround, size by option, upstream report draft
 * [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
 * [`history.md`](history.md) — Removed text, by area (agents: do not read unless the task needs history): [`chips-hardware`](history/chips-hardware.md), [`upstream-toolchain`](history/upstream-toolchain.md), [`soc-usb`](history/soc-usb.md)
