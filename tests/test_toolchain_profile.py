@@ -33,14 +33,22 @@ def settings(**env):
     return lines[-5], dict(line.split("=", 1) for line in lines[-4:])
 
 
-def test_the_default_is_yosys_0_70_with_the_old_nextpnr_and_nowidelut():
+def test_the_default_is_yosys_0_70_with_its_own_suites_nextpnr_and_nowidelut():
     name, env = settings()
     assert name == "yosys070"
+    assert "oss-cad-suite-20261104" in env["CYNTHION_OSS_CAD_SUITE"]
+    assert env["CYNTHION_NEXTPNR_ECP5"] == ""       # the suite's own nextpnr (0.11.1)
+    assert "-nowidelut" in env["AMARANTH_synth_opts"]
+    assert "trellis_ff_without_m.v" in env["AMARANTH_script_after_synth"]
+
+
+def test_the_old_nextpnr_profile_places_with_the_installed_suites_nextpnr():
+    name, env = settings(CYNTHION_TOOLCHAIN="yosys070-nextpnr010")
+    assert name == "yosys070-nextpnr010"
     assert "oss-cad-suite-20261104" in env["CYNTHION_OSS_CAD_SUITE"]
     assert env["CYNTHION_NEXTPNR_ECP5"].endswith("oss-cad-suite/bin/nextpnr-ecp5")
     assert "oss-cad-suite-20261104" not in env["CYNTHION_NEXTPNR_ECP5"]
     assert "-nowidelut" in env["AMARANTH_synth_opts"]
-    assert "trellis_ff_without_m.v" in env["AMARANTH_script_after_synth"]
 
 
 def test_the_widelut_profile_keeps_the_default_synthesis_options():
