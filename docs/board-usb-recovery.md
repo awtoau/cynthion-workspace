@@ -31,6 +31,12 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - A hub that really switches VBUS (or a direct motherboard port that does) would make step 2 a true power cycle. Nothing here confirms either.
 - What worked every time is removing all power by hand. SWD access to the SAMD11 (Tag-Connect TC2030-CTX, PA30/PA31, [`hardware.md`](hardware.md)) would also reset it without USB; not set up.
 
+## Reset paths that exist without cables (documented elsewhere)
+- `apollo enter-dfu` / `exit-dfu`: vendor `0xed`, WDT reset of the SAMD11 into the Saturn-V bootloader and back. [`programming-paths.md`](chips/ecp5/programming-paths.md), [`hardware.md`](hardware.md), [`upstream-bugs.md`](upstream-bugs.md) (#67).
+- Vendor `0xec` emergency reset: control-plane state only, not an MCU reset.
+- DTR/RTS: `tud_cdc_line_state_cb` only starts the UART; no reset.
+- All of these are control requests the firmware must serve. Not tried on a hung Apollo (the board was not enumerating).
+
 ## Not done
 - A controller-wide reset (`xhci_hcd` unbind/bind): never run, because it drops every USB device on the host.
 - Why the hang starts: see [`yosys-070-upgrade.md`](yosys-070-upgrade.md) (every job loading one particular bitstream killed Apollo; cause open).
