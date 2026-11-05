@@ -147,3 +147,26 @@ def test_a_command_that_exits_non_zero_is_a_failed_step():
 
 def test_a_command_that_succeeds_is_quiet():
     usb_recover.run_step([sys.executable, "-c", "pass"], prefix=())
+
+
+# --- do not wait for a command that is only blocked behind the kernel -----------------
+
+def test_a_command_that_finishes_returns_its_exit_code_and_output():
+    rc, out = usb_recover.run_for([sys.executable, "-c", "print('done')"], limit=10, prefix=())
+    assert rc == 0 and "done" in out
+
+
+def test_a_command_still_running_at_the_limit_is_terminated_and_reported_as_such():
+    import time
+    start = time.monotonic()
+    rc, out = usb_recover.run_for([sys.executable, "-c", "import time; time.sleep(30)"],
+                                  limit=0.5, prefix=())
+    assert rc is None
+    assert time.monotonic() - start < 10        # terminated, not waited out
+
+
+def test_the_cycle_waits_for_the_power_on_not_for_uhubctl_to_exit():
+    # The limit is the off time plus a short tail; the old limit followed the ~92 s the kernel
+    # spends enumerating a dead device, which uhubctl's final status read queues behind.
+    assert usb_recover.CYCLE_LIMIT_S == usb_recover.OFF_S + usb_recover.CYCLE_TAIL_S
+    assert usb_recover.CYCLE_LIMIT_S <= 30
