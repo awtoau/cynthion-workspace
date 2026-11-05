@@ -1,6 +1,12 @@
 # yosys 0.70 / nextpnr 0.11 upgrade: gains, blocker, workaround, size
 
-Status: **not adopted.** Tracked in [#602](https://github.com/awtoau/cynthion-workspace/issues/602). Measured 2026-11-05 on the SoC `top.il` (ck180), host `selwyn`, `YOSYS_MAX_THREADS=1`.
+Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr 0.10-74; not made the default.** nextpnr 0.11.1 is not adopted (below). Tracked in [#602](https://github.com/awtoau/cynthion-workspace/issues/602). Measured 2026-11-05 on the SoC `top.il` (ck180), host `selwyn`, `YOSYS_MAX_THREADS=1`.
+
+## Board result (r1.4, seed 6, default synth options)
+- yosys 0.70+329 + `trellis_ff_without_m.v` + nextpnr 0.10-74: `soc_test --board` 131/131, `hyperram_board_test` 13/13 at 343.5 / 340.1 / 341.8 MB/s. Build 155 s (yosys ~37 s).
+- Enable: `CYNTHION_OSS_CAD_SUITE=~/opt/oss-cad-suite-20261104/oss-cad-suite`, `CYNTHION_NEXTPNR_BIN=<dir with a nextpnr-ecp5 that runs 0.10-74>`, and `AMARANTH_script_after_synth` = `hierarchy -check`, `stat`, `check -noinit`, `blackbox =A:whitebox`, `techmap -max_iter 1 -map scripts/yosys/trellis_ff_without_m.v`.
+- The bitstream cache key ignores the toolchain ([#603](https://github.com/awtoau/cynthion-workspace/issues/603)): use a new `--seed` to force a build.
+- nextpnr 0.11.1 is not adopted: the old yosys netlist placed by it hung Apollo twice (unexplained; bitstream identical with old or new `ecppack`). New-yosys images built with 0.11.1 were silent, but those carried the first version of the techmap (below), so they say nothing about 0.11.1.
 
 ## Toolchains
 - Active: `~/opt/oss-cad-suite` — yosys 0.65+57, nextpnr 0.10-74.
@@ -14,7 +20,8 @@ Status: **not adopted.** Tracked in [#602](https://github.com/awtoau/cynthion-wo
 - 0.70's abc9 gives every box input pin an AIG output; an unconnected pin comes back as constant 0. Result: `M` connected to `1'b0` on every async FF (576 here; 0 in 0.65+57).
 - nextpnr 0.10-74 and 0.11.1 then fail in the packer: `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net`.
 - Bisected to the `abc9` call; four-line repro in the upstream draft below.
-- Workaround: [`scripts/yosys/trellis_ff_without_m.v`](../scripts/yosys/trellis_ff_without_m.v), after synthesis. To enable: `AMARANTH_script_after_synth` gets `techmap -max_iter 1 -map <path>` (append to the replay lines in `fast_build_env.py`). Tested with `--pack-only`; no full build or board run yet.
+- Workaround: [`scripts/yosys/trellis_ff_without_m.v`](../scripts/yosys/trellis_ff_without_m.v), after synthesis. To enable: `AMARANTH_script_after_synth` gets `techmap -max_iter 1 -map <path>` (append to the replay lines in `fast_build_env.py`). It must connect only the ports the original cell had: `CE` is absent when `CEMUX` is `"1"`, and tying it to 0 froze 269 flip-flops (silent CPU on the board). Covered by [`tests/test_trellis_ff_techmap.py`](../tests/test_trellis_ff_techmap.py).
+- yosys 0.70 also drops the net names `car.clk_sync` and `hyperram.pll.clk_hr` (aliases merged), so nextpnr ignored their clock constraints; the clock signals carry `keep`, and `soc_run` refuses a build with a dropped constraint.
 - Parameters in that file must not carry a `[127:0]` range: it turns `CEMUX="1"` into the integer 49 in the JSON.
 - A source fix was tried and dropped: skipping box inputs that nothing drives in `abc_ops_reintegrate.cc`. By reintegration time ABC has already absorbed the logic feeding most pins, so "undriven" cannot be decided there; it strips real connections (all flip-flops vanished). Needs the maintainers.
 
@@ -29,7 +36,7 @@ Status: **not adopted.** Tracked in [#602](https://github.com/awtoau/cynthion-wo
 
 - 0.70 default is +486 COMB, all in wide-LUT mapping (PFUMX 2478 vs 2038, L6MUX21 469 vs 289). LUT4-only mapping is equal.
 - No new size switch in 0.70: `-abc2`, `-noabc9`, `-retime` removed (accepted, ignored); `-latches` added. `abc9 -W 300` is a constant.
-- Not measured: timing with `-nowidelut` (deeper logic), a full build, a board run.
+- Not measured: timing with `-nowidelut` (deeper logic), and any board run with `-nowidelut` or `-cmp2softlogic`.
 - Tool: [`scripts/yosys_synth_sweep.py`](../scripts/yosys_synth_sweep.py).
 
 ## Upstream report (draft, not posted: needs Dan's go)
