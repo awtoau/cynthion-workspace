@@ -20,13 +20,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from toolchain_env import BASE_SUITE, YOSYS_PIN, YOSYS_PREFIX  # noqa: E402
 LOG = ROOT / "tmp" / "logs" / "build_patched_yosys.log"
 STORE = Path("/mnt/2tb/git_mirror/YosysHQ/yosys")
-PIN = "8f3cc3d0c"
 SOURCE = ROOT / "tmp" / "yosys-main"
 BUILD = ROOT / "tmp" / "yosys-build-main"
-PREFIX = Path.home() / "opt" / "yosys-patched" / PIN
-BASE_SUITE = "$HOME/opt/oss-cad-suite-20261104/oss-cad-suite"
+PIN = YOSYS_PIN
+PREFIX = Path(os.path.expandvars(YOSYS_PREFIX))
 PATCHES = [ROOT / "patches" / "yosys-abc9-unlisted-ports-fix.patch",
            ROOT / "patches" / "yosys-abc9-unlisted-ports-test.patch"]
 # Stall limit, not an overall one: a link or compile that prints nothing for this long is hung.

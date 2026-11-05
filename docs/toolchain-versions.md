@@ -20,7 +20,7 @@
 
 ## FPGA toolchain
 
-One OSS CAD Suite build supplies all three; `~/opt/oss-cad-suite`, sourced via `environment`. Nightly-only: no stable channel, so "the release" is whichever nightly is pinned.
+One OSS CAD Suite build supplies all three; `~/opt/oss-cad-suite-20261104/oss-cad-suite`, sourced via `~/opt/yosys-patched/8f3cc3d0c/environment`. Nightly-only: no stable channel, so "the release" is whichever nightly is pinned.
 
 | tool | in use | note |
 |---|---|---|
@@ -151,14 +151,9 @@ Generated, not vendored: [`riscv-core-build.md`](riscv-core-build.md).
 | linker used by that gcc | Fedora's binutils | `-print-prog-name=ld` -> `/usr/arm-none-eabi/bin/ld`, **not** the one on PATH |
 | `arm-none-eabi-nm` / `size` / `objcopy` on PATH | **2.41.0.20231009** | Arm GNU Toolchain 13.2.rel1 (2023) |
 
-**The ARM toolchain is split, invisibly.** `/opt/arm-gnu-toolchain/...-13.2.Rel1/bin` precedes `/usr/bin` on PATH and has binutils but **no gcc**. Compile and link are consistent (gcc finds its bundled `ld`), but a script calling a binutil by bare name gets the 2023 build reading an ELF from a far newer compiler.
+**ARM toolchain: dnf only** (`arm-none-eabi-gcc` 15.2, binutils 2.45). The `/opt/arm-gnu-toolchain` 13.2 directory (binutils only, no gcc) and its `/etc/profile.d` PATH entry were removed 2026-11-06; copy in `/mnt/2tb/wastebasket/arm-gnu-toolchain-13.2-*`. Apollo links 8 B larger with the 2.45 linker (13780 B, ceiling 13784).
 
-- The guards resolve beside the compiler: `scripts/apollo/arm_binutils_resolve.py` (`arm-none-eabi-gcc -print-prog-name=nm` -> 2.45). `verify_vectors.py` (`nm`), `apollo_budget_check.py` (`size`), `apollo_memory_report.py` (`size`, `nm`) print which binary they used and warn that PATH would give the 2023 one.
-- `size` needs a fallback: gcc never invokes it, so `-print-prog-name=size` answers the bare name and the install prefix is derived from a tool gcc knows.
-- Both versions agree byte-for-byte on `size -A` and `nm` on the current build.
-- Whether the PATH entry should change: [#191](https://github.com/awtoau/cynthion-workspace/issues/191).
-- LTO is enabled and load-bearing for the flash budget; `verify_vectors.py` guards a silent failure mode ([`upstream-boundary.md`](upstream-boundary.md#apollo-rom-budget-and-lto)).
-- TinyUSB is pinned at `5b08a65` (2023-09-27) by upstream Apollo (`repos/apollo/.gitmodules`), not by us. The SAMD11 flash budget constrains moving it.
+- The guards still resolve binutils beside the compiler: `scripts/apollo/arm_binutils_resolve.py`.
 
 ## Submodules
 

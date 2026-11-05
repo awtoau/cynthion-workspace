@@ -50,7 +50,7 @@ BOARD = ROOT / "gateware" / "hyperram_baseline"
 OUT = ROOT / "tmp" / "flash-baseline"
 LOG = ROOT / "tmp" / "logs" / "flash_baseline.log"
 RESULTS = OUT / "results.jsonl"
-OSS_CAD_ENV = Path.home() / "opt" / "oss-cad-suite" / "environment"
+OSS_CAD_ENV = Path.home() / "opt" / "yosys-patched" / "8f3cc3d0c" / "environment"
 sys.path.insert(0, str(GW))
 
 from spiflash import (BITMAP_WORDS, CHECK_BLANK, CHECK_PATTERN, OP_RAW, OP_READ,  # noqa: E402

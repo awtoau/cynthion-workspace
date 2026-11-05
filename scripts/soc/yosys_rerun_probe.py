@@ -58,11 +58,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "gateware"))
 
 from devlog import emit  # noqa: E402
+from toolchain_env import SOURCE as TOOLCHAIN_SOURCE  # noqa: E402
 from soc import variant  # noqa: E402
 
 # The same environment `soc_run.py` sources for a build. yosys is not on PATH
 # without it, and a different yosys would answer a different question.
-ENVIRONMENT = 'source "$HOME/opt/oss-cad-suite/environment"'
+ENVIRONMENT = TOOLCHAIN_SOURCE
 
 # yosys's own `stat` tally, `<count>   <CELL>`. LUT4 here is the pre-pack logic
 # count -- what a netlist difference moves; nextpnr's TRELLIS_COMB is downstream.

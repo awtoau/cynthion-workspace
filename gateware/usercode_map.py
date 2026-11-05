@@ -86,8 +86,8 @@ def trellis_devices(path=None):
         if packer:
             candidates.append(Path(packer).resolve().parent.parent
                               / "share" / "trellis" / "database" / "devices.json")
-        candidates.append(Path.home() / "opt" / "oss-cad-suite" / "share"
-                          / "trellis" / "database" / "devices.json")
+        candidates.append(Path.home() / "opt" / "oss-cad-suite-20261104" / "oss-cad-suite"
+                          / "share" / "trellis" / "database" / "devices.json")
         path = next((c for c in candidates if c.exists()), None)
     if path is None or not Path(path).exists():
         return None

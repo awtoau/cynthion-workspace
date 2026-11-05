@@ -56,7 +56,7 @@ def _trellis_eclk_db() -> Path | None:
         found = shutil.which(tool)
         if found:
             roots.append(Path(found).resolve().parent.parent / "share" / "trellis")
-    roots.append(Path.home() / "opt" / "oss-cad-suite" / "share" / "trellis")
+    roots.append(Path.home() / "opt" / "oss-cad-suite-20261104" / "oss-cad-suite" / "share" / "trellis")
     for root in roots:
         for candidate in (root / "database" / "ECP5" / "tiledata" / "ECLK_L" / "bits.db",
                           root / "ECP5" / "tiledata" / "ECLK_L" / "bits.db"):

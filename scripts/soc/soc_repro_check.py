@@ -65,6 +65,7 @@ sys.path.insert(0, str(ROOT / "gateware"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from toolchain_env import SOURCE as TOOLCHAIN_SOURCE  # noqa: E402
 from soc import variant  # noqa: E402
 from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS  # noqa: E402
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
@@ -139,7 +140,7 @@ def synthesise(target, firmware, bootloader, pnr_opts):
     # `top.tim` ACCUMULATES across runs in one build directory, so the previous
     # run's block would be read as this one's.
     (BUILD / "top.tim").unlink(missing_ok=True)
-    command = (f'source "$HOME/opt/oss-cad-suite/environment" && '
+    command = (f'{TOOLCHAIN_SOURCE} && '
                f'AMARANTH_nextpnr_opts="{pnr_opts}" '
                f'YOSYS_MAX_THREADS="{YOSYS_MAX_THREADS}" '
                f'{sys.executable} {ROOT / "gateware" / "soc" / "top.py"} --build '

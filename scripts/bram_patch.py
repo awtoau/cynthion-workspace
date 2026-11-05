@@ -87,6 +87,7 @@ sys.path.insert(0, str(ROOT / "gateware" / "soc"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit  # noqa: E402
+from toolchain_env import SOURCE as TOOLCHAIN_SOURCE  # noqa: E402
 from soc import variant  # noqa: E402
 
 # This variant's build directory, and the firmware artifacts inside it. Both
@@ -289,7 +290,7 @@ def ecppack_command(build_dir, config, bit):
 
 def run_trellis(argv, cwd):
     """Run a Project Trellis tool with the OSS CAD Suite environment sourced."""
-    command = ('source "$HOME/opt/oss-cad-suite/environment" && '
+    command = (TOOLCHAIN_SOURCE + ' && '
                + " ".join(f"'{a}'" for a in argv))
     return subprocess.run(["bash", "-c", command], cwd=cwd,
                           capture_output=True, text=True)

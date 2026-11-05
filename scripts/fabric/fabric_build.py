@@ -60,7 +60,7 @@ from fast_build_env import YOSYS_MAX_THREADS  # noqa: E402
 
 # The toolchain this project pins. Amaranth resolves yosys/nextpnr/ecppack from
 # PATH, so prepending is enough -- no environment script to source.
-OSS_CAD = Path.home() / "opt" / "oss-cad-suite" / "bin"
+OSS_CAD = Path.home() / "opt" / "oss-cad-suite-20261104" / "oss-cad-suite" / "bin"
 
 # What an LFE5U-12F advertises. The die carries 24,288. A build at or below this
 # would sit entirely inside the advertised region and could not distinguish any

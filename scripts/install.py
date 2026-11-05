@@ -81,7 +81,7 @@ def resolve_repos_root() -> Path:
     return candidates[0]
 
 REPOS = resolve_repos_root()
-OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite"
+OSS_CAD_SUITE = Path.home() / "opt" / "oss-cad-suite-20261104" / "oss-cad-suite"
 
 # The workspace targets free-threaded (no-GIL) CPython: the parallel build path
 # relies on real threading, and gateware builds are the main beneficiary.

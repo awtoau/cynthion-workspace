@@ -136,37 +136,27 @@ from devlog import emit, spawn  # noqa: E402
 from fast_build_env import (SCRIPT_AFTER_SYNTH, SYNTH_OPTS, YOSYS_MAX_THREADS,  # noqa: E402
                             nextpnr_opts)
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
+from toolchain_env import YOSYS_PREFIX  # noqa: E402
 
-# CYNTHION_TOOLCHAIN picks the suite, nextpnr and synthesis options in one setting
-# (docs/yosys-070-upgrade.md). yosys 0.70 builds are placed by that suite's own nextpnr 0.11.1;
-# `yosys070-nextpnr010` keeps the installed 0.10-74. The M workaround is mandatory with 0.70.
-_NEW_SUITE = "$HOME/opt/oss-cad-suite-20261104/oss-cad-suite"
-_INSTALLED_NEXTPNR = "$HOME/opt/oss-cad-suite/bin/nextpnr-ecp5"
-_FIX_M = f"techmap -max_iter 1 -map {ROOT / 'scripts' / 'yosys' / 'trellis_ff_without_m.v'}"
-_YOSYS_070 = {"CYNTHION_OSS_CAD_SUITE": _NEW_SUITE,
-              "CYNTHION_NEXTPNR_ECP5": "",
-              "AMARANTH_script_after_synth": f"{SCRIPT_AFTER_SYNTH}\n{_FIX_M}"}
-# `yosys070` is that yosys plus our abc9 fix (scripts/yosys/build_patched_yosys.py, #605): no
-# workaround. `yosys070-stock` is the suite's own yosys with the workaround.
-_PATCHED_YOSYS = "$HOME/opt/yosys-patched/8f3cc3d0c"
+# CYNTHION_TOOLCHAIN picks the synthesis options (docs/yosys-070-upgrade.md). Both profiles run
+# yosys main + our abc9 fix (scripts/yosys/build_patched_yosys.py, #605) with nextpnr 0.11.1;
+# `yosys070-widelut` keeps yosys's default (wide-LUT) mapping.
 TOOLCHAINS = {
-    "yosys070": {"CYNTHION_OSS_CAD_SUITE": _PATCHED_YOSYS,
+    "yosys070": {"CYNTHION_OSS_CAD_SUITE": YOSYS_PREFIX,
                  "CYNTHION_NEXTPNR_ECP5": "",
                  "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
                  "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
-    "yosys070-stock": {**_YOSYS_070, "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
-    "yosys070-widelut": {**_YOSYS_070, "AMARANTH_synth_opts": SYNTH_OPTS},
-    "yosys070-nextpnr010": {**_YOSYS_070, "CYNTHION_NEXTPNR_ECP5": _INSTALLED_NEXTPNR,
-                            "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
-    "stable": {},
+    "yosys070-widelut": {"CYNTHION_OSS_CAD_SUITE": YOSYS_PREFIX,
+                         "CYNTHION_NEXTPNR_ECP5": "",
+                         "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
+                         "AMARANTH_synth_opts": SYNTH_OPTS},
 }
 TOOLCHAIN = os.environ.get("CYNTHION_TOOLCHAIN", "yosys070")
 if TOOLCHAIN not in TOOLCHAINS:
     sys.exit(f"CYNTHION_TOOLCHAIN={TOOLCHAIN!r} is not one of: {', '.join(TOOLCHAINS)}")
-if "CYNTHION_OSS_CAD_SUITE" not in _EXPLICIT_ENV and TOOLCHAIN == "yosys070" and not (
-        Path(os.path.expandvars(_PATCHED_YOSYS)) / "environment").exists():
-    sys.exit(f"{_PATCHED_YOSYS} is not built: run scripts/yosys/build_patched_yosys.py "
-             "(or CYNTHION_TOOLCHAIN=yosys070-stock)")
+if "CYNTHION_OSS_CAD_SUITE" not in _EXPLICIT_ENV and not (
+        Path(os.path.expandvars(YOSYS_PREFIX)) / "environment").exists():
+    sys.exit(f"{YOSYS_PREFIX} is not built: run scripts/yosys/build_patched_yosys.py")
 for _key, _value in TOOLCHAINS[TOOLCHAIN].items():
     if _key not in _EXPLICIT_ENV:
         os.environ[_key] = _value
@@ -357,8 +347,8 @@ def variant_settings():
 
 
 def oss_cad_suite():
-    """The OSS CAD Suite a build sources: an override, else the installed one."""
-    return os.environ.get("CYNTHION_OSS_CAD_SUITE") or "$HOME/opt/oss-cad-suite"
+    """The toolchain a build sources: an override, else the patched yosys prefix."""
+    return os.environ.get("CYNTHION_OSS_CAD_SUITE") or YOSYS_PREFIX
 
 
 def nextpnr_override():

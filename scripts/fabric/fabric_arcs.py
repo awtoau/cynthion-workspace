@@ -77,7 +77,7 @@ from devlog import emit  # noqa: E402
 # same database nextpnr-ecp5 and ecppack were built against, so the arc names in
 # it are the arc names in the config -- no translation, and no chance of scoring
 # against a different silicon revision's routing.
-TRELLIS = Path.home() / "opt" / "oss-cad-suite" / "share" / "trellis" / "database"
+TRELLIS = Path.home() / "opt" / "oss-cad-suite-20261104" / "oss-cad-suite" / "share" / "trellis" / "database"
 
 TILE = re.compile(r"^\.tile\s+(\S+)")
 ARC = re.compile(r"^arc:\s+(\S+)\s+(\S+)")

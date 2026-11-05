@@ -42,34 +42,16 @@ def test_the_default_is_the_patched_yosys_with_its_own_suites_nextpnr_and_nowide
     assert "trellis_ff_without_m.v" not in env["AMARANTH_script_after_synth"]
 
 
-def test_the_stock_profile_is_the_suites_yosys_with_the_workaround():
-    name, env = settings(CYNTHION_TOOLCHAIN="yosys070-stock")
-    assert name == "yosys070-stock"
-    assert "oss-cad-suite-20261104" in env["CYNTHION_OSS_CAD_SUITE"]
-    assert "trellis_ff_without_m.v" in env["AMARANTH_script_after_synth"]
-
-
-def test_the_old_nextpnr_profile_places_with_the_installed_suites_nextpnr():
-    name, env = settings(CYNTHION_TOOLCHAIN="yosys070-nextpnr010")
-    assert name == "yosys070-nextpnr010"
-    assert "oss-cad-suite-20261104" in env["CYNTHION_OSS_CAD_SUITE"]
-    assert env["CYNTHION_NEXTPNR_ECP5"].endswith("oss-cad-suite/bin/nextpnr-ecp5")
-    assert "oss-cad-suite-20261104" not in env["CYNTHION_NEXTPNR_ECP5"]
-    assert "-nowidelut" in env["AMARANTH_synth_opts"]
-
-
 def test_the_widelut_profile_keeps_the_default_synthesis_options():
     name, env = settings(CYNTHION_TOOLCHAIN="yosys070-widelut")
     assert name == "yosys070-widelut"
     assert "-nowidelut" not in env["AMARANTH_synth_opts"]
-    assert "trellis_ff_without_m.v" in env["AMARANTH_script_after_synth"]
+    assert env["CYNTHION_OSS_CAD_SUITE"].endswith("opt/yosys-patched/8f3cc3d0c")
 
 
-def test_stable_is_the_installed_suite_with_no_workaround():
-    name, env = settings(CYNTHION_TOOLCHAIN="stable")
-    assert name == "stable"
-    assert env["CYNTHION_OSS_CAD_SUITE"] == "" and env["CYNTHION_NEXTPNR_ECP5"] == ""
-    assert "trellis_ff_without_m.v" not in env["AMARANTH_script_after_synth"]
+def test_the_retired_profiles_are_gone():
+    for name in ("stable", "yosys070-stock", "yosys070-nextpnr010"):
+        assert run(CYNTHION_TOOLCHAIN=name).returncode != 0
 
 
 def test_an_explicit_variable_beats_the_profile():
