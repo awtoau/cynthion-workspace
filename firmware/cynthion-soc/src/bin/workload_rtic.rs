@@ -68,6 +68,9 @@ mod intc;
 #[path = "../target.rs"]
 mod target;
 #[allow(dead_code)]
+#[path = "../sideband.rs"]
+mod sideband;
+#[allow(dead_code)]
 #[path = "../timer.rs"]
 mod timer;
 #[allow(dead_code)]
