@@ -13,6 +13,8 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
 - nextpnr 0.11.1 passes the board suites and is the default (`yosys070-nextpnr010` keeps 0.10-74). The Apollo hang is not its fault: `isolate B` (old yosys netlist placed by 0.11.1) ended its configure with a 692-byte final chunk, and Apollo's JTAG tail stored its TDO byte 179 bytes past the end of its `comms` buffer, onto the USB control struct's callback pointer ([`board-usb-recovery.md`](board-usb-recovery.md)). Fixed in Apollo (`repos/apollo` `a476c69`); `isolate B` now loads and passes. Re-evaluated 2026-11-05 on the fixed Apollo (`CYNTHION_NEXTPNR_ECP5=~/opt/oss-cad-suite-20261104/oss-cad-suite/bin/nextpnr-ecp5`, yosys 0.70+329, `-nowidelut`, default seed): nextpnr-0.11.1-86 builds 20891 COMB (0.10-74: 20893), loads, `soc_test --board` 132/132, `hyperram_board_test` 13/13.
 - New-yosys images built with 0.11.1 were silent, but those carried the first version of the techmap (below), so they say nothing about 0.11.1.
 
+- yosys main `8f3cc3d0c` (2026-11-04, 7 commits past `b8d84f823`; built from a worktree, `YOSYS_WITHOUT_SLANG=ON`), 2026-11-05: the M repro still gives `"M": ["0"]` on `TRELLIS_FF`, so the workaround is still needed; with it and nextpnr 0.11.1 the SoC builds (20891 COMB), loads, `soc_test --board` 132/132, `hyperram_board_test` 13/13. Not in the default profile: the suite's yosys is `b8d84f823`.
+
 ## Toolchains
 - Active: `~/opt/oss-cad-suite` — yosys 0.65+57, nextpnr 0.10-74.
 - Candidate: `~/opt/oss-cad-suite-20261104` ([release](https://github.com/YosysHQ/oss-cad-suite-build/releases/tag/2026-11-04)) — yosys 0.70+329 (`b8d84f823`), nextpnr 0.11.1-86. Side by side, nothing replaced.
