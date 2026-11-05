@@ -145,3 +145,11 @@ def test_a_patched_binary_with_the_same_version_changes_the_identity(tmp_path):
 
     assert identity_with("# a") == identity_with("# a")
     assert identity_with("# a") != identity_with("# b")
+
+
+def test_the_python_stack_versions_are_part_of_the_identity():
+    done = subprocess.run(
+        [sys.executable, "-c", "import soc_run; print(soc_run.python_stack())"],
+        cwd=SCRIPTS, capture_output=True, text=True, check=True, timeout=120)
+    seen = done.stdout.strip().splitlines()[-1]
+    assert "amaranth==" in seen and "luna-usb==" in seen and "luna-soc==" in seen

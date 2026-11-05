@@ -374,6 +374,19 @@ def script_identity(script):
     return text
 
 
+def python_stack():
+    """Versions of the packages that elaborate the gateware (their code is the netlist's)."""
+    from importlib import metadata
+    names = ("amaranth", "amaranth-soc", "amaranth-stdio", "luna-usb", "luna-soc")
+    found = []
+    for name in names:
+        try:
+            found.append(f"{name}=={metadata.version(name)}")
+        except metadata.PackageNotFoundError:
+            found.append(f"{name}==absent")
+    return " ".join(found)
+
+
 def tool_digest(paths):
     """Short SHA-256 over the content of the tool binaries at `paths` (missing ones skipped)."""
     digest = hashlib.sha256()
@@ -404,6 +417,7 @@ def toolchain_identity():
             os.environ.get("AMARANTH_synth_opts", ""),
             script_identity(os.environ.get("AMARANTH_script_after_synth", "")),
             PNR_OPTS,
+            python_stack(),
             # The binaries' content: a locally patched yosys or nextpnr with the same version
             # string must not hit another build's cache entry.
             tool_digest(binaries[:2]))
