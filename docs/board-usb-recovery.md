@@ -53,6 +53,17 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
   - `isolate B`'s final chunk is 692 bytes: the byte landed on the last byte of `_ctrl_xfer.complete_cb`. TDO was high (`0xFF`), giving `0xff003851`; the next control-transfer ACK called it: HardFault at `0xff003874`, the USB stack dead, the device still enumerated.
   - Why only some loads hung: the offset depends on the final chunk length (X's 818 bytes lands elsewhere) and on TDO (`X` padded to `B`'s length and the invalid stream read TDO low, writing `0x00`, a NULL callback that TinyUSB skips).
   - Fix `repos/apollo` `a476c69` (test `703e450`): the tail's destination is NULL for discard scans (`jtag_tail.h`), `jtag_tap_shift` skips a NULL output. Flash 13744 of 14336 (ceiling 13748). `isolate B`, `X`, `B` all load and pass on the flashed build.
+- Why no test saw it:
+  - The scan path had no test. Apollo's host tests covered `apollo_mode` and the FPGA_ADV watchdog logic only; the workspace sims model the gateware; `soc_test --board` and `hyperram_board_test` run through the SoC, after configure. Nothing varied the final chunk's length or looked at Apollo's RAM.
+  - The `jtag.c` comments argued the property for the DMA path (`FLAG_DISCARD_TDO` stops the receive) and called a corrupted bitstream "structurally impossible"; the bit-banged tail was a second writer the argument never covered.
+  - The write is one byte, and 512 of the 1024 possible final-chunk lengths (513 and up) go out of bounds, but where it lands depends on the length and on the RAM layout, which moves with every firmware change. Most landings hit data that is rewritten before use; `B`'s 692 bytes hit a live pointer, and only when TDO was high.
+  - `stack_probe` checks the stack's high-water mark, not `.bss` neighbours.
+  - Now: `repos/apollo/firmware/test/test_jtag_scan_tail.c` compiles the real `jtag.c` on a host (stub headers, fake SPI and TAP) and sweeps every bit count and flag combination plus the benchmark. Run against `a476c69^` it fails (512 final-chunk lengths out of bounds); it also failed on the first fix for 14 capturing scans (4097..4103 bits) and 8 benchmark chunk sizes, both fixed in `a16c6b8`.
+- Review (Fable, read-only, 2026-11-05) found those two. Still open, not fixed:
+  - `FORCE_BITBANG` with `wValue >= 256` shifts only `wValue & 0xFF` bits (`slow_bits` is a `uint8_t`); `ecp5.py` uses bitbang for background SPI transfers.
+  - JTAG requests are accepted with no session: a `0xB1` without `0xBF` writes `comms.jtag_tx`, which is the live console ring (`jtag.c` comments call that impossible).
+  - A benchmark at a very low SCK can run past the 500 ms watchdog (`jtag.c` assumes 12 MHz).
+  - Its claim that the WDT clock is 1.024 kHz (a 16 s timeout) is contradicted by the measurement above: the device vanished 0.527 s after the last kick with 16384 clocks.
 - The watchdog stays: it turns any other main-loop stop into a software-recoverable reset. A HardFault is also in `Dummy_Handler`'s spin, which the watchdog now ends.
 - Instruments kept: [`wd_capture.py`](../scripts/apollo/wd_capture.py) (needs the experiment firmware), [`hang_bisect.py`](../scripts/apollo/hang_bisect.py), [`wd_timing.py`](../scripts/apollo/wd_timing.py), [`adv_health.py`](../scripts/apollo/adv_health.py).
 
