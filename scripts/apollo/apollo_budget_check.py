@@ -68,7 +68,9 @@ Re-derived, from the size of the thing that must trip them:
   RAM in one place.
 - each ceiling sits *under* one such object above the measured image, so the next
   notable object fails and byte-level drift does not.
-- flash 95.9% = 13748, 60 bytes above the image; RAM 87.5% = 3584, 32 above.
+- flash 96.15% = 13783, 3 bytes above the image; RAM 87.5% = 3584, 32 above.
+- flash ceiling raised from 95.9% = 13748 by 35 bytes for the JTAG session guard and the
+  benchmark wire-time bound (Dan's decision, 2026-11-05).
 
 Flash has no headroom left to give: 588 bytes free is what upstream runs with,
 and every lever that would buy more is costed in `apollo_budget_levers.py` --
@@ -96,7 +98,7 @@ ELF = FIRMWARE / "_build" / "cynthion_d11" / "firmware.elf"
 # Ceilings, as a fraction of each region: under one 64-byte object above the
 # measured image, so the next notable object trips them (#404, and the docstring
 # above for the derivation).
-ROM_CEILING = 0.959
+ROM_CEILING = 0.9615
 RAM_CEILING = 0.875
 
 SHF_ALLOC = 0x2

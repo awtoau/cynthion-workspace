@@ -1,8 +1,8 @@
 diff --git a/firmware/src/jtag.c b/firmware/src/jtag.c
-index ce6ec23..f34ea0d 100644
+index ce6ec23..3462463 100644
 --- a/firmware/src/jtag.c
 +++ b/firmware/src/jtag.c
-@@ -19,6 +19,7 @@
+@@ -19,13 +19,18 @@
  
  #include "led.h"
  #include "jtag.h"
@@ -10,7 +10,18 @@ index ce6ec23..f34ea0d 100644
  #include "uart.h"
  #include "spi.h"
  #include "fpga.h"
-@@ -221,12 +222,10 @@ bool jtag_scan(uint32_t num_bits, bool advance_state, bool bitbang,
++#include "hang_wd.h"
+ 
+ #define ISC_ENABLE  0xC6
+ #define ISC_DISABLE 0x26
+ 
++// Half the watchdog's stall budget; the other half is for the readback loop.
++#define JTAG_BENCHMARK_MAX_WIRE_UNITS (HANG_WD_LONGEST_STALL_MS * 1000u / 2u * 3u)
++
+ 
+ // JTAG comms buffers, sharing storage with the console RX ring.
+ //
+@@ -221,12 +226,10 @@ bool jtag_scan(uint32_t num_bits, bool advance_state, bool bitbang,
  // returns true when nothing is outstanding, so asking it unconditionally is correct for
  // both the DMA'd and the polled-fallback case.
  static struct {
@@ -27,7 +38,7 @@ index ce6ec23..f34ea0d 100644
  	bool           advance_state;
  	// Where the leftover bits come from: the byte just past the DMA'd block, in
  	// whichever of the two transmit buffers this scan came from. Stored already-offset
-@@ -261,7 +260,8 @@ static bool jtag_scan_start(uint8_t *out_buffer, uint32_t num_bits,
+@@ -261,7 +264,8 @@ static bool jtag_scan_start(uint8_t *out_buffer, uint32_t num_bits,
  	// A scan that captures TDO is bounded by the READ buffer, since TDO lands in the
  	// second half of the region the payload occupies. Without this a large capturing
  	// scan would overwrite the data it was still clocking out.
@@ -37,7 +48,7 @@ index ce6ec23..f34ea0d 100644
  		return false;
  	}
  
-@@ -293,7 +293,7 @@ static bool jtag_scan_start(uint8_t *out_buffer, uint32_t num_bits,
+@@ -293,7 +297,7 @@ static bool jtag_scan_start(uint8_t *out_buffer, uint32_t num_bits,
  	}
  
  	scan_tail.slow_source   = out_buffer + bytes_to_send_bulk;
@@ -46,7 +57,7 @@ index ce6ec23..f34ea0d 100644
  	scan_tail.slow_bits     = bits_to_send_slow;
  	scan_tail.advance_state = advance_state;
  
-@@ -336,7 +336,7 @@ static bool jtag_scan_finish_step(void)
+@@ -336,7 +340,7 @@ static bool jtag_scan_finish_step(void)
  	spi_release_pinmux(SPI_FPGA_JTAG);
  	if (scan_tail.slow_bits) {
  		jtag_tap_shift(scan_tail.slow_source,
@@ -55,13 +66,30 @@ index ce6ec23..f34ea0d 100644
  		               scan_tail.slow_bits, scan_tail.advance_state);
  		// Cleared so a second finish step cannot re-shift these bits.
  		scan_tail.slow_bits = 0;
-@@ -820,7 +820,8 @@ bool handle_jtag_benchmark(uint8_t rhport, tusb_control_request_t const* request
+@@ -820,18 +824,17 @@ bool handle_jtag_benchmark(uint8_t rhport, tusb_control_request_t const* request
  	uint16_t chunk   = (uint16_t)(request->wIndex & 0xFF) * 64u;
  	uint8_t  divider = (request->wIndex >> 8) & 0xFF;
  
 -	if (chunk == 0 || chunk > JTAG_BUFFER_SIZE) {
 +	// The benchmark receives into jtag_in_buffer, the read half of the region.
 +	if (chunk == 0 || chunk > JTAG_READ_BUFFER_SIZE) {
+ 		return false;
+ 	}
+ 
+-	// Bound the total work, so a large repeats cannot exceed the host's
+-	// control-transfer timeout the way the truncation bug did. At 12 MHz SCK,
+-	// 65536 bytes is about 44 ms of clocking -- comfortably inside a 500 ms
+-	// timeout, and far more than any single measurement needs.
+-	if ((uint32_t)chunk * repeats > 65536u) {
+-		return false;
+-	}
+-	if (repeats == 0) {
++	// Bound the work: repeats <= 1024 keeps the product below inside 32 bits, and the
++	// wire time (bytes * 16 * (divider + 1) / 48 us at SCK = 48 MHz / (2 * (divider + 1)),
++	// 0xFF keeping the default divider of 1) stays inside half the watchdog's stall budget.
++	// A run past it would reset the part (hang_wd.h) or outlast the host's transfer timeout.
++	if (repeats == 0 || repeats > 1024 ||
++	    (uint32_t)chunk * repeats * ((divider == 0xFF ? 1u : divider) + 1u) > JTAG_BENCHMARK_MAX_WIRE_UNITS) {
  		return false;
  	}
  
@@ -109,6 +137,264 @@ index 56bbc0f..c85a7e6 100644
  	}
  }
  
+diff --git a/firmware/src/vendor.c b/firmware/src/vendor.c
+index 252476f..950d393 100644
+--- a/firmware/src/vendor.c
++++ b/firmware/src/vendor.c
+@@ -24,83 +24,12 @@
+ #include "fpga_adv.h"
+ #include "stack_probe.h"
+ #include "board_rev.h"
++#include "vendor_requests.h"
+ 
+ #define USB_API_MAJOR 1
+ #define USB_API_MINOR 2
+ 
+ 
+-// Supported vendor requests.
+-enum {
+-	VENDOR_REQUEST_GET_ID                  = 0xa0,
+-	// 0xa1 was SET_LED_PATTERN, removed -- do not reuse (see led.c).
+-	VENDOR_REQUEST_GET_FIRMWARE_VERSION    = 0xa2,
+-	VENDOR_REQUEST_GET_USB_API_VERSION     = 0xa3,
+-	VENDOR_REQUEST_GET_ADC_READING         = 0xa4,
+-
+-	// Stack high-water mark, for right-sizing the reservation (#74). Grouped
+-	// with the other read-only status requests rather than given a number of its
+-	// own elsewhere; 0xa5 was the next free one.
+-	VENDOR_REQUEST_GET_STACK_USAGE         = 0xa5,
+-
+-	//
+-	// JTAG requests.
+-	//
+-	VENDOR_REQUEST_JTAG_START              = 0xbf,
+-	VENDOR_REQUEST_JTAG_STOP               = 0xbe,
+-
+-	VENDOR_REQUEST_JTAG_CLEAR_OUT_BUFFER   = 0xb0,
+-	VENDOR_REQUEST_JTAG_SET_OUT_BUFFER     = 0xb1,
+-	VENDOR_REQUEST_JTAG_GET_IN_BUFFER      = 0xb2,
+-	VENDOR_REQUEST_JTAG_SCAN               = 0xb3,
+-	VENDOR_REQUEST_JTAG_RUN_CLOCK          = 0xb4,
+-	VENDOR_REQUEST_JTAG_GOTO_STATE         = 0xb5,
+-	VENDOR_REQUEST_JTAG_GET_STATE          = 0xb6,
+-	// Reserved upstream for a bulk JTAG scan that was never implemented: there is
+-	// no handler and no case in the dispatch switch, here or in stock v1.1.1.
+-	//
+-	// Do NOT add it to is_jtag_request() or is_jtag_programming_request(). It was
+-	// in both until this comment replaced them, which armed an upstream
+-	// placeholder: 0xb7 escalated the session to "programming in flight" and then
+-	// fell through to `return false`, leaving the JTAG lock held by a request
+-	// that cannot complete. Gating a request that cannot be dispatched has no
+-	// meaning. Kept as a constant so the ID is not silently reused.
+-	VENDOR_REQUEST_JTAG_BULK_SCAN          = 0xb7,
+-	VENDOR_REQUEST_JTAG_GET_INFO           = 0xb8,
+-	VENDOR_REQUEST_JTAG_BENCHMARK          = 0xb9,
+-
+-	// General programming requests.
+-	VENDOR_REQUEST_TRIGGER_RECONFIGURATION = 0xc0,
+-	VENDOR_REQUEST_FORCE_FPGA_OFFLINE      = 0xc1,
+-	VENDOR_REQUEST_ALLOW_FPGA_TAKEOVER_USB = 0xc2,
+-	VENDOR_REQUEST_FPGA_ADV_MODE           = 0xc3,
+-	VENDOR_REQUEST_GET_FPGA_STATUS_PINS    = 0xc4,
+-	VENDOR_REQUEST_BOOT_TO_DFU             = 0xed,
+-
+-
+-	//
+-	// Debug SPI requests
+-	//
+-	VENDOR_REQUEST_DEBUG_SPI_SEND          = 0x50,
+-	VENDOR_REQUEST_DEBUG_SPI_READ_RESPONSE = 0x51,
+-	VENDOR_REQUEST_FLASH_SPI_SEND          = 0x52,
+-	VENDOR_REQUEST_TAKE_FLASH_LINES        = 0x53,
+-	VENDOR_REQUEST_RELEASE_FLASH_LINES     = 0x54,
+-
+-	//
+-	// Self-test requests.
+-	//
+-	VENDOR_REQUEST_GET_RAIL_VOLTAGE        = 0xe0,
+-
+-	//
+-	// Control-plane escape hatch.
+-	//
+-	VENDOR_REQUEST_EMERGENCY_RESET         = 0xec,
+-
+-	//
+-	// Microsoft WCID descriptor request
+-	//
+-	VENDOR_REQUEST_GET_MS_DESCRIPTOR       = 0xee,
+-};
+ 
+ // Microsoft OS 1.0 Compat ID Feature descriptor
+ const uint8_t msft_10_compat_id[] = {
+@@ -477,24 +406,6 @@ static bool is_jtag_request(uint8_t request)
+ }
+ 
+ 
+-/**
+- * JTAG requests that actually drive the scan chain. The first of these in a
+- * session escalates it to "programming in flight", after which conflicting
+- * control-plane requests are refused.
+- */
+-static bool is_jtag_programming_request(uint8_t request)
+-{
+-	switch (request) {
+-		case VENDOR_REQUEST_JTAG_SET_OUT_BUFFER:
+-		case VENDOR_REQUEST_JTAG_SCAN:
+-		case VENDOR_REQUEST_JTAG_RUN_CLOCK:
+-		case VENDOR_REQUEST_JTAG_GOTO_STATE:
+-		case VENDOR_REQUEST_JTAG_BENCHMARK:
+-			return true;
+-		default:
+-			return false;
+-	}
+-}
+ 
+ 
+ /**
+@@ -572,7 +483,11 @@ static bool handle_vendor_request_setup(uint8_t rhport, tusb_control_request_t c
+ 
+ 	// The first programming-class request in an open session escalates it, so
+ 	// the gate above applies for the remainder of the session.
+-	if (is_jtag_programming_request(request->bRequest)) {
++	int gate = jtag_request_gate(apollo_mode_jtag_active(), request->bRequest);
++	if (gate == JTAG_GATE_REFUSE) {
++		return false;
++	}
++	if (gate == JTAG_GATE_ESCALATE) {
+ 		apollo_mode_enter_programming();
+ 	}
+ 
+diff --git a/firmware/src/vendor_requests.h b/firmware/src/vendor_requests.h
+new file mode 100644
+index 0000000..1dc7dc1
+--- /dev/null
++++ b/firmware/src/vendor_requests.h
+@@ -0,0 +1,125 @@
++/*
++ * Apollo vendor request IDs and the JTAG session policy that depends only on them.
++ *
++ * Split out of vendor.c so a host test can include it without the USB stack.
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#ifndef __VENDOR_REQUESTS_H__
++#define __VENDOR_REQUESTS_H__
++
++#include <stdbool.h>
++#include <stdint.h>
++
++// Supported vendor requests.
++enum {
++	VENDOR_REQUEST_GET_ID                  = 0xa0,
++	// 0xa1 was SET_LED_PATTERN, removed -- do not reuse (see led.c).
++	VENDOR_REQUEST_GET_FIRMWARE_VERSION    = 0xa2,
++	VENDOR_REQUEST_GET_USB_API_VERSION     = 0xa3,
++	VENDOR_REQUEST_GET_ADC_READING         = 0xa4,
++
++	// Stack high-water mark, for right-sizing the reservation (#74). Grouped
++	// with the other read-only status requests rather than given a number of its
++	// own elsewhere; 0xa5 was the next free one.
++	VENDOR_REQUEST_GET_STACK_USAGE         = 0xa5,
++
++	//
++	// JTAG requests.
++	//
++	VENDOR_REQUEST_JTAG_START              = 0xbf,
++	VENDOR_REQUEST_JTAG_STOP               = 0xbe,
++
++	VENDOR_REQUEST_JTAG_CLEAR_OUT_BUFFER   = 0xb0,
++	VENDOR_REQUEST_JTAG_SET_OUT_BUFFER     = 0xb1,
++	VENDOR_REQUEST_JTAG_GET_IN_BUFFER      = 0xb2,
++	VENDOR_REQUEST_JTAG_SCAN               = 0xb3,
++	VENDOR_REQUEST_JTAG_RUN_CLOCK          = 0xb4,
++	VENDOR_REQUEST_JTAG_GOTO_STATE         = 0xb5,
++	VENDOR_REQUEST_JTAG_GET_STATE          = 0xb6,
++	// Reserved upstream for a bulk JTAG scan that was never implemented: there is
++	// no handler and no case in the dispatch switch, here or in stock v1.1.1.
++	//
++	// Do NOT add it to is_jtag_request() or is_jtag_programming_request(). It was
++	// in both until this comment replaced them, which armed an upstream
++	// placeholder: 0xb7 escalated the session to "programming in flight" and then
++	// fell through to `return false`, leaving the JTAG lock held by a request
++	// that cannot complete. Gating a request that cannot be dispatched has no
++	// meaning. Kept as a constant so the ID is not silently reused.
++	VENDOR_REQUEST_JTAG_BULK_SCAN          = 0xb7,
++	VENDOR_REQUEST_JTAG_GET_INFO           = 0xb8,
++	VENDOR_REQUEST_JTAG_BENCHMARK          = 0xb9,
++
++	// General programming requests.
++	VENDOR_REQUEST_TRIGGER_RECONFIGURATION = 0xc0,
++	VENDOR_REQUEST_FORCE_FPGA_OFFLINE      = 0xc1,
++	VENDOR_REQUEST_ALLOW_FPGA_TAKEOVER_USB = 0xc2,
++	VENDOR_REQUEST_FPGA_ADV_MODE           = 0xc3,
++	VENDOR_REQUEST_GET_FPGA_STATUS_PINS    = 0xc4,
++	VENDOR_REQUEST_BOOT_TO_DFU             = 0xed,
++
++
++	//
++	// Debug SPI requests
++	//
++	VENDOR_REQUEST_DEBUG_SPI_SEND          = 0x50,
++	VENDOR_REQUEST_DEBUG_SPI_READ_RESPONSE = 0x51,
++	VENDOR_REQUEST_FLASH_SPI_SEND          = 0x52,
++	VENDOR_REQUEST_TAKE_FLASH_LINES        = 0x53,
++	VENDOR_REQUEST_RELEASE_FLASH_LINES     = 0x54,
++
++	//
++	// Self-test requests.
++	//
++	VENDOR_REQUEST_GET_RAIL_VOLTAGE        = 0xe0,
++
++	//
++	// Control-plane escape hatch.
++	//
++	VENDOR_REQUEST_EMERGENCY_RESET         = 0xec,
++
++	//
++	// Microsoft WCID descriptor request
++	//
++	VENDOR_REQUEST_GET_MS_DESCRIPTOR       = 0xee,
++};
++
++
++/**
++ * JTAG requests that actually drive the scan chain. The first of these in a
++ * session escalates it to "programming in flight", after which conflicting
++ * control-plane requests are refused.
++ */
++static inline bool is_jtag_programming_request(uint8_t request)
++{
++	switch (request) {
++		case VENDOR_REQUEST_JTAG_CLEAR_OUT_BUFFER:
++		case VENDOR_REQUEST_JTAG_SET_OUT_BUFFER:
++		case VENDOR_REQUEST_JTAG_SCAN:
++		case VENDOR_REQUEST_JTAG_RUN_CLOCK:
++		case VENDOR_REQUEST_JTAG_GOTO_STATE:
++		case VENDOR_REQUEST_JTAG_BENCHMARK:
++			return true;
++		default:
++			return false;
++	}
++}
++
++
++/**
++ * Session policy for a request: JTAG_GATE_REFUSE, JTAG_GATE_PASS, or JTAG_GATE_ESCALATE
++ * (run it, and the session becomes "programming in flight").
++ *
++ * The scan buffers alias the console ring, so without a JTAG_START a request that
++ * writes them would corrupt live console data.
++ */
++enum { JTAG_GATE_REFUSE = -1, JTAG_GATE_PASS = 0, JTAG_GATE_ESCALATE = 1 };
++
++static inline int jtag_request_gate(bool session_open, uint8_t request)
++{
++	bool programming = is_jtag_programming_request(request);
++	return (programming && !session_open) ? JTAG_GATE_REFUSE : programming;
++}
++
++#endif
 diff --git a/firmware/test/Makefile b/firmware/test/Makefile
 index c843d08..986cd04 100644
 --- a/firmware/test/Makefile
@@ -185,10 +471,10 @@ index 0000000..13d5695
 +#endif
 diff --git a/firmware/test/test_jtag_scan_tail.c b/firmware/test/test_jtag_scan_tail.c
 new file mode 100644
-index 0000000..925febd
+index 0000000..d29e904
 --- /dev/null
 +++ b/firmware/test/test_jtag_scan_tail.c
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,194 @@
 +/**
 + * Host-native regression test of the real jtag.c: where a scan's bit-banged tail stores TDO.
 + *
@@ -206,6 +492,7 @@ index 0000000..925febd
 +
 +#include <stdio.h>
 +#include <string.h>
++#include "vendor_requests.h"
 +
 +#ifndef JTAG_SRC
 +#define JTAG_SRC "../src/jtag.c"
@@ -335,6 +622,39 @@ index 0000000..925febd
 +	}
 +	CHECK(bad_bits == 0, "a bitbang scan shifts every bit it was asked for (%d counts truncated; first at %u bits)",
 +	      bad_bits, first_bitbang);
++
++	// No JTAG_START: no request that writes the scan buffers (the live console ring) may run.
++	{
++		const uint8_t writers[] = { VENDOR_REQUEST_JTAG_CLEAR_OUT_BUFFER, VENDOR_REQUEST_JTAG_SET_OUT_BUFFER,
++		                            VENDOR_REQUEST_JTAG_SCAN, VENDOR_REQUEST_JTAG_RUN_CLOCK,
++		                            VENDOR_REQUEST_JTAG_GOTO_STATE, VENDOR_REQUEST_JTAG_BENCHMARK };
++		int leaked = 0, blocked_in_session = 0;
++		for (unsigned i = 0; i < sizeof(writers); i++) {
++			if (jtag_request_gate(false, writers[i]) != JTAG_GATE_REFUSE) leaked++;
++			if (jtag_request_gate(true, writers[i]) != JTAG_GATE_ESCALATE) blocked_in_session++;
++		}
++		CHECK(leaked == 0, "no scan-buffer request is allowed without a session (%d are)", leaked);
++		CHECK(blocked_in_session == 0, "all of them run and escalate inside a session (%d do not)", blocked_in_session);
++		CHECK(jtag_request_gate(false, VENDOR_REQUEST_JTAG_START) == JTAG_GATE_PASS, "JTAG_START is allowed without a session");
++		CHECK(jtag_request_gate(false, VENDOR_REQUEST_GET_ID) == JTAG_GATE_PASS, "GET_ID is allowed without a session");
++	}
++
++	// The benchmark's wire time (48 MHz / (2 * (divider + 1))) stays inside half the watchdog stall budget.
++	int bad_wire = 0, accepted = 0;
++	for (unsigned units = 1; units <= 8; units++) {
++		for (unsigned repeats = 1; repeats <= 1024; repeats *= 2) {
++			for (unsigned divider = 0; divider <= 0xFF; divider++) {
++				tusb_control_request_t request = { .bRequest = 0xB9, .wValue = (uint16_t)repeats,
++				                                   .wIndex = (uint16_t)(units | (divider << 8)), .wLength = 12 };
++				if (!handle_jtag_benchmark(0, &request)) continue;
++				accepted++;
++				double div = divider == 0xFF ? 1 : divider;
++				double wire_ms = units * 64.0 * repeats * 16.0 * (div + 1) / 48000.0;
++				if (wire_ms > HANG_WD_LONGEST_STALL_MS / 2.0) bad_wire++;
++			}
++		}
++	}
++	CHECK(accepted > 0 && bad_wire == 0, "no accepted benchmark outruns the watchdog (%d of %d do)", bad_wire, accepted);
 +
 +	// The benchmark (0xB9) receives into jtag_in_buffer: its chunk must fit the read half.
 +	int bad_bench = 0;
