@@ -309,15 +309,16 @@ class SocClocks(Elaboratable):
         # their preparation time. `usb`'s reset is its inverse.
         self.phy_ready = Signal()
 
+        # The domains this drives, for the PARENT to define: the whole SoC shares them,
+        # and amaranth 0.6 does not propagate a domain up out of a submodule (RFC 59, #609).
+        self.domains = [ClockDomain("usb"), ClockDomain("sync")]
+        if self.with_fast:
+            self.domains.append(ClockDomain("fast"))
+        if self.swd_mhz:
+            self.domains.append(ClockDomain("swd"))
+
     def elaborate(self, platform):
         m = Module()
-
-        m.domains.usb = ClockDomain()
-        m.domains.sync = ClockDomain()
-        if self.with_fast:
-            m.domains.fast = ClockDomain()
-        if self.swd_mhz:
-            m.domains.swd = ClockDomain()
 
         # The domain the power-on reset itself lives in. It is `usb`'s clock with
         # no reset, and it has to be: a counter that releases `usb`'s reset
