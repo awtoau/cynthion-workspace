@@ -63,3 +63,40 @@ def test_a_different_post_synth_script_changes_it():
 def test_different_placer_options_change_it():
     first, second = digests(BASE, with_change(4, "--no-such-flag"))
     assert first != second
+
+
+# --- the real probe, against fake tools ---------------------------------------------
+# nextpnr-ecp5 prints its version on STDERR; a probe that reads only stdout sees none, and
+# then two different nextpnr versions hash alike.
+
+def fake_tool(path, name, line, stream=""):
+    path.mkdir(parents=True, exist_ok=True)
+    tool = path / name
+    tool.write_text(f"#!/bin/sh\necho '{line}' {stream}\n")
+    tool.chmod(0o755)
+
+
+def identity(tmp_path, nextpnr_override=None):
+    suite = tmp_path / "suite"
+    fake_tool(suite / "bin", "yosys", "Yosys FAKE 1.0")
+    fake_tool(suite / "bin", "nextpnr-ecp5", "nextpnr FAKE 2.0", ">&2")
+    (suite / "environment").write_text(f'export PATH="{suite / "bin"}:$PATH"\n')
+    env = {"PATH": "/usr/bin:/bin", "CYNTHION_OSS_CAD_SUITE": str(suite)}
+    if nextpnr_override:
+        override = tmp_path / "override"
+        fake_tool(override, "nextpnr-ecp5", nextpnr_override, ">&2")
+        env["CYNTHION_NEXTPNR_BIN"] = str(override)
+    done = subprocess.run(
+        [sys.executable, "-c", "import soc_run; print(soc_run.toolchain_identity()[:2])"],
+        cwd=SCRIPTS, env=env, capture_output=True, text=True, check=True, timeout=120)
+    return done.stdout.strip().splitlines()[-1]
+
+
+def test_the_probe_reads_both_versions_including_nextpnr_on_stderr(tmp_path):
+    seen = identity(tmp_path)
+    assert "Yosys FAKE 1.0" in seen and "nextpnr FAKE 2.0" in seen
+
+
+def test_a_nextpnr_override_is_the_one_identified(tmp_path):
+    seen = identity(tmp_path, nextpnr_override="nextpnr OLD 0.1")
+    assert "nextpnr OLD 0.1" in seen and "nextpnr FAKE 2.0" not in seen
