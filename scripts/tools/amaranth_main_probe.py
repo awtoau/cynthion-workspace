@@ -54,7 +54,10 @@ def prepare(rebuild):
          f"amaranth @ git+https://github.com/amaranth-lang/amaranth.git@{AMARANTH_PIN}"])
 
     luna = BASE / "luna-src"
-    run(["git", "-C", str(LUNA_STORE), "worktree", "add", "--detach", str(luna), LUNA_PIN])
+    # A stale registration (a deleted tmp/ dir) makes `worktree add` fail; prune it first.
+    run(["git", "-C", str(LUNA_STORE), "worktree", "prune"])
+    if run(["git", "-C", str(LUNA_STORE), "worktree", "add", "--detach", str(luna), LUNA_PIN]) != 0:
+        raise SystemExit("could not create the luna worktree: see " + str(LOG))
     run(["git", "-C", str(luna), "apply", str(ROOT / "patches" / "luna-amaranth-0.6.patch")])
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--target", str(site), str(luna)])
 
