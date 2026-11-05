@@ -241,6 +241,23 @@ def leave_bootloader():
             time.sleep(POLL_S)
 
 
+def choose_hub(names, sysfs=SYSFS):
+    """(hub, port numbers) for the Cynthion's ports. When the AUX console sits on another hub, the
+    hub-level steps use the Apollo's (a port named by --port is taken as given)."""
+    hubs = {hub_and_port(name)[0] for name in names}
+    if len(hubs) > 1:
+        apollo = [name for name in names if read(Path(sysfs) / name / "idProduct") in ("615b", "615c")]
+        if apollo:
+            logging.info("ports on different hubs %s: using the Apollo's", sorted(hubs))
+            names = apollo
+            hubs = {hub_and_port(name)[0] for name in names}
+    if len(hubs) != 1:
+        logging.error("the Cynthion's ports are on different hubs %s: pass the ports of one hub",
+                      sorted(hubs))
+        return None, None
+    return hubs.pop(), sorted(hub_and_port(name)[1] for name in names)
+
+
 def build_steps(hub, ports, reset_hub_too):
     steps = [("leave bootloader", leave_bootloader),
              ("bootloader reset", bootloader_reset),
@@ -294,13 +311,9 @@ def main():
     if not names:
         logging.error("no Cynthion found and none remembered: pass --port <sysfs name>")
         return 2
-    hubs = {hub_and_port(name)[0] for name in names}
-    if len(hubs) != 1:
-        logging.error("the Cynthion's ports are on different hubs %s: pass the ports of one hub",
-                      sorted(hubs))
+    hub, ports = choose_hub(names)
+    if hub is None:
         return 2
-    hub = hubs.pop()
-    ports = sorted(hub_and_port(name)[1] for name in names)
     logging.info("Cynthion on hub %s, ports %s", hub, ports)
 
     if args.status:
