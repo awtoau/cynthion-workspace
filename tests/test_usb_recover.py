@@ -105,3 +105,45 @@ def test_a_step_that_refuses_is_skipped_with_its_reason():
                                                   ("port power cycle", lambda: calls.append("b"))])
     assert not ok and calls == ["b"]
     assert any("skipped" in line and "pid 111" in line for line in log)
+
+
+# --- a step that fails or hangs is a failed step, not a crash ------------------------
+
+def test_a_step_that_fails_is_logged_and_the_probe_still_runs():
+    state = {"alive": False}
+
+    def fails_but_worked():
+        state["alive"] = True
+        raise usb_recover.Failed("timed out after 90 s")
+
+    ok, log = usb_recover.recover(lambda: state["alive"], [("port power cycle", fails_but_worked)])
+    assert ok
+    assert any("failed" in line and "timed out" in line for line in log)
+
+
+def test_a_failed_step_does_not_stop_the_next_one():
+    calls = []
+
+    def fails():
+        raise usb_recover.Failed("rc=1")
+
+    ok, log = usb_recover.recover(lambda: False, [("port power cycle", fails),
+                                                  ("hub reset", lambda: calls.append("b"))])
+    assert not ok and calls == ["b"]
+
+
+def test_a_command_over_its_limit_is_a_failed_step():
+    import pytest
+    with pytest.raises(usb_recover.Failed, match="timed out"):
+        usb_recover.run_step([sys.executable, "-c", "import time; time.sleep(5)"], limit=0.5,
+                             prefix=())
+
+
+def test_a_command_that_exits_non_zero_is_a_failed_step():
+    import pytest
+    with pytest.raises(usb_recover.Failed, match="rc=3"):
+        usb_recover.run_step([sys.executable, "-c", "import sys; sys.exit(3)"], prefix=())
+
+
+def test_a_command_that_succeeds_is_quiet():
+    usb_recover.run_step([sys.executable, "-c", "pass"], prefix=())
