@@ -8,11 +8,12 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 
 ## What the ladder does (stops at the first step after which Apollo answers)
 1. Probe: one `GET_ID`, 500 ms.
-2. Cut and restore power on the Cynthion's own hub ports: `sudo -n uhubctl -l <hub> -p <ports> -a cycle -d 5`. Skipped if the hub does not advertise per-port switching (`ppps`). A step that fails or hangs is logged as failed and the ladder goes on.
+2. Bootloader reset: vendor `0xED` sent raw (the `apollo` CLI gates on `GET_ID`), then `apollo exit-dfu`. A WDT reset of the SAMD11, no hub involved. On a hung Apollo the request times out (tested 2026-11-05): the control endpoint is not served.
+3. Cut and restore power on the Cynthion's own hub ports: `sudo -n uhubctl -l <hub> -p <ports> -a cycle -d 5`. Skipped if the hub does not advertise per-port switching (`ppps`). A step that fails or hangs is logged as failed and the ladder goes on.
    - Duration on a dead board: ~92 s (measured 92, 93, 92 s), so the step limit is 120 s and the whole ladder ~2.5 min. After a power-on the kernel retries enumerating the dead device for ~92 s, and every request to that hub queues behind it (`uhubctl`'s status read, even `usbreset`: 0.1 s normally, timed out at 15 s inside that window). The healthy case was never measured.
    - Tried and dropped: terminating `uhubctl` after the power-on to save the wait. It runs as root under `sudo`, so it cannot be signalled (the step still took 92 s), and the hub is busy for those ~92 s regardless.
-3. Reset only that hub: `sudo -n usbreset <bus>/<dev>`. Skipped, with the reason, if any process holds a device node (or serial port) of another device on that hub.
-4. Still silent: it says so and exits 1.
+4. Reset only that hub: `sudo -n usbreset <bus>/<dev>`. Skipped, with the reason, if any process holds a device node (or serial port) of another device on that hub.
+5. Still silent: it says so and exits 1.
 
 ## Safety
 - Only the Cynthion's ports and its own hub. It never resets a whole USB controller: that drops every device, including other projects' serial adapters (a `switch_console_daemon.py` for another board was running during this work).
@@ -36,7 +37,9 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - Vendor `0xec` emergency reset: control-plane state only, not an MCU reset.
 - DTR/RTS: `tud_cdc_line_state_cb` only starts the UART; no reset.
 - Tested 2026-11-05 on a healthy Apollo: `apollo enter-dfu` re-enumerated as "Cynthion Bootloader"; `exit-dfu` returned to the application as `1d50:615b` (FPGA analyzer owns CONTROL); `apollo force-offline` took it back as `1d50:615c`, GET_ID answers.
-- All of these are control requests the firmware must serve. Not tried on a hung Apollo (the board was not enumerating).
+- All of these are control requests the firmware must serve. On a hung Apollo `0xED` timed out (2026-11-05, `tmp/isolate-B/top.bit` loaded through the arbiter): enumerated as `1d50:615c`, every control transfer times out, the AUX console gone.
+- UART mode (`./scripts/apollo/adv_health.py --uart`, watchdog poll running) was selected before that load and did not prevent the hang. Control with `tmp/isolate-X/top.bit`: mode stayed `uart` through the configure, health `watchdog 0`. With no gateware loaded: `watchdog 1` (link dead), 5 timeouts.
+- After `uhubctl` cycled port 3 alone (AUX was not enumerated, so it was not in the list) Apollo re-enumerated as `1d50:615c`, still silent.
 - Apollo returns CONTROL to itself when the FPGA's advertisement stops (EIC edges or UART frame; [`cynone-sideband.md`](chips/cynone-sideband.md) §8, §14). PROGRAM held at RESET forces the FPGA offline ([`hardware.md`](hardware.md)); both are physical buttons.
 
 ## Not done

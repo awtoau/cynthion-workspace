@@ -37,6 +37,10 @@ CYNTHION_VID = "1d50"
 CYNTHION_PIDS = {"615b", "615c", "6180"}        # analyzer stub, Apollo, SoC console
 APOLLO = (0x1d50, 0x615c)
 REQUEST_GET_ID = 0xA0                           # apollo_fpga.ApolloDebugger.REQUEST_GET_ID
+REQUEST_BOOT_TO_DFU = 0xED                      # apollo_fpga.ApolloDebugger.REQUEST_BOOT_TO_DFU
+# The bootloader was listed by the first lsusb after `apollo enter-dfu` returned (2026-11-05, not
+# timed). 5 s covers that with margin; on expiry the step is reported failed and the ladder goes on.
+BOOTLOADER_S = 5
 
 # A dead Apollo costs the kernel two 5 s descriptor reads per attempt: 16 s measured (2026-11-05
 # 14:53:16 -> 14:53:32). 25 s is 1.5x that; on expiry the step counts as not having recovered it.
@@ -190,6 +194,41 @@ def run_step(command, limit=None, prefix=("sudo", "-n")):
         raise Failed(f"{command[0]} rc={done.returncode}: {done.stderr.strip()[:120]}")
 
 
+def find_apollo():
+    import usb.core
+    return usb.core.find(idVendor=APOLLO[0], idProduct=APOLLO[1])
+
+
+def bootloader_reset():
+    """Vendor 0xED sent raw (the apollo CLI gates on GET_ID, which a silent Apollo fails), then
+    exit-dfu once the bootloader is up. A WDT reset of the SAMD11: no hub, no cables."""
+    import usb.core
+    device = find_apollo()
+    if device is None:
+        raise Skip("Apollo is not on the bus")
+    try:
+        device.ctrl_transfer(0x40, REQUEST_BOOT_TO_DFU, 0, 0, None, 500)
+    except usb.core.USBError as why:
+        raise Failed(f"0xED not accepted: {why}") from None
+    deadline = time.monotonic() + BOOTLOADER_S
+    while True:
+        try:
+            run_step(["apollo", "exit-dfu"], limit=BOOTLOADER_S, prefix=())
+            return
+        except Failed:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(POLL_S)
+
+
+def build_steps(hub, ports, reset_hub_too):
+    steps = [("bootloader reset", bootloader_reset),
+             ("port power cycle", lambda: cycle_ports(hub, ports))]
+    if reset_hub_too:
+        steps.append(("hub reset", lambda: reset_hub(hub, set(ports))))
+    return steps
+
+
 def cycle_ports(hub, ports):
     try:
         listing = subprocess.run(["uhubctl", "-l", hub], capture_output=True, text=True,
@@ -250,9 +289,7 @@ def main():
         logging.info("Apollo answers: %s", apollo_answers())
         return 0
 
-    steps = [("port power cycle", lambda: cycle_ports(hub, ports))]
-    if not args.no_reset_hub:
-        steps.append(("hub reset", lambda: reset_hub(hub, set(ports))))
+    steps = build_steps(hub, ports, reset_hub_too=not args.no_reset_hub)
     ok, log = recover(apollo_answers, steps, settle=wait_for_apollo)
     for line in log:
         logging.info(line)
