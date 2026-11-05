@@ -59,8 +59,7 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
   - The write is one byte, and 512 of the 1024 possible final-chunk lengths (513 and up) go out of bounds, but where it lands depends on the length and on the RAM layout, which moves with every firmware change. Most landings hit data that is rewritten before use; `B`'s 692 bytes hit a live pointer, and only when TDO was high.
   - `stack_probe` checks the stack's high-water mark, not `.bss` neighbours.
   - Now: `repos/apollo/firmware/test/test_jtag_scan_tail.c` compiles the real `jtag.c` on a host (stub headers, fake SPI and TAP) and sweeps every bit count and flag combination plus the benchmark. Run against `a476c69^` it fails (512 final-chunk lengths out of bounds); it also failed on the first fix for 14 capturing scans (4097..4103 bits) and 8 benchmark chunk sizes, both fixed in `a16c6b8`.
-- Review (Fable, read-only, 2026-11-05) found those two. Still open, not fixed:
-  - `FORCE_BITBANG` with `wValue >= 256` shifts only `wValue & 0xFF` bits (`slow_bits` is a `uint8_t`); `ecp5.py` uses bitbang for background SPI transfers.
+- Review (Fable, read-only, 2026-11-05) found those two. Fixed since: `FORCE_BITBANG` shifted only `bits & 0xFF` (`slow_bits` was a `uint8_t`; `ecp5.py` uses bitbang for background SPI transfers), `repos/apollo` `aeb935e`; the host test sweeps bitbang counts and fails before it (3841 truncated, first at 256 bits). Flash unchanged at 13736 B. Still open, not fixed:
   - JTAG requests are accepted with no session: a `0xB1` without `0xBF` writes `comms.jtag_tx`, which is the live console ring (`jtag.c` comments call that impossible).
   - A benchmark at a very low SCK can run past the 500 ms watchdog (`jtag.c` assumes 12 MHz).
   - Its claim that the WDT clock is 1.024 kHz (a 16 s timeout) is contradicted by the measurement above: the device vanished 0.527 s after the last kick with 16384 clocks.

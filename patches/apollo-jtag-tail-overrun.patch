@@ -1,5 +1,5 @@
 diff --git a/firmware/src/jtag.c b/firmware/src/jtag.c
-index ce6ec23..1223a54 100644
+index ce6ec23..f34ea0d 100644
 --- a/firmware/src/jtag.c
 +++ b/firmware/src/jtag.c
 @@ -19,6 +19,7 @@
@@ -10,7 +10,7 @@ index ce6ec23..1223a54 100644
  #include "uart.h"
  #include "spi.h"
  #include "fpga.h"
-@@ -221,10 +222,8 @@ bool jtag_scan(uint32_t num_bits, bool advance_state, bool bitbang,
+@@ -221,12 +222,10 @@ bool jtag_scan(uint32_t num_bits, bool advance_state, bool bitbang,
  // returns true when nothing is outstanding, so asking it unconditionally is correct for
  // both the DMA'd and the polled-fallback case.
  static struct {
@@ -18,11 +18,15 @@ index ce6ec23..1223a54 100644
 -	// bulk byte count, kept as an offset because that is its only use. Bounded by
 -	// JTAG_BUFFER_SIZE, so 16 bits is ample.
 -	uint16_t       slow_offset;
+-	// At most 8 bits, so one byte.
+-	uint8_t        slow_bits;
 +	// Where the tail's received bit go (jtag_tail.h): NULL when the scan discards TDO.
 +	uint8_t       *slow_dest;
- 	// At most 8 bits, so one byte.
- 	uint8_t        slow_bits;
++	// 8 bits, or the whole scan under FORCE_BITBANG (up to 8 * JTAG_BUFFER_SIZE).
++	uint16_t       slow_bits;
  	bool           advance_state;
+ 	// Where the leftover bits come from: the byte just past the DMA'd block, in
+ 	// whichever of the two transmit buffers this scan came from. Stored already-offset
 @@ -261,7 +260,8 @@ static bool jtag_scan_start(uint8_t *out_buffer, uint32_t num_bits,
  	// A scan that captures TDO is bounded by the READ buffer, since TDO lands in the
  	// second half of the region the payload occupies. Without this a large capturing
@@ -181,10 +185,10 @@ index 0000000..13d5695
 +#endif
 diff --git a/firmware/test/test_jtag_scan_tail.c b/firmware/test/test_jtag_scan_tail.c
 new file mode 100644
-index 0000000..3ee1722
+index 0000000..925febd
 --- /dev/null
 +++ b/firmware/test/test_jtag_scan_tail.c
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,160 @@
 +/**
 + * Host-native regression test of the real jtag.c: where a scan's bit-banged tail stores TDO.
 + *
@@ -317,6 +321,20 @@ index 0000000..3ee1722
 +	}
 +	CHECK(bad_any == 0, "no scan of any bit count (capture or discard, advance or not) writes outside comms (%d do; first at %zu bits)",
 +	      bad_any, first_bits);
++
++	// FORCE_BITBANG sends every bit through the tail: the tail must be told the full count.
++	int bad_bits = 0;
++	uint32_t first_bitbang = 0;
++	for (uint32_t bits = 1; bits <= 8u * JTAG_READ_BUFFER_SIZE; bits++) {
++		tap_calls = 0; tap_bits = 0;
++		if (!jtag_scan_from(comms.jtag_tx, bits, false, true, true)) continue;
++		if (tap_bits != bits) {
++			if (!bad_bits) first_bitbang = bits;
++			bad_bits++;
++		}
++	}
++	CHECK(bad_bits == 0, "a bitbang scan shifts every bit it was asked for (%d counts truncated; first at %u bits)",
++	      bad_bits, first_bitbang);
 +
 +	// The benchmark (0xB9) receives into jtag_in_buffer: its chunk must fit the read half.
 +	int bad_bench = 0;
