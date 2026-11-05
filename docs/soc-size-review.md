@@ -66,7 +66,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 | `fabric_status` | 110 | 36 | - | |
 | `ulpi_window` | 98 | 96 | - | |
 | `stream_buffer` (64, sync) | 90 | 27 | - | |
-| `flash_ila` | 89 | 108 | 1 | instrumentation |
 | `sideband_csr` | 85 | 50 | - | |
 | `stream_buffer` (16, CDC) | 46 | 57 | - | |
 | `vbus_csr` | 23 | 24 | - | |
@@ -77,7 +76,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 
 ## 4. Instrumentation in context
 
-- `peripherals/flash.py`: the ILA "was built to find the JEDEC read fault, which is fixed"; `flash_cdc.py`: after the PHY moves to its own domain ILA captures cross a clock boundary unsynchronised ("gross behaviour only").
 - `ObservablePHY` (`peripherals/flash.py`) re-implements `luna_soc`'s `SPIPHYController.elaborate` statement for statement (130 lines). `soc_upstream_copy_check.py`: in sync with the installed `luna_soc` (83 upstream statements, 85 in the copy: instrumentation assignments + the `as fsm:` handle); validated against known-bad mutations both directions.
 
 ## 5. Firmware bytes (`llvm-nm --print-size`, `b403978`)

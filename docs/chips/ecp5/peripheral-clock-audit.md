@@ -40,7 +40,6 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 6** — latent |
 | `flash.py` `ObservablePHY` | `domain` param, honoured | one flop on `dq.i` (upstream) | SCK = `f_domain / 2(1+divisor)` | **sound** |
 | `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 7** — latent |
-| `flash.py` `FlashILA` | hardcoded `sync` | incidental 2-stage, per bit | `sample_rate=60e6`, cosmetic | **DEFECT 7** — latent, already documented |
 | [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
 | [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 8** |
 | [`cpu/intc.py`](../../../gateware/soc/cpu/intc.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |
@@ -267,13 +266,11 @@ only defence against it is that somebody read the code.
 
 ## Defect 7 — the flash instrumentation is pinned to `sync`
 
-`ObservablePHY` is parameterised on its domain; `FlashPinProbe` and `FlashILA`
-are not, and both sample in `sync` unconditionally. With `FLASH_PHY_FAST = True`
-every signal they sample is driven in `fast`.
+`ObservablePHY` is parameterised on its domain; `FlashPinProbe`
+is not, and samples in `sync` unconditionally. With `FLASH_PHY_FAST = True`
+every signal it samples is driven in `fast`.
 
-`flash_cdc.py:96-105` already states this for the ILA and reaches the right
-conclusion ("The ILA belongs in `phy_domain` with its own bus crossing, or it
-belongs retired"). The pin probe has no such note and is worse off: it has no
+`flash_cdc.py` notes the crossing. The pin probe has no
 synchroniser at all (`flash.py:750-754`), and at divisor 0 SCK toggles once per
 `fast` cycle — half a `sync` cycle — so its edge counters would be both
 metastable and structurally aliased. `grant_ctrl` is `sync` on both sides and

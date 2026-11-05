@@ -203,7 +203,6 @@ other row above.
 |---|---|---|
 | [`flash_cdc.py`](../gateware/soc/peripherals/flash_cdc.py) | `FLASH_PHY_FAST = False`, not env-overridable | `top.py:676-703`: at `sync` 60 the only integer ratios are 60 (no change) and 120 (does not close at 111.26 MHz). ODDR first, then this |
 | [`flash_sck_full.py`](../gateware/soc/peripherals/flash_sck_full.py) | `FLASH_FULL_SCK = False` | `top.py:705-710`. Also `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
-| `FlashILA` | removed from the SoC in `620901b` | still assumed built by [`soc-size-review.md:136-147`](soc-size-review.md), so the peripheral-area figures there are an over-estimate |
 
 ## Merged, in no layer yet
 
@@ -238,7 +237,6 @@ Where the framing this audit was given turned out to be wrong.
 | [#327](https://github.com/awtoau/cynthion-workspace/issues/327) / [#305](https://github.com/awtoau/cynthion-workspace/issues/305): `control_vbus_in_en`/`aux_vbus_in_en` are `Out()` ports reaching no pad | **fixed.** `VbusControl` has exactly four outputs (`vbus_csr.py:111-114`) and all four reach pads (`top.py:1889-1896`); the post-mortem is at `vbus_csr.py:15-22` and the matching firmware note at [`vbus.rs:129-131`](../firmware/cynthion-soc/src/vbus.rs). The stale artefact is a doc: [`chips/ecp5/pin-usage.md:141-142,186-190,455`](chips/ecp5/pin-usage.md) still calls it "the worst finding here" |
 | [#323](https://github.com/awtoau/cynthion-workspace/issues/323): `gateware_id.py:243-249` | **the file does not exist** — replaced by `fabric_status.py` in `8a915b3`. The DTR finding survives verbatim at `fabric_status.py:110,175-191`; the "`GatewareId` reports `sync_hz`, `usb_hz` and the cache geometry" claim is now understated, because **no** fabric register reports any of them |
 | [#531](https://github.com/awtoau/cynthion-workspace/issues/531): four reasons | R5 and R6 above are neither of the four, and between them account for most of the `stays` rows |
-| [#323](https://github.com/awtoau/cynthion-workspace/issues/323): `FlashILA.SIGNAL_NAMES` is a per-bitstream axis | moot — `FlashILA` is not built |
 | [#323](https://github.com/awtoau/cynthion-workspace/issues/323): "`grant` and `locked` have no readback" | half stale — `grant` has one, into a CSR no firmware reads; `locked` has none |
 
 Line numbers in [#323](https://github.com/awtoau/cynthion-workspace/issues/323)
