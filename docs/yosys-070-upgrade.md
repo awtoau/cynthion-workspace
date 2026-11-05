@@ -22,15 +22,27 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
 ## Gain
 - yosys step with `autoname`: 104.5 s -> 37 s. `autoname` itself 53.3 s -> 0.12 s (rewritten in 0.70), so the `autoname` skip in [`fast_build_env.py`](../scripts/fast_build_env.py) is not needed there.
 
-## Blocker: abc9 ties `M` of async flip-flops to 0
-- `common_sim.vh:247`: `TRELLIS_FF` with `SRMODE=="ASYNC"` is an `abc9_box`.
-- 0.70's abc9 gives every box input pin an AIG output; an unconnected pin comes back as constant 0. Result: `M` connected to `1'b0` on every async FF (576 here; 0 in 0.65+57).
-- nextpnr 0.10-74 and 0.11.1 then fail in the packer: `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net`.
-- Bisected to the `abc9` call; four-line repro in the upstream draft below.
-- Workaround: [`scripts/yosys/trellis_ff_without_m.v`](../scripts/yosys/trellis_ff_without_m.v), after synthesis. To enable: `AMARANTH_script_after_synth` gets `techmap -max_iter 1 -map <path>` (append to the replay lines in `fast_build_env.py`). It must connect only the ports the original cell had: `CE` is absent when `CEMUX` is `"1"`, and tying it to 0 froze 269 flip-flops (silent CPU on the board). Covered by [`tests/test_trellis_ff_techmap.py`](../tests/test_trellis_ff_techmap.py).
+## Blocker: abc9 ties unlisted inputs of async flip-flops to 0 (`M`, `CE`)
+- Cause: yosys `ae085b637` "abc_ops: use all ports, including ports the instance doesn't list" (2026-11-02, PR #6437, fixes #6427), in 0.70+329 and main `8f3cc3d0c`. `abc9_ops prep_bypass` now wires every module port of an `abc9_bypass` cell; a port the instance does not list comes back from ABC as constant 0. Reverting that commit makes the test below pass.
+- Not specific to `M` or to `TRELLIS_FF`: any input the instance leaves unconnected. On `TRELLIS_FF` that is `M` (unused unless `LSRMODE=="PRLD"`) and `CE` when `CEMUX=="1"` (the flop has no enable).
+- Effects: `M` connected to `1'b0` on every async FF (576 here; 0 in 0.65+57), and nextpnr 0.10-74 / 0.11.1 fail in the packer: `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net` (nextpnr `ecp5/pack.cc` drops a floating `M` but not a constant one). `CE` tied to 0 froze flip-flops: the silent CPU on the board.
+- The async flop is not an ABC box here: `abc9_ops` strips `abc9_box` from a derived box containing a builtin FF and marks it `abc9_bypass` (`abc9_ops.cc:241-246`); an earlier draft of this report said otherwise.
+- Workaround in the flow: [`scripts/yosys/trellis_ff_without_m.v`](../scripts/yosys/trellis_ff_without_m.v), after synthesis. To enable: `AMARANTH_script_after_synth` gets `techmap -max_iter 1 -map <path>` (append to the replay lines in `fast_build_env.py`). It must connect only the ports the original cell had: `CE` is absent when `CEMUX` is `"1"`. Covered by [`tests/test_trellis_ff_techmap.py`](../tests/test_trellis_ff_techmap.py).
 - yosys 0.70 also drops the net names `car.clk_sync` and `hyperram.pll.clk_hr` (aliases merged), so nextpnr ignored their clock constraints; the clock signals carry `keep`, and `soc_run` refuses a build with a dropped constraint.
 - Parameters in that file must not carry a `[127:0]` range: it turns `CEMUX="1"` into the integer 49 in the JSON.
-- A source fix was tried and dropped: skipping box inputs that nothing drives in `abc_ops_reintegrate.cc`. By reintegration time ABC has already absorbed the logic feeding most pins, so "undriven" cannot be decided there; it strips real connections (all flip-flops vanished). Needs the maintainers.
+- Source fix, [`patches/yosys-abc9-unlisted-ports-fix.patch`](../patches/yosys-abc9-unlisted-ports-fix.patch): `techmap_autopurge` on every input port of the `prep_bypass` template module, so a port the instance leaves unconnected is dropped by techmap. Test: [`patches/yosys-abc9-unlisted-ports-test.patch`](../patches/yosys-abc9-unlisted-ports-test.patch) (`tests/arch/ecp5/trellis_ff_unused_ports.ys`).
+- An earlier source attempt was dropped: skipping box inputs that nothing drives in `abc_ops_reintegrate.cc`. By reintegration time ABC has already absorbed the logic feeding most pins, so "undriven" cannot be decided there.
+- Smaller candidates tried: `techmap_autopurge` on `M` only (in `common_sim.vh`) leaves `CE` tied to 0 and the image is silent on the board.
+
+### Why yosys's tests pass
+- `tests/arch/ecp5/dffs.ys` and `adffs.ys` assert `equiv_opt` equivalence against the sim model, cell counts and cell types. A tied-off `M` or `CE` is simulation-identical here (the model ignores `M` unless PRLD and `CE` when `CEMUX=="1"`), and port connectivity is never checked.
+- The yosys suite has no place-and-route step, so nextpnr's packer never sees the netlist.
+- Run on `8f3cc3d0c` both pass; the new test fails there (`connect \M 1'0` on 3 flops, `connect \CE 1'0` on 2) and passes on 0.65+57.
+
+### Results of the fix (2026-11-05, yosys `8f3cc3d0c` + the patch, nextpnr 0.11.1, no workaround)
+- New test passes; 26 ECP5, 18 gowin, 14 nexus, 10 machxo2, 12 intel_alm, 26 ice40, 11 anlogic arch tests and 5 abc9 `various` tests pass. `arch/xilinx` `abc9_dff` and `dsp_abc9` fail identically with and without the patch (an unlisted `ABC: Warning: The network is combinational`), not investigated.
+- SoC build (seed 11, 20781 COMB): loads, selftest passes, `hyperram_board_test` 13/13.
+- A build cache hit reused an earlier image twice: the cache key does not include a locally patched yosys. `--seed` or deleting the cached bitstream forces a build.
 
 ## Size (nextpnr `--pack-only`, TRELLIS_COMB of 24288)
 
@@ -48,28 +60,28 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
 
 ## Upstream report (draft, not posted: needs Dan's go)
 
-**Title:** `synth_ecp5`: abc9 ties the unused `M` input of async `TRELLIS_FF` to 0; nextpnr-ecp5 then rejects the netlist
+**Title:** `abc9`: input ports an `abc9_bypass` cell instance leaves unconnected come back tied to 0 (regression from #6437; breaks `synth_ecp5` -> nextpnr)
 
-**Versions:** Yosys 0.70+329 (`b8d84f823`, OSS CAD Suite 2026-11-04); nextpnr-ecp5 0.11.1-86 and 0.10-74. Yosys 0.65+57 is not affected.
+**Versions:** Yosys 0.70+329 (`b8d84f823`) and main `8f3cc3d0c`; regression from `ae085b637` (#6437). Yosys 0.65+57 is not affected. nextpnr-ecp5 0.11.1-86 and 0.10-74.
 
 **Repro** (`t.v`):
 ```verilog
-module t(input clk, input rst_n, input d, output reg q);
-  always @(posedge clk or negedge rst_n)
-    if (!rst_n) q <= 1'b0; else q <= d;
+module t(input clk, input rst_n, input ce, input d, output reg q, output reg r);
+  always @(posedge clk or negedge rst_n) if (!rst_n) q <= 1'b0; else q <= d;
+  always @(posedge clk or negedge rst_n) if (!rst_n) r <= 1'b0; else if (ce) r <= d;
 endmodule
 ```
 ```
-yosys -p "read_verilog t.v; synth_ecp5 -top t; write_json t.json"
+yosys -p "read_verilog t.v; synth_ecp5 -top t; dump t:TRELLIS_FF"
 ```
-- 0.70+329: the `TRELLIS_FF` has `"M": ["0"]` in `connections`.
-- 0.65+57: no `M` connection.
-- `synth_ecp5 -run :map_luts` first: `M` absent. After `abc9 -W 300`: present. So it is the `abc9` step.
+- 0.70+329 / main: every `TRELLIS_FF` has `connect \M 1'0`, and the flop without an enable also `connect \CE 1'0`.
+- 0.65+57: neither.
+- Reverting `ae085b637` removes both.
 
-**Cause (from reading the source):** `techlibs/lattice/common_sim.vh` marks `TRELLIS_FF` with `SRMODE=="ASYNC"` as `abc9_box`. The box path gives every box input an AIG output; `abc_ops_reintegrate` sets every box port from ABC's result, so a pin that was never connected comes back as constant 0.
+**Cause:** `prep_bypass` (`passes/techmap/abc9_ops.cc`) now sets every module port on the replaced cell (`for (auto port_name : inst_module->ports)`), where it used the first instance's `connections()`. The techmap leaves a port the instance does not list undriven, `write_xaiger2` buf-normalisation turns undriven bits into constant 0, and `abc_ops_reintegrate` writes the result back to the port.
 
-**Impact:** on a ~32k-cell design with 576 async flip-flops, nextpnr-ecp5 (both versions) stops in packing with `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net '...'`. `M` is unused in `ASYNC` mode without `LSRMODE="PRLD"`.
+**Impact:** nextpnr-ecp5 stops in packing with `user port '<ff>.M' connected to incorrect net '$PACKER_GND_NET'`; a constant-0 `CE` on a flop that has no enable freezes it (found as a silent CPU on hardware).
 
-**Workaround:** a `techmap -max_iter 1` that re-instantiates `TRELLIS_FF` without `M` for `SRMODE=="ASYNC" && LSRMODE!="PRLD"` after `synth_ecp5`; the packer then accepts the netlist.
+**Fix proposed:** mark the template module's input ports `techmap_autopurge` (one `set_bool_attribute` in `prep_bypass`), plus the test `tests/arch/ecp5/trellis_ff_unused_ports.ys`. It keeps the behaviour #6437 wanted for ports an instance does connect.
 
-**Expected:** a pin left unconnected stays unconnected after `abc9`, as in 0.65. Possibly nextpnr should also accept a constant on `M`.
+**Also:** nextpnr `ecp5/pack.cc` drops a floating `M` but not one tied to a constant; accepting a constant `M` would be a cheap independent robustness fix.

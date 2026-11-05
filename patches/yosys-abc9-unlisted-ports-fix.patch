@@ -1,0 +1,15 @@
+diff --git a/passes/techmap/abc9_ops.cc b/passes/techmap/abc9_ops.cc
+index d351533a5..318a6bf5b 100644
+--- a/passes/techmap/abc9_ops.cc
++++ b/passes/techmap/abc9_ops.cc
+@@ -344,6 +344,10 @@ void prep_bypass(RTLIL::Design *design)
+ 				auto w = map_module->addWire(translate(map_design, design, port_name), inst_module->wire(port_name));
+ 				if (w->port_output)
+ 					w->attributes.erase(ID::init);
++				// An input the instance leaves unconnected must stay unconnected after techmap, not come
++				//   back from ABC as a constant (the bypass rule below wires every module port)
++				if (w->port_input)
++					w->set_bool_attribute(ID::techmap_autopurge);
+ 			}
+ 			map_module->ports.clear();
+ 			for (auto port_name : inst_module->ports)

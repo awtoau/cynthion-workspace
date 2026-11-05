@@ -1,0 +1,38 @@
+diff --git a/tests/arch/ecp5/trellis_ff_unused_ports.ys b/tests/arch/ecp5/trellis_ff_unused_ports.ys
+new file mode 100644
+index 000000000..3fbdae8d8
+--- /dev/null
++++ b/tests/arch/ecp5/trellis_ff_unused_ports.ys
+@@ -0,0 +1,32 @@
++# An async TRELLIS_FF leaves some input pins unconnected: M (unused unless LSRMODE=PRLD) and CE when
++# the flop has no enable (CEMUX="1"). synth_ecp5 must leave them unconnected. abc9's bypass wiring
++# (abc9_ops prep_bypass) gave every module port a wire, so unlisted inputs came back tied to 1'b0:
++# nextpnr-ecp5 rejects M (user port '<ff>.M' connected to incorrect net '$PACKER_GND_NET') and a
++# constant-0 CE freezes the flop. The equivalence checks in dffs.ys / adffs.ys cannot see either
++# (the sim model ignores M and CE here), so check the ports.
++! mkdir -p temp
++read_verilog <<EOT
++module arst(input clk, input rst_n, input d, output reg q);
++  always @(posedge clk or negedge rst_n)
++    if (!rst_n) q <= 1'b0; else q <= d;
++endmodule
++module aset(input clk, input set_n, input d, output reg q);
++  always @(posedge clk or negedge set_n)
++    if (!set_n) q <= 1'b1; else q <= d;
++endmodule
++module arst_ce(input clk, input rst_n, input ce, input d, output reg q);
++  always @(posedge clk or negedge rst_n)
++    if (!rst_n) q <= 1'b0; else if (ce) q <= d;
++endmodule
++module top(input clk, input rst_n, input set_n, input ce, input d, output a, output b, output c);
++  arst u0(.clk(clk), .rst_n(rst_n), .d(d), .q(a));
++  aset u1(.clk(clk), .set_n(set_n), .d(d), .q(b));
++  arst_ce u2(.clk(clk), .rst_n(rst_n), .ce(ce), .d(d), .q(c));
++endmodule
++EOT
++hierarchy -top top
++synth_ecp5 -top top
++select -assert-count 3 t:TRELLIS_FF
++dump -o temp/trellis_ff_ports.il t:TRELLIS_FF
++! grep -qF 'cell \TRELLIS_FF' temp/trellis_ff_ports.il
++! ! grep -qE 'connect \\(M|CE) 1' temp/trellis_ff_ports.il
