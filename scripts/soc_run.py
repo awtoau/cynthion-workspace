@@ -137,17 +137,19 @@ from fast_build_env import (SCRIPT_AFTER_SYNTH, SYNTH_OPTS, YOSYS_MAX_THREADS,  
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 
 # CYNTHION_TOOLCHAIN picks the suite, nextpnr and synthesis options in one setting
-# (docs/yosys-070-upgrade.md). yosys 0.70 builds are placed by the installed nextpnr 0.10-74:
-# nextpnr 0.11.1 is not adopted. The M workaround is mandatory with 0.70.
+# (docs/yosys-070-upgrade.md). yosys 0.70 builds are placed by that suite's own nextpnr 0.11.1;
+# `yosys070-nextpnr010` keeps the installed 0.10-74. The M workaround is mandatory with 0.70.
 _NEW_SUITE = "$HOME/opt/oss-cad-suite-20261104/oss-cad-suite"
 _INSTALLED_NEXTPNR = "$HOME/opt/oss-cad-suite/bin/nextpnr-ecp5"
 _FIX_M = f"techmap -max_iter 1 -map {ROOT / 'scripts' / 'yosys' / 'trellis_ff_without_m.v'}"
 _YOSYS_070 = {"CYNTHION_OSS_CAD_SUITE": _NEW_SUITE,
-              "CYNTHION_NEXTPNR_ECP5": _INSTALLED_NEXTPNR,
+              "CYNTHION_NEXTPNR_ECP5": "",
               "AMARANTH_script_after_synth": f"{SCRIPT_AFTER_SYNTH}\n{_FIX_M}"}
 TOOLCHAINS = {
     "yosys070": {**_YOSYS_070, "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
     "yosys070-widelut": {**_YOSYS_070, "AMARANTH_synth_opts": SYNTH_OPTS},
+    "yosys070-nextpnr010": {**_YOSYS_070, "CYNTHION_NEXTPNR_ECP5": _INSTALLED_NEXTPNR,
+                            "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
     "stable": {},
 }
 TOOLCHAIN = os.environ.get("CYNTHION_TOOLCHAIN", "yosys070")
