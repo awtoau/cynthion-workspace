@@ -49,6 +49,8 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - Timeout: longest stall from the code is 100 ms (`board_delay(100)` in `usb_switch.c`), not measured on a board; 500 ms is 5x.
 - Flash 13736 of 14336 (ceiling 13748): `scripts/apollo/apollo_budget_check.py`, `verify_vectors.py`, `repos/apollo/firmware/test` `test_hang_wd` pass.
 - `usb_recover.py` first rung: `leave bootloader` (`exit-dfu`, `force-offline`) when Apollo shows as the bootloader.
+- Bisect (`./scripts/apollo/hang_bisect.py`, 2026-11-05): `X` padded with zeros to `B`'s length loaded and passed, so length is not the trigger. `B` truncated to `X`'s length also left Apollo alive (the arbiter reported PASSED although a truncated stream cannot configure, so only the transfer of `B`'s first 477 KB is shown harmless). The trigger is in `B`'s last 17 KB or in the complete design running.
+- Open hypothesis: the running design drives a pin Apollo's firmware spins on (an interrupt storm on `FPGA_ADV`'s EIC or SERCOM1 handler would starve the main loop); UART mode did not prevent it, so a storm would have to be the SERCOM1 receive handler. Untested.
 - Why the main loop stops during that load is open: see [`yosys-070-upgrade.md`](yosys-070-upgrade.md).
 
 ## Not done
