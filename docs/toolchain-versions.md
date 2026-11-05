@@ -17,7 +17,7 @@
 | tool | pinned (`versions.json`) | installed 2026-11-02 | latest upstream |
 |---|---|---|---|
 | amaranth | 0.5.9 | 0.5.10 | 0.5.10 |
-| luna-usb | 0.2.3 | 0.2.3 | 0.2.3 |
+| luna-usb | 0.2.3 | 0.2.3.post15 (git main `352cdbf`) | 0.2.3 release; main `352cdbf` |
 | Yosys | 0.65+57 (`9d0cdb855`) | 0.65+57 | v0.70 |
 | nextpnr-ecp5 | 0.10-74 (`ee605e2b`) | 0.10-74 | 0.11.1 |
 
@@ -58,7 +58,7 @@ Free-threaded CPython as the default `python3`. **No virtualenv**; PATH ordering
 | `amaranth` | 0.5.10 | PyPI |
 | `amaranth-soc` | `0.1a1.dev32+g3e3d8b7` | **git only** |
 | `amaranth-stdio` | `0.1.dev37+gd296ba4` | **git only** |
-| `luna-usb` | 0.2.3 | PyPI |
+| `luna-usb` | `0.2.3.post15+git.352cdbfc` | **git main** (pip from git), not PyPI |
 | `luna-soc` | `0.3.2+awto.1` | `awtoau/awto-luna-soc` fork ([pin](upstream-boundary.md#luna-soc-fork-pin)) |
 | `usb-protocol` | 0.9.2 | PyPI |
 | `cynthion` | `0.2.4.post32+git.7fa0c6a4` | editable, `repos/cynthion/cynthion/python` |

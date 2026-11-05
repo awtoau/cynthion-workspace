@@ -10,7 +10,7 @@
   by their own `luna*` imports (static, via ast; imports inside functions count).
 - Per module: lines of code, uses of APIs removed in amaranth main (`Record`, `amaranth.hdl.rec`,
   `Layout`-as-Record, `DIR_*`), reported so the port can be sized.
-- Output: ./tmp/logs/luna_closure.log (and stdout). Decision and scope: #222.
+- Output: tmp/logs/luna_closure.log (all of gateware/) or luna_closure_soc.log (`--only soc`, which also follows the GUH engine under probes/); stdout too. Scope: #222.
 """
 
 import ast
@@ -20,7 +20,9 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-LOG = ROOT / "tmp" / "logs" / "luna_closure.log"
+LOG_DIR = ROOT / "tmp" / "logs"
+# `gateware/soc` imports the GUH host engine from `gateware/probes/usb_host/guh`, which imports luna.
+SOC_EXTRA_DIRS = (("probes", "usb_host", "guh"),)
 PACKAGES = ("luna", "luna_soc")
 REMOVED = ("Record", "DIR_FANIN", "DIR_FANOUT", "DIR_NONE", "amaranth.hdl.rec")
 
@@ -81,6 +83,28 @@ def imports_of(path):
     return found
 
 
+def used_names(path):
+    """(used, imported_only): luna names a gateware file imports, split by whether anything
+    other than the import statement refers to them."""
+    tree = ast.parse(path.read_text())
+    imported = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0 \
+                and node.module.split(".")[0] in ROOTS:
+            for alias in node.names:
+                if alias.name != "*":
+                    imported[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in ROOTS:
+                    imported[(alias.asname or alias.name).split(".")[0]] = alias.name
+    referenced = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    referenced |= {n.value.id for n in ast.walk(tree)
+                   if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
+    used = {full for name, full in imported.items() if name in referenced}
+    return used, set(imported.values()) - used
+
+
 def removed_uses(path):
     text = path.read_text()
     return {name: text.count(name) for name in REMOVED if name in text}
@@ -97,7 +121,10 @@ def main():
     roots = defaultdict(set)
     for source in sorted((ROOT / "gateware").rglob("*.py")):
         relative = source.relative_to(ROOT / "gateware")
-        if "tmp" in relative.parts or (only and relative.parts[0] != only):
+        if "tmp" in relative.parts:
+            continue
+        if only and relative.parts[0] != only and not (
+                only == "soc" and any(relative.parts[:len(d)] == d for d in SOC_EXTRA_DIRS)):
             continue
         for name in imports_of(source):
             roots[name].add(source.relative_to(ROOT).as_posix())
@@ -137,9 +164,18 @@ def main():
             by_file[file].append(name)
     for file in sorted(by_file):
         out.append(f"  {file}: {', '.join(sorted(by_file[file]))}")
+    out += ["", "per gateware file: luna names actually USED / imported but never referenced:"]
+    for file in sorted(by_file):
+        used, idle = used_names(ROOT / file)
+        out.append(f"  {file}")
+        if used:
+            out.append(f"      used: {', '.join(sorted(used))}")
+        if idle:
+            out.append(f"      IMPORT ONLY: {', '.join(sorted(idle))}")
     text = "\n".join(out)
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    LOG.write_text(text + "\n")
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = LOG_DIR / (f"luna_closure_{only}.log" if only else "luna_closure.log")
+    log.write_text(text + "\n")
     print(text)
     return 0
 

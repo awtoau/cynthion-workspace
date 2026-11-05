@@ -2,7 +2,7 @@
 
 Which parts of LUNA, luna-soc and cynthion this workspace uses as-is, which it has diverged from, and why.
 
-- `luna` USB gateware: good, kept. No defect found in it.
+- `luna`: the USB device stack, ULPI and packet layers are kept (production AUX console and USB host port). Defects found and replaced: `JTAGRegisterInterface` ([#204](https://github.com/awtoau/cynthion-workspace/issues/204)), the non-DQS HyperRAM `psram` controller ([#215](https://github.com/awtoau/cynthion-workspace/issues/215)). Endpoint submodule names came from `id()`, which made builds non-reproducible; fixed upstream (luna PR #307).
 - `luna_soc`: three defects traced to it. Great Scott Gadgets (GSG) code is reserved for the genuinely Cynthion-specific.
 
 ## No upstreaming
@@ -40,15 +40,12 @@ Which parts of LUNA, luna-soc and cynthion this workspace uses as-is, which it h
 
 | what | from | why keep it |
 |---|---|---|
-| `USBDevice`, `USBSerialDevice` (CDC-ACM), `USBStreamInEndpoint`, `USBStreamOutEndpoint` | `luna.gateware.usb` | Measured 195.4 Mbps loopback; CDC costs essentially nothing over raw bulk |
-| `StandardRequestHandler`, `ControlRequestHandler`, `SetupPacket` | `luna.gateware.usb.request` | USB protocol plumbing |
-| `IntegratedLogicAnalyzer` | `luna.gateware.debug.ila` | Fits in one DP16KD; found the CS bug |
-| `JTAGRegisterInterface` | `luna.gateware.interface.jtag` | Only debug path that does not depend on USB coming up |
-| `StreamSerializer` | `luna.gateware.stream` | Small, works |
-| `ULPIRegisterWindow` | `luna.gateware.interface.ulpi` | Part of the USB stack, inside the exception. Already runs `USBSerialDevice` over that layer on `aux_phy`. Use on `target_phy`; `aux_phy`'s bus is owned by the console |
-| `blockram.Peripheral` | `luna_soc.gateware.core` | `writable=True` default enables runtime firmware loading |
-| `SPIPHYController`, `ECP5ConfigurationFlashInterface` | `luna_soc.gateware.core.spiflash` | PHY and `USRMCLK` handling correct; the bugs were a layer above |
-| `SPIFlashMemoryMap` | `luna_soc.gateware.core.spiflash` | Verified byte-exact against `apollo flash-read` |
+| `USBSerialDevice` (CDC-ACM) | `luna.gateware.usb.devices.acm` | Production AUX console on `aux_phy` (`top.py`). Pulls in luna's USB device stack, ULPI/UTMI and packet layers (44 files, 7817 code lines, `scripts/tools/luna_closure.py --only soc`). 195.4 Mbps loopback was measured on probes deleted in `cf62c6d` ([`usb-performance.md`](usb-performance.md)); not re-measurable today |
+| `UTMITranslator`, `UTMI*` interfaces, `usb2.packet` | `luna.gateware.interface.ulpi`, `.utmi`, `luna.gateware.usb.usb2.packet` | Imported by the vendored GUH host engine (`gateware/probes/usb_host/guh/{sie,reset,types}.py`), which the production SoC builds in `peripherals/usb_host.py`. Removing the console does not remove these |
+| `ULPIRegisterWindow` | `luna.gateware.interface.ulpi` | Register access on both PHYs: `peripherals/ulpi_window.py`, and inside `UsbPort` (`peripherals/usb_host.py`). `aux_phy`'s bus is owned by the console |
+| `USBDevice`, stream endpoints, `ControlRequestHandler`, `StreamSerializer` | `luna.gateware.usb`, `luna.gateware.stream` | Simulation models only (`gateware/probes/usb_host/{aoa_phone,target_device,model}.py`), reference devices for the host engine. Not in the production SoC |
+| `JTAGRegisterInterface` | `luna.gateware.interface.jtag` | Replaced by our wire-compatible `gateware/probes/jtag_registers.py` (#204). Luna's remains in `flash_baseline/top.py`, `hyperram_baseline/top.py` and one deliberate negative control (`scripts/soc/soc_jtag_registers_sim.py`) |
+| `SPIFlashMemoryMap`, `SPIClockGenerator`, `WaitTimer`, `SPIController`, `SPIControlPort` and stream signatures, `ECP5ConfigurationFlashInterface` | `luna_soc.gateware.core.spiflash` | Subclassed or wrapped by `ModalSPIFlashMemoryMap`, `ObservablePHY` (whose `elaborate` is our copy), `HoldableSPIController`; `USRMCLK` handling correct, the bugs were a layer above. Verified byte-exact against `apollo flash-read`. `SPIPHYController` is imported in `top.py` and never used. Replacement: the clean-room #590 core, planned in [#593](https://github.com/awtoau/cynthion-workspace/issues/593) |
 | `amaranth_soc.gpio.Peripheral` | upstream `amaranth-soc` | Six LEDs, power monitor PWRDN, USER button. `INPUT_ONLY` reset mode lets fabric drive the LEDs until firmware asks (LED comment in `top.py`) |
 | `AsyncSerial` | `amaranth-stdio` | Bit engine for the Apollo-facing UART; `gateware/soc/peripherals/serial_line.py` adds the pad handling |
 
@@ -58,7 +55,7 @@ Technical detail is in [`architecture.md`](architecture.md); this is the policy 
 
 | what | ours | why it diverged | detail |
 |---|---|---|---|
-| Clock generation | `VariableClockDomainGenerator` (`repos/apollo/apollo_fpga/gateware/variable_clock.py`) | **limit.** Upstream: 60/120/240 MHz only, blocked the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` is exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#core) |
+| Clock generation | `SocClocks` (`gateware/soc/clocks.py`) | **limit.** Upstream: 60/120/240 MHz only, blocked the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` is exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#soc-core) |
 | SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/peripherals/flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer: `riscv_flash_crossbar_sim.py` (now in `debris/scripts/`) | [architecture](architecture.md#peripherals) |
 | SPI controller | `HoldableSPIController` (same file) | **upstream defect.** CS field is `csr.action.W` (one-cycle pulse) used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
 | UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
@@ -139,7 +136,7 @@ All in `greatscottgadgets/luna-soc`, none in `luna`. Cynthion's own SoC instanti
 - Apollo fork vs upstream: [`apollo-firmware.md`](apollo-firmware.md) owns the description. This section keeps the per-commit reasons.
 - Counts go stale; compute: `git -C repos/apollo log --oneline upstream/main..HEAD | wc -l` (same for `repos/cynthion`).
 - Hashes read from `git log` on 2026-07-30; local history can be rebased, confirm with `git show`.
-- `luna` and `facedancer` carry no local commits (sit on upstream tags 0.2.3 and 3.1.3 when last checked).
+- `luna` is installed from upstream main (`352cdbf`, 0.2.3.post15) with no commits of ours; `patches/luna-amaranth-0.6.patch` (a copy of amaranth 0.5.10's `Record`, a copied `Encoder`, public imports) is applied only by `scripts/tools/amaranth_main_probe.py`. `luna_soc` is our `awto-luna-soc` fork. `facedancer` sat on upstream tag 3.1.3 when last checked.
 
 ### Apollo firmware fixes (d11)
 
