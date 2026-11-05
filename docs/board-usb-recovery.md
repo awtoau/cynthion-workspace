@@ -8,7 +8,7 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 
 ## What the ladder does (stops at the first step after which Apollo answers)
 1. Probe: one `GET_ID`, 500 ms.
-2. Cut and restore power on the Cynthion's own hub ports: `sudo -n uhubctl -l <hub> -p <ports> -a cycle -d 5`. Skipped if the hub does not advertise per-port switching (`ppps`).
+2. Cut and restore power on the Cynthion's own hub ports: `sudo -n uhubctl -l <hub> -p <ports> -a cycle -d 5`. Skipped if the hub does not advertise per-port switching (`ppps`). It returns only after the kernel stops trying to enumerate the port: ~7 s for a healthy device, ~92 s for a dead one, so the step limit is 120 s. A step that fails or hangs is logged as failed and the ladder goes on.
 3. Reset only that hub: `sudo -n usbreset <bus>/<dev>`. Skipped, with the reason, if any process holds a device node (or serial port) of another device on that hub.
 4. Still silent: it says so and exits 1.
 

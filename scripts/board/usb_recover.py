@@ -43,14 +43,19 @@ REQUEST_GET_ID = 0xA0                           # apollo_fpga.ApolloDebugger.REQ
 # step counts as not having recovered it.
 SETTLE_S = 25
 POLL_S = 0.5            # a local sysfs / USB probe is cheap
-# uhubctl: ~7 s when the device is healthy; over 60 s observed against a dead one (the kernel retried
-# enumeration three times). 90 s; on expiry the step is reported failed.
-STEP_LIMIT_S = 90
+# `uhubctl cycle` returns only after the kernel stops trying to enumerate the port: ~7 s for a healthy
+# device, ~92 s for a dead one (power cut 14:49:47, "unable to enumerate" 14:51:19, 2026-11-05).
+# 120 s = 1.25x the dead case; on expiry the step is reported failed and the ladder goes on.
+STEP_LIMIT_S = 120
 OFF_S = 5               # port off time: long enough for a bus-powered board's rails to discharge
 
 
 class Skip(Exception):
     """A step that must not run; the message says why."""
+
+
+class Failed(Exception):
+    """A step that ran and failed or hung. The ladder still probes: the power may have been cut."""
 
 
 def hub_and_port(name):
@@ -133,6 +138,8 @@ def recover(probe, steps, settle=None):
         except Skip as why:
             log.append(f"{name}: skipped: {why}")
             continue
+        except Failed as why:
+            log.append(f"{name}: failed: {why}")
         if settle:
             settle()
         if probe():
@@ -169,21 +176,28 @@ def wait_for_apollo():
     return False
 
 
-def sudo(command):
-    done = subprocess.run(["sudo", "-n", *command], capture_output=True, text=True,
-                          timeout=STEP_LIMIT_S)
+def run_step(command, limit=None, prefix=("sudo", "-n")):
+    """Run one command of a step; a non-zero exit or the limit is a Failed step."""
+    limit = STEP_LIMIT_S if limit is None else limit
+    try:
+        done = subprocess.run([*prefix, *command], capture_output=True, text=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        raise Failed(f"{command[0]} timed out after {limit:g} s") from None
     logging.info("  %s -> rc=%d %s", " ".join(command), done.returncode,
                  (done.stdout + done.stderr).strip().replace("\n", " | ")[-300:])
     if done.returncode != 0:
-        raise Skip(f"{command[0]} failed (rc={done.returncode}): {done.stderr.strip()[:120]}")
+        raise Failed(f"{command[0]} rc={done.returncode}: {done.stderr.strip()[:120]}")
 
 
 def cycle_ports(hub, ports):
-    listing = subprocess.run(["uhubctl", "-l", hub], capture_output=True, text=True,
-                             timeout=STEP_LIMIT_S).stdout
+    try:
+        listing = subprocess.run(["uhubctl", "-l", hub], capture_output=True, text=True,
+                                 timeout=STEP_LIMIT_S).stdout
+    except subprocess.TimeoutExpired:
+        raise Failed(f"uhubctl listing of hub {hub} timed out after {STEP_LIMIT_S} s") from None
     if "ppps" not in listing:
         raise Skip(f"hub {hub} does not advertise per-port power switching")
-    sudo(["uhubctl", "-l", hub, "-p", ",".join(map(str, ports)), "-a", "cycle", "-d", str(OFF_S)])
+    run_step(["uhubctl", "-l", hub, "-p", ",".join(map(str, ports)), "-a", "cycle", "-d", str(OFF_S)])
 
 
 def reset_hub(hub, ours, sysfs=SYSFS):
@@ -193,7 +207,7 @@ def reset_hub(hub, ours, sysfs=SYSFS):
         raise Skip("something else on the hub is in use: "
                    + ", ".join(f"pid {pid} holds {node}" for pid, node in sorted(busy.items())))
     node = describe(Path(sysfs) / hub)
-    sudo(["usbreset", f"{node['busnum']:03d}/{node['devnum']:03d}"])
+    run_step(["usbreset", f"{node['busnum']:03d}/{node['devnum']:03d}"])
 
 
 def main():
