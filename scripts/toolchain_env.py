@@ -11,6 +11,10 @@ YOSYS_PIN = "8f3cc3d0c"
 TRELLIS_PIN = "2d12005"
 TRELLIS_DB_PIN = "9754ff4"
 NEXTPNR_PIN = "937c770c"
+# Python packages installed from git (the system environment, no venv): `pip install --no-deps`
+# "<name> @ git+<url>@<sha>"; `tests/test_python_stack_pins.py` fails if the installed versions drift.
+LUNA_PIN = "352cdbfc284465b346e66b851eaf3ab68635060a"
+LIBGREAT_PIN = "699d26766fd5"
 FPGA_PREFIX = "$HOME/opt/fpga-main"
 BASE_SUITE = "$HOME/opt/oss-cad-suite-20261104/oss-cad-suite"
 SOURCE = f'source "{FPGA_PREFIX}/environment"'

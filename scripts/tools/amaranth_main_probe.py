@@ -20,10 +20,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from toolchain_env import LUNA_PIN  # noqa: E402
 LOG = ROOT / "tmp" / "logs" / "amaranth_main_probe.log"
 BASE = ROOT / "tmp" / "amaranth_main_probe"
 AMARANTH_PIN = "90449f1e6d5abdfb8cac7519ac7b34d83a9f42b7"
-LUNA_PIN = "352cdbfc284465b346e66b851eaf3ab68635060a"
 LUNA_SOC_PIN = "368174f26eb1749cbc621e3b609e32b9124e1a7a"
 # Shared source stores: $GIT_MIRROR, else <repo>/../../git_mirror.
 LUNA_STORE = Path(os.environ.get("GIT_MIRROR") or ROOT.parents[1] / "git_mirror") / "greatscottgadgets" / "luna"
