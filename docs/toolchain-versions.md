@@ -5,6 +5,13 @@
 - `./dev.py doctor` checks every tool named below is on PATH.
 - Dated upstream snapshot (2026-08-05) and old drift tables: [`history/upstream-toolchain.md`](history/upstream-toolchain.md).
 
+## Pins that follow main (2026-11-06)
+
+- FPGA tools, one prefix `~/opt/fpga-main`, pins in [`scripts/toolchain_env.py`](../scripts/toolchain_env.py), built by [`scripts/yosys/build_fpga_toolchain.py`](../scripts/yosys/build_fpga_toolchain.py): yosys `8f3cc3d0c` (+ abc9 fix), prjtrellis `2d12005` (db `9754ff4`), nextpnr `937c770c`. To follow main: bump a pin, rerun.
+- Python: `luna-usb` `352cdbf` and `pygreat` (libgreat `699d267`) from main via `pip install git+...@<sha>`; `amaranth-soc`, `amaranth-stdio` at main tips. `amaranth` stays on 0.5.10: luna main still imports `Record`, removed in amaranth main ([#83](https://github.com/awtoau/cynthion-workspace/issues/83)).
+- `repos/vexiiriscv` at upstream `dev` `9f70315d`; rust `stable` 1.99.1 via rustup (dnf rust removed).
+- The bitstream cache key includes the yosys/nextpnr binaries, the Python package versions and the VexiiRiscv commit (`soc_run.toolchain_identity`).
+
 ## Pinned vs latest
 
 | tool | pinned (`versions.json`) | installed 2026-11-02 | latest upstream |
