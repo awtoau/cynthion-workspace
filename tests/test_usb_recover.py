@@ -147,3 +147,19 @@ def test_a_command_that_exits_non_zero_is_a_failed_step():
 
 def test_a_command_that_succeeds_is_quiet():
     usb_recover.run_step([sys.executable, "-c", "pass"], prefix=())
+
+
+# --- the ladder starts with the cable-free MCU reset ---------------------------------
+
+def test_the_bootloader_reset_is_the_first_rung_and_the_hub_reset_can_be_left_out():
+    names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=True)]
+    assert names == ["bootloader reset", "port power cycle", "hub reset"]
+    names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=False)]
+    assert names == ["bootloader reset", "port power cycle"]
+
+
+def test_the_bootloader_reset_is_skipped_when_apollo_is_not_on_the_bus(monkeypatch):
+    import pytest
+    monkeypatch.setattr(usb_recover, "find_apollo", lambda: None)
+    with pytest.raises(usb_recover.Skip, match="not on the bus"):
+        usb_recover.bootloader_reset()
