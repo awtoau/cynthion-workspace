@@ -279,7 +279,11 @@ class SeqEngine(Elaboratable):
 
 
 class _PLL(Elaboratable):
-    """EHXPLLL: CLKOP -> `domain`, optional CLKOS at +`phase90_domain` 90 degrees; reset until lock."""
+    """EHXPLLL: CLKOP -> `domain`, optional CLKOS at +`phase90_domain` 90 degrees; reset until lock.
+
+    Drives the domains, never defines them: the caller defines them where they are shared
+    (amaranth 0.6 has no upward domain propagation, RFC 59; #609).
+    """
 
     def __init__(self, *, domain, mhz, clki, phase90_domain=None, sync_reset=False):
         # sync_reset: reset each domain through a ResetSynchronizer on ~LOCK (async assert,
@@ -295,12 +299,10 @@ class _PLL(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
-        m.domains += ClockDomain(self.domain)
         # keep: the clock constraint finds the net by name (yosys 0.70 merges aliases away).
         clk, locked = Signal(name=f"clk_{self.domain}", attrs={"keep": True}), self.locked
         extra = {}
         if self.d90:
-            m.domains += ClockDomain(self.d90)
             clk90 = Signal(name=f"clk_{self.d90}", attrs={"keep": True})
             cph, fph = phase_params(self.div, 90.0)
             extra = dict(p_CLKOS_ENABLE="ENABLED", p_CLKOS_DIV=self.div,
@@ -347,6 +349,7 @@ class BaselineTop(Elaboratable):
 
         m = Module()
         clk60 = platform.request(platform.default_clk).i
+        m.domains += [ClockDomain("sync"), ClockDomain("hr"), ClockDomain("hr90")]
         m.submodules.sync_pll = _PLL(domain="sync", mhz=self.sync_mhz, clki=clk60)
         m.submodules.hr_pll = _PLL(domain="hr", mhz=self.ck_mhz, clki=clk60,
                                    phase90_domain="hr90")
