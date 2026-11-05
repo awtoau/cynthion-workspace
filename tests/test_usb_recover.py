@@ -153,9 +153,9 @@ def test_a_command_that_succeeds_is_quiet():
 
 def test_the_bootloader_reset_is_the_first_rung_and_the_hub_reset_can_be_left_out():
     names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=True)]
-    assert names == ["bootloader reset", "port power cycle", "hub reset"]
+    assert names == ["leave bootloader", "bootloader reset", "port power cycle", "hub reset"]
     names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=False)]
-    assert names == ["bootloader reset", "port power cycle"]
+    assert names == ["leave bootloader", "bootloader reset", "port power cycle"]
 
 
 def test_the_bootloader_reset_is_skipped_when_apollo_is_not_on_the_bus(monkeypatch):
@@ -163,3 +163,17 @@ def test_the_bootloader_reset_is_skipped_when_apollo_is_not_on_the_bus(monkeypat
     monkeypatch.setattr(usb_recover, "find_apollo", lambda: None)
     with pytest.raises(usb_recover.Skip, match="not on the bus"):
         usb_recover.bootloader_reset()
+
+
+def test_leaving_the_bootloader_is_skipped_unless_apollo_is_in_it(monkeypatch):
+    import pytest
+
+    class Device:
+        product = "Cynthion Apollo Debugger"
+
+    monkeypatch.setattr(usb_recover, "find_apollo", lambda: Device())
+    with pytest.raises(usb_recover.Skip, match="not in the bootloader"):
+        usb_recover.leave_bootloader()
+    monkeypatch.setattr(usb_recover, "find_apollo", lambda: None)
+    with pytest.raises(usb_recover.Skip, match="not on the bus"):
+        usb_recover.leave_bootloader()
