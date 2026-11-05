@@ -128,4 +128,4 @@ Climb (runs 20261103-172252, -175223; `climb-table`). Every row: SEQ fresh, ever
 ## Notes
 
 - Not measured: repeats beyond 2, temperature, other boards, MCLK phase other than 180 degrees, continuous read mode, DTR above 80 MHz with a finer eye.
-- The JTAG register path (LUNA `JTAGRegisterInterface`, #204) read back clean in diag (0/300 and 0/100 per SCK); it is still to be replaced (#591).
+- The JTAG register path is our TCK-clocked `JTAGRegisterInterface` (`gateware/probes/jtag_registers.py`, #204), no longer luna's oversampler. 2026-11-06 `scan --sck 20`: applet id, JEDEC `0xef4016` and the SFDP header read back intact.
