@@ -153,3 +153,11 @@ def test_the_python_stack_versions_are_part_of_the_identity():
         cwd=SCRIPTS, capture_output=True, text=True, check=True, timeout=120)
     seen = done.stdout.strip().splitlines()[-1]
     assert "amaranth==" in seen and "luna-usb==" in seen and "luna-soc==" in seen
+
+
+def test_the_vexiiriscv_commit_is_part_of_the_identity():
+    done = subprocess.run(
+        [sys.executable, "-c", "import soc_run; print(soc_run.vexii_identity())"],
+        cwd=SCRIPTS, capture_output=True, text=True, check=True, timeout=120)
+    seen = done.stdout.strip().splitlines()[-1]
+    assert seen.startswith("vexiiriscv==") and len(seen.split("==")[1].rstrip("+dirty")) in (40, 7)

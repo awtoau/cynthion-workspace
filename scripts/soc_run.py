@@ -374,6 +374,18 @@ def script_identity(script):
     return text
 
 
+def vexii_identity():
+    """The VexiiRiscv generator's commit (and `+dirty`): its Scala is the CPU netlist's source."""
+    root = os.environ.get("VEXII_ROOT") or str(ROOT / "repos" / "vexiiriscv")
+    def git(*args):
+        done = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=30)
+        return done.stdout.strip() if done.returncode == 0 else None
+    head = git("rev-parse", "HEAD")
+    if head is None:
+        return "vexiiriscv==unknown"
+    return f"vexiiriscv=={head}" + ("+dirty" if git("status", "--porcelain") else "")
+
+
 def python_stack():
     """Versions of the packages that elaborate the gateware (their code is the netlist's)."""
     from importlib import metadata
@@ -418,6 +430,7 @@ def toolchain_identity():
             script_identity(os.environ.get("AMARANTH_script_after_synth", "")),
             PNR_OPTS,
             python_stack(),
+            vexii_identity(),
             # The binaries' content: a locally patched yosys or nextpnr with the same version
             # string must not hit another build's cache entry.
             tool_digest(binaries[:2]))
