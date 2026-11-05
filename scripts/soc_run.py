@@ -49,6 +49,7 @@ import argparse
 import contextlib
 import fcntl
 import functools
+import hashlib
 import os
 import re
 import shutil
@@ -372,6 +373,15 @@ def script_identity(script):
     return text
 
 
+def tool_digest(paths):
+    """Short SHA-256 over the content of the tool binaries at `paths` (missing ones skipped)."""
+    digest = hashlib.sha256()
+    for path in paths:
+        if path and Path(path).is_file():
+            digest.update(Path(path).read_bytes())
+    return digest.hexdigest()[:12]
+
+
 @functools.lru_cache(maxsize=None)
 def toolchain_identity():
     """What a build would run: yosys and nextpnr versions as the build resolves them,
@@ -379,7 +389,7 @@ def toolchain_identity():
     nextpnr = f'"{nextpnr_ecp5()}"' if nextpnr_ecp5() else "nextpnr-ecp5"
     probe = (f'source "{oss_cad_suite()}/environment" && '
              + (f'export PATH="{nextpnr_override()}:$PATH" && ' if nextpnr_override() else "")
-             + f"yosys -V && {nextpnr} --version 2>&1")  # nextpnr prints its version on stderr
+             + f"yosys -V && {nextpnr} --version 2>&1 && command -v yosys && command -v {nextpnr}")  # nextpnr prints its version on stderr
     # Both tools print one line in well under a second; 30 s only guards a hung shell.
     # On failure the identity says so, so it cannot match a good build's.
     try:
@@ -388,11 +398,14 @@ def toolchain_identity():
                     else [f"unavailable: rc={done.returncode}"])
     except subprocess.TimeoutExpired:
         versions = ["unavailable: timeout"]
-    yosys_version, nextpnr_version = (versions + ["", ""])[:2]
+    yosys_version, nextpnr_version, *binaries = versions + ["", ""]
     return (yosys_version, nextpnr_version,
             os.environ.get("AMARANTH_synth_opts", ""),
             script_identity(os.environ.get("AMARANTH_script_after_synth", "")),
-            PNR_OPTS)
+            PNR_OPTS,
+            # The binaries' content: a locally patched yosys or nextpnr with the same version
+            # string must not hit another build's cache entry.
+            tool_digest(binaries[:2]))
 
 
 def gateware_digest():
