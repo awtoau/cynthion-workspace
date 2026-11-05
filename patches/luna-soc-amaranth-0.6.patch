@@ -1,0 +1,83 @@
+From 9104662eb6d3440d1d888a0a3bfd5a1812a0918d Mon Sep 17 00:00:00 2001
+From: Dan on Selwyn <dan@awto.au>
+Date: Fri, 6 Nov 2026 08:51:30 +1100
+Subject: [PATCH] Amaranth 0.6: exact_log2 for log2_int, top-level
+ ResetInserter/DomainRenamer
+
+amaranth.utils.log2_int and amaranth.hdl.xfrm are removed in Amaranth 0.6.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ luna_soc/gateware/core/spiflash/mmap.py   | 6 +++---
+ luna_soc/gateware/core/usb2/ep_control.py | 2 +-
+ luna_soc/gateware/core/usb2/ep_in.py      | 2 +-
+ luna_soc/gateware/core/usb2/ep_out.py     | 2 +-
+ 4 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/luna_soc/gateware/core/spiflash/mmap.py b/luna_soc/gateware/core/spiflash/mmap.py
+index 6b99db2..e4f32c7 100644
+--- a/luna_soc/gateware/core/spiflash/mmap.py
++++ b/luna_soc/gateware/core/spiflash/mmap.py
+@@ -7,7 +7,7 @@
+ # Based on code from LiteSPI
+ 
+ from amaranth                           import Signal, Module, Cat, C, DomainRenamer
+-from amaranth.utils                     import log2_int
++from amaranth.utils                     import exact_log2
+ from amaranth.lib                       import wiring
+ from amaranth.lib.wiring                import In, Out, flipped, connect
+ 
+@@ -41,9 +41,9 @@ class SPIFlashMemoryMap(wiring.Component):
+         self.byteorder = byteorder
+ 
+         mem_depth      = (self._size * granularity) // data_width
+-        wb_addr_width  = log2_int(mem_depth)
++        wb_addr_width  = exact_log2(mem_depth)
+         wb_data_width  = data_width
+-        mm_addr_width  = log2_int(self._size)
++        mm_addr_width  = exact_log2(self._size)
+         mm_data_width  = granularity
+ 
+         map = MemoryMap(addr_width=mm_addr_width, data_width=mm_data_width)
+diff --git a/luna_soc/gateware/core/usb2/ep_control.py b/luna_soc/gateware/core/usb2/ep_control.py
+index 840e618..8cbaa24 100644
+--- a/luna_soc/gateware/core/usb2/ep_control.py
++++ b/luna_soc/gateware/core/usb2/ep_control.py
+@@ -14,7 +14,7 @@ For an example, see ``examples/usb/eptri`` or TinyUSB's ``luna/dcd_eptri.c``.
+ from typing                           import Annotated
+ 
+ from amaranth                         import *
+-from amaranth.hdl.xfrm                import ResetInserter, DomainRenamer
++from amaranth                         import ResetInserter, DomainRenamer
+ from amaranth.lib                     import wiring
+ from amaranth.lib.fifo                import SyncFIFOBuffered
+ from amaranth.lib.wiring              import In, Out, connect, flipped
+diff --git a/luna_soc/gateware/core/usb2/ep_in.py b/luna_soc/gateware/core/usb2/ep_in.py
+index 2103b01..14289bf 100644
+--- a/luna_soc/gateware/core/usb2/ep_in.py
++++ b/luna_soc/gateware/core/usb2/ep_in.py
+@@ -14,7 +14,7 @@ For an example, see ``examples/usb/eptri`` or TinyUSB's ``luna/dcd_eptri.c``.
+ from typing                           import Annotated
+ 
+ from amaranth                         import *
+-from amaranth.hdl.xfrm                import ResetInserter, DomainRenamer
++from amaranth                         import ResetInserter, DomainRenamer
+ from amaranth.lib                     import wiring
+ from amaranth.lib.fifo                import SyncFIFOBuffered
+ from amaranth.lib.wiring              import In, Out, connect, flipped
+diff --git a/luna_soc/gateware/core/usb2/ep_out.py b/luna_soc/gateware/core/usb2/ep_out.py
+index 52ca54e..6ef9472 100644
+--- a/luna_soc/gateware/core/usb2/ep_out.py
++++ b/luna_soc/gateware/core/usb2/ep_out.py
+@@ -14,7 +14,7 @@ For an example, see ``examples/usb/eptri`` or TinyUSB's ``luna/dcd_eptri.c``.
+ from typing                           import Annotated
+ 
+ from amaranth                         import *
+-from amaranth.hdl.xfrm                import ResetInserter, DomainRenamer
++from amaranth                         import ResetInserter, DomainRenamer
+ from amaranth.lib                     import wiring
+ from amaranth.lib.fifo                import SyncFIFOBuffered
+ from amaranth.lib.wiring              import In, Out, connect, flipped
+-- 
+2.56.0
+
