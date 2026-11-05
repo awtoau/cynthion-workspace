@@ -7,7 +7,7 @@
 
 `gateware/soc/peripherals/flash.py`'s `ObservablePHY` re-implements
 `luna_soc.gateware.core.spiflash.phy.SPIPHYController.elaborate` line for line,
-adding only assignments that expose internal signals to `FlashILA`. Its own
+adding only assignments that expose internal signals to `FlashPinProbe`. Its own
 docstring states the obligation:
 
 > RE-IMPLEMENTED RATHER THAN PATCHED, and the copy is deliberate: the point of
