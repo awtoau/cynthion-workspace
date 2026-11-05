@@ -5,7 +5,7 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
 ## Board result (r1.4, seed 6, default synth options)
 - yosys 0.70+329 + `trellis_ff_without_m.v` + nextpnr 0.10-74: `soc_test --board` 131/131, `hyperram_board_test` 13/13 at 343.5 / 340.1 / 341.8 MB/s. Build 155 s (yosys ~37 s).
 - Enable: `CYNTHION_OSS_CAD_SUITE=~/opt/oss-cad-suite-20261104/oss-cad-suite`, `CYNTHION_NEXTPNR_BIN=<dir with a nextpnr-ecp5 that runs 0.10-74>`, and `AMARANTH_script_after_synth` = `hierarchy -check`, `stat`, `check -noinit`, `blackbox =A:whitebox`, `techmap -max_iter 1 -map scripts/yosys/trellis_ff_without_m.v`.
-- The bitstream cache key ignores the toolchain ([#603](https://github.com/awtoau/cynthion-workspace/issues/603)): use a new `--seed` to force a build.
+- The bitstream cache key includes the yosys and nextpnr versions and the synth / placer options ([#603](https://github.com/awtoau/cynthion-workspace/issues/603)), so a toolchain change builds instead of reusing another toolchain's bitstream.
 - nextpnr 0.11.1 is not adopted: the old yosys netlist placed by it hung Apollo twice (unexplained; bitstream identical with old or new `ecppack`). New-yosys images built with 0.11.1 were silent, but those carried the first version of the techmap (below), so they say nothing about 0.11.1.
 
 ## Toolchains

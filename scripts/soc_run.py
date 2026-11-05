@@ -48,6 +48,7 @@ worse than one that says it did.
 import argparse
 import contextlib
 import fcntl
+import functools
 import os
 import re
 import shutil
@@ -127,7 +128,7 @@ GATEWARE_BUILT = BUILD / "gateware-digest.txt"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from devlog import emit, spawn  # noqa: E402
-from fast_build_env import NEXTPNR_OPTS, YOSYS_MAX_THREADS, nextpnr_opts  # noqa: E402
+from fast_build_env import YOSYS_MAX_THREADS, nextpnr_opts  # noqa: E402
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
 from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E402
                                              run_bounded)
@@ -315,6 +316,38 @@ def variant_settings():
     return variant.settings()
 
 
+def oss_cad_suite():
+    """The OSS CAD Suite a build sources: an override, else the installed one."""
+    return os.environ.get("CYNTHION_OSS_CAD_SUITE") or "$HOME/opt/oss-cad-suite"
+
+
+def nextpnr_override():
+    """A directory whose `nextpnr-ecp5` replaces the suite's, or ''."""
+    return os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
+
+
+@functools.lru_cache(maxsize=None)
+def toolchain_identity():
+    """What a build would run: yosys and nextpnr versions as the build resolves them,
+    the synth options, the post-synth script and the placer flags (all in the digest)."""
+    probe = (f'source "{oss_cad_suite()}/environment" && '
+             + (f'export PATH="{nextpnr_override()}:$PATH" && ' if nextpnr_override() else "")
+             + "yosys -V && nextpnr-ecp5 --version 2>&1")  # nextpnr prints its version on stderr
+    # Both tools print one line in well under a second; 30 s only guards a hung shell.
+    # On failure the identity says so, so it cannot match a good build's.
+    try:
+        done = subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=30)
+        versions = (done.stdout.strip().splitlines() if done.returncode == 0
+                    else [f"unavailable: rc={done.returncode}"])
+    except subprocess.TimeoutExpired:
+        versions = ["unavailable: timeout"]
+    yosys_version, nextpnr_version = (versions + ["", ""])[:2]
+    return (yosys_version, nextpnr_version,
+            os.environ.get("AMARANTH_synth_opts", ""),
+            os.environ.get("AMARANTH_script_after_synth", ""),
+            PNR_OPTS)
+
+
 def gateware_digest():
     """A hash of everything that determines the bitstream's content.
 
@@ -354,13 +387,11 @@ def gateware_digest():
     from build_helpers import source_digest
     digest = hashlib.sha256()
     digest.update(source_digest().encode())
-    # THE PLACER FLAGS ARE PART OF THE BITSTREAM. Without this a
-    # `--no-parallel-refine` run of a variant already built would skip synthesis
-    # and report the non-deterministic build's Fmax as the deterministic one.
-    # Folded in only when they differ from the default, so the flag adds a second
-    # cache key rather than invalidating every bitstream ever built.
-    if PNR_OPTS != NEXTPNR_OPTS:
-        digest.update(PNR_OPTS.encode())
+    # THE TOOLCHAIN IS PART OF THE BITSTREAM: tool versions, synthesis options, the
+    # post-synth script and the placer flags (#603). Without it a different yosys,
+    # nextpnr or flag set is served the stale bitstream of another toolchain.
+    for part in toolchain_identity():
+        digest.update(b"\0" + part.encode())
     return digest.hexdigest()[:16]
 
 
@@ -996,14 +1027,16 @@ def main():
         # visible in the command rather than an edit to the install, and the
         # build log records which binary ran -- a bitstream from a patched
         # router that nothing said was patched is the worst of both. #540.
-        override = os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
+        override = nextpnr_override()
         if override:
             emit(f"nextpnr OVERRIDDEN: {override} (not the toolchain's)")
         # A whole OSS CAD Suite other than the installed one, side by side, to try a
         # yosys / nextpnr upgrade (docs/yosys-070-upgrade.md). Said in the log.
-        suite = os.environ.get("CYNTHION_OSS_CAD_SUITE") or "$HOME/opt/oss-cad-suite"
+        suite = oss_cad_suite()
         if "CYNTHION_OSS_CAD_SUITE" in os.environ:
             emit(f"OSS CAD Suite OVERRIDDEN: {suite}")
+        yosys_version, nextpnr_version = toolchain_identity()[:2]
+        emit(f"toolchain: {yosys_version} / {nextpnr_version}")
         build = (f'source "{suite}/environment" && '
                  + (f'PATH="{override}:$PATH" ' if override else "")
                  + f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
