@@ -221,8 +221,29 @@ def bootloader_reset():
             time.sleep(POLL_S)
 
 
+def leave_bootloader():
+    """A watchdog reset lands in the Saturn-V bootloader and stays there (#67): exit-dfu, then
+    force-offline to take CONTROL back from the FPGA the application hands it to."""
+    device = find_apollo()
+    if device is None:
+        raise Skip("Apollo is not on the bus")
+    if "Bootloader" not in (device.product or ""):
+        raise Skip("Apollo is not in the bootloader")
+    run_step(["apollo", "exit-dfu"], limit=BOOTLOADER_S, prefix=())
+    deadline = time.monotonic() + BOOTLOADER_S
+    while True:
+        try:
+            run_step(["apollo", "force-offline"], limit=BOOTLOADER_S, prefix=())
+            return
+        except Failed:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(POLL_S)
+
+
 def build_steps(hub, ports, reset_hub_too):
-    steps = [("bootloader reset", bootloader_reset),
+    steps = [("leave bootloader", leave_bootloader),
+             ("bootloader reset", bootloader_reset),
              ("port power cycle", lambda: cycle_ports(hub, ports))]
     if reset_hub_too:
         steps.append(("hub reset", lambda: reset_hub(hub, set(ports))))

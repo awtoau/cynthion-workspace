@@ -42,13 +42,14 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - After `uhubctl` cycled port 3 alone (AUX was not enumerated, so it was not in the list) Apollo re-enumerated as `1d50:615c`, still silent.
 - Apollo returns CONTROL to itself when the FPGA's advertisement stops (EIC edges or UART frame; [`cynone-sideband.md`](chips/cynone-sideband.md) §8, §14). PROGRAM held at RESET forces the FPGA offline ([`hardware.md`](hardware.md)); both are physical buttons.
 
-## Apollo resets itself: main-loop watchdog (built, not flashed)
-- `repos/apollo` `68388b9`: `hang_wd_enable()` in `main()`, `hang_wd_kick()` in the 20 ms housekeeping block. WDT period 512 clocks at 1.024 kHz = 500 ms; on expiry the SAMD11 resets and re-enumerates.
-- Covers any hang where the main loop stops iterating (unbounded SYNCBUSY / `tx_bits_left` waits, fault handlers, a stalled tick). Does not cover a hang where the loop runs but USB does not answer.
-- Timeout: longest stall from the code is 100 ms (`board_delay(100)` in `usb_switch.c`), not measured on a board; 500 ms is 5x. The kick spacing keeps the write-synchronised `WDT->CLEAR` off a busy sync.
-- Flash 13736 of 14336 (ceiling 13748, 12 B headroom): `scripts/apollo/apollo_budget_check.py`, `verify_vectors.py` pass; `repos/apollo/firmware/test` `test_hang_wd` passes.
-- To test, needs a live Apollo: flash via `apollo enter-dfu` + `dfu-util` ([`apollo-firmware.md`](apollo-firmware.md)), then reproduce the hang with `tmp/isolate-B/top.bit` and see whether Apollo re-enumerates and answers `GET_ID` by itself.
-- Risk: the WDT is cleared by every reset (as `dfu.c` relies on), so a bad setting only reboot-loops the application; the Saturn-V bootloader still runs. Not verified.
+## Apollo resets itself: main-loop watchdog (flashed, tested 2026-11-05)
+- `repos/apollo` `4ccf7e7`: `hang_wd_enable()` in `main()`, `hang_wd_kick()` in the 20 ms housekeeping block. WDT period 16384 clocks = 500 ms; on expiry the SAMD11 resets.
+- Result: loading `tmp/isolate-B/top.bit` (hung Apollo 5 of 5 before) now ends with Apollo reset into the Saturn-V bootloader (`Cynthion Bootloader`, #67: a WDT reset stays in the bootloader). `apollo exit-dfu` then `apollo force-offline` brought it back with no cables. The hang is a stopped main loop.
+- WDT clock is 32.768 kHz, not 1.024 kHz: `./scripts/apollo/wd_timing.py` (vendor `0xED`, firmware stops kicking) saw the device vanish 0.527 s after the request with 16384 clocks. The first build used 512 clocks (16 ms): shorter than boot, so the application reset-looped into the bootloader until reflashed.
+- Timeout: longest stall from the code is 100 ms (`board_delay(100)` in `usb_switch.c`), not measured on a board; 500 ms is 5x.
+- Flash 13736 of 14336 (ceiling 13748): `scripts/apollo/apollo_budget_check.py`, `verify_vectors.py`, `repos/apollo/firmware/test` `test_hang_wd` pass.
+- `usb_recover.py` first rung: `leave bootloader` (`exit-dfu`, `force-offline`) when Apollo shows as the bootloader.
+- Why the main loop stops during that load is open: see [`yosys-070-upgrade.md`](yosys-070-upgrade.md).
 
 ## Not done
 - A controller-wide reset (`xhci_hcd` unbind/bind): never run, because it drops every USB device on the host.
