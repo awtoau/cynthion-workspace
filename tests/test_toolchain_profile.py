@@ -36,7 +36,7 @@ def settings(**env):
 def test_the_default_is_the_patched_yosys_with_its_own_suites_nextpnr_and_nowidelut():
     name, env = settings()
     assert name == "yosys070"
-    assert env["CYNTHION_OSS_CAD_SUITE"].endswith("opt/yosys-patched/8f3cc3d0c")
+    assert env["CYNTHION_OSS_CAD_SUITE"].endswith("opt/fpga-main")
     assert env["CYNTHION_NEXTPNR_ECP5"] == ""       # the suite's own nextpnr (0.11.1)
     assert "-nowidelut" in env["AMARANTH_synth_opts"]
     assert "trellis_ff_without_m.v" not in env["AMARANTH_script_after_synth"]
@@ -46,7 +46,7 @@ def test_the_widelut_profile_keeps_the_default_synthesis_options():
     name, env = settings(CYNTHION_TOOLCHAIN="yosys070-widelut")
     assert name == "yosys070-widelut"
     assert "-nowidelut" not in env["AMARANTH_synth_opts"]
-    assert env["CYNTHION_OSS_CAD_SUITE"].endswith("opt/yosys-patched/8f3cc3d0c")
+    assert env["CYNTHION_OSS_CAD_SUITE"].endswith("opt/fpga-main")
 
 
 def test_the_retired_profiles_are_gone():

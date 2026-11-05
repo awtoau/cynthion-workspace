@@ -46,7 +46,7 @@ GW = ROOT / "gateware" / "hyperram_baseline"
 OUT = ROOT / "tmp" / "hyperram-baseline"
 LOG = ROOT / "tmp" / "logs" / "hyperram_baseline.log"
 RESULTS = OUT / "results.jsonl"
-OSS_CAD_ENV = Path.home() / "opt" / "yosys-patched" / "8f3cc3d0c" / "environment"
+OSS_CAD_ENV = Path.home() / "opt" / "fpga-main" / "environment"
 sys.path.insert(0, str(GW))
 
 from top import (APPLET_ID, CK_WINDOW_BITS, MODE_BOTH, MODE_READ, MODE_REG,  # noqa: E402

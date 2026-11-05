@@ -53,7 +53,7 @@ rustup target list --installed
 
 - Automatic: `./scripts/install.py toolchain-install` (`toolchain-status` to check).
 - Manual: download `https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-05-22/oss-cad-suite-linux-x64-20260522.tgz`, `tar xzf ... -C ~/opt/`.
-- Use: `source "${OSS_CAD_SUITE:-$HOME/opt/yosys-patched/8f3cc3d0c}/environment"`, then `yosys --version`, `nextpnr-ecp5 --version`.
+- Use: `source "${OSS_CAD_SUITE:-$HOME/opt/fpga-main}/environment"`, then `yosys --version`, `nextpnr-ecp5 --version`.
 - Installed versions: [`toolchain-versions.md`](toolchain-versions.md#fpga-toolchain).
 - `./scripts/install.py versions` / `versions-check` capture local versions and compare with upstream releases; `scripts/install.py` otherwise is superseded by `machine_setup.py` and kept for `versions`, `versions-check`, `toolchain-install`, `toolchain-status` ([#157](https://github.com/awtoau/cynthion-workspace/issues/157)).
 
@@ -64,7 +64,7 @@ python3 --version                                   # 3.15.x
 python3 -c "import sys; print(sys._is_gil_enabled())"   # False
 rustc --version && rustup target list --installed | grep riscv
 arm-none-eabi-gcc --version                         # 15.x
-source ~/opt/yosys-patched/8f3cc3d0c/environment && yosys --version
+source ~/opt/fpga-main/environment && yosys --version
 ```
 
 - Python 3.15t missing: `uv python install 3.15t`, or build from source with `--disable-gil`. Override the interpreter with `CYN_PYTHON=/path/to/python`.

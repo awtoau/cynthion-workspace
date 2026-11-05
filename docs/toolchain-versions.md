@@ -20,7 +20,7 @@
 
 ## FPGA toolchain
 
-One OSS CAD Suite build supplies all three; `~/opt/oss-cad-suite-20261104/oss-cad-suite`, sourced via `~/opt/yosys-patched/8f3cc3d0c/environment`. Nightly-only: no stable channel, so "the release" is whichever nightly is pinned.
+One OSS CAD Suite build supplies all three; `~/opt/oss-cad-suite-20261104/oss-cad-suite`, sourced via `~/opt/fpga-main/environment`. Nightly-only: no stable channel, so "the release" is whichever nightly is pinned.
 
 | tool | in use | note |
 |---|---|---|
