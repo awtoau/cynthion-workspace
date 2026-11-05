@@ -621,6 +621,7 @@ Apollo polls `PING` in UART mode, decides link/CPU liveness, reports to the host
 - Apollo (`fpga_adv.c`, logic in `fpga_adv_wd.h`): `fpga_adv_task()` sends `PING` every 10 ms when `adv_mode == UART`. A poll is OK iff 4 bytes arrive, CRC8 matches and status bit 0 is set.
 - Link dead: 3 consecutive not-OK polls. CPU dead: link alive and `tx` equal to the previous OK poll's `tx` on 2 consecutive OK polls (3 polls with the same byte). A not-OK poll clears the CPU count.
 - Report: `0xC3` `wValue 0xFFFC` returns `[ok, crc_fail, timeout, health]`, health bit 0 link dead, bit 1 CPU dead (level, not cleared by the read). Either bit set makes `fpga_adv_task()` call `take_over_usb()`; both clear returns to the existing rule.
+- Gap: the poll and the health byte run only in `UART` mode, Apollo powers on in `EIC`, and no host code selects `UART` (no `0xC3` mode caller in `scripts/` or `apollo_fpga/`). In `EIC` any edge activity on FPGA_ADV counts as a port request, so a bad bitstream can hold CONTROL. Open question on [#554](https://github.com/awtoau/cynthion-workspace/issues/554): who selects `UART` mode, and when.
 - No automatic FPGA reset. Not built: LED, console line, scheduler-stalled byte (flash budget, see Budget).
 - Removed to pay for it: `fpga_adv_set_toggle()` + `0xFFFD` (no live host user; `debris/scripts/sideband_read.py` only).
 - `fpga_adv_command()` refuses while a command is in flight (`response_want != 0`): its `tud_task()` can dispatch a host `0xFFFE` request inside a poll.
