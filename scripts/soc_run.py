@@ -146,8 +146,15 @@ _FIX_M = f"techmap -max_iter 1 -map {ROOT / 'scripts' / 'yosys' / 'trellis_ff_wi
 _YOSYS_070 = {"CYNTHION_OSS_CAD_SUITE": _NEW_SUITE,
               "CYNTHION_NEXTPNR_ECP5": "",
               "AMARANTH_script_after_synth": f"{SCRIPT_AFTER_SYNTH}\n{_FIX_M}"}
+# `yosys070` is that yosys plus our abc9 fix (scripts/yosys/build_patched_yosys.py, #605): no
+# workaround. `yosys070-stock` is the suite's own yosys with the workaround.
+_PATCHED_YOSYS = "$HOME/opt/yosys-patched/8f3cc3d0c"
 TOOLCHAINS = {
-    "yosys070": {**_YOSYS_070, "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
+    "yosys070": {"CYNTHION_OSS_CAD_SUITE": _PATCHED_YOSYS,
+                 "CYNTHION_NEXTPNR_ECP5": "",
+                 "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
+                 "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
+    "yosys070-stock": {**_YOSYS_070, "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
     "yosys070-widelut": {**_YOSYS_070, "AMARANTH_synth_opts": SYNTH_OPTS},
     "yosys070-nextpnr010": {**_YOSYS_070, "CYNTHION_NEXTPNR_ECP5": _INSTALLED_NEXTPNR,
                             "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
@@ -156,6 +163,10 @@ TOOLCHAINS = {
 TOOLCHAIN = os.environ.get("CYNTHION_TOOLCHAIN", "yosys070")
 if TOOLCHAIN not in TOOLCHAINS:
     sys.exit(f"CYNTHION_TOOLCHAIN={TOOLCHAIN!r} is not one of: {', '.join(TOOLCHAINS)}")
+if "CYNTHION_OSS_CAD_SUITE" not in _EXPLICIT_ENV and TOOLCHAIN == "yosys070" and not (
+        Path(os.path.expandvars(_PATCHED_YOSYS)) / "environment").exists():
+    sys.exit(f"{_PATCHED_YOSYS} is not built: run scripts/yosys/build_patched_yosys.py "
+             "(or CYNTHION_TOOLCHAIN=yosys070-stock)")
 for _key, _value in TOOLCHAINS[TOOLCHAIN].items():
     if _key not in _EXPLICIT_ENV:
         os.environ[_key] = _value
