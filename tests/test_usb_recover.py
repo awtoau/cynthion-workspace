@@ -177,3 +177,10 @@ def test_leaving_the_bootloader_is_skipped_unless_apollo_is_in_it(monkeypatch):
     monkeypatch.setattr(usb_recover, "find_apollo", lambda: None)
     with pytest.raises(usb_recover.Skip, match="not on the bus"):
         usb_recover.leave_bootloader()
+
+
+def test_ports_on_different_hubs_use_the_apollo_hub(tmp_path):
+    make_device(tmp_path, "1-1.3.1.3.3.3", "1d50", "615c", 1, 76)
+    make_device(tmp_path, "1-1.3.1.3.4", "1d50", "6180", 1, 78)
+    hub, ports = usb_recover.choose_hub(["1-1.3.1.3.3.3", "1-1.3.1.3.4"], sysfs=tmp_path)
+    assert (hub, ports) == ("1-1.3.1.3.3", [3])
