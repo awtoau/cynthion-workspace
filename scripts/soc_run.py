@@ -127,9 +127,35 @@ GATEWARE_BUILT = BUILD / "gateware-digest.txt"
 # --parallel-refine on its own gives up. Full workings in fast_build_env.py.
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# What the caller set themselves, before fast_build_env applies its defaults: an explicit
+# variable beats a toolchain profile, which beats a default.
+_EXPLICIT_ENV = frozenset(os.environ)
+
 from devlog import emit, spawn  # noqa: E402
-from fast_build_env import YOSYS_MAX_THREADS, nextpnr_opts  # noqa: E402
+from fast_build_env import (SCRIPT_AFTER_SYNTH, SYNTH_OPTS, YOSYS_MAX_THREADS,  # noqa: E402
+                            nextpnr_opts)
 import _paths  # noqa: F401  (scripts/ subdirectories on sys.path)
+
+# CYNTHION_TOOLCHAIN picks the suite, nextpnr and synthesis options in one setting
+# (docs/yosys-070-upgrade.md). yosys 0.70 builds are placed by the installed nextpnr 0.10-74:
+# nextpnr 0.11.1 is not adopted. The M workaround is mandatory with 0.70.
+_NEW_SUITE = "$HOME/opt/oss-cad-suite-20261104/oss-cad-suite"
+_INSTALLED_NEXTPNR = "$HOME/opt/oss-cad-suite/bin/nextpnr-ecp5"
+_FIX_M = f"techmap -max_iter 1 -map {ROOT / 'scripts' / 'yosys' / 'trellis_ff_without_m.v'}"
+_YOSYS_070 = {"CYNTHION_OSS_CAD_SUITE": _NEW_SUITE,
+              "CYNTHION_NEXTPNR_ECP5": _INSTALLED_NEXTPNR,
+              "AMARANTH_script_after_synth": f"{SCRIPT_AFTER_SYNTH}\n{_FIX_M}"}
+TOOLCHAINS = {
+    "yosys070": {**_YOSYS_070, "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
+    "yosys070-widelut": {**_YOSYS_070, "AMARANTH_synth_opts": SYNTH_OPTS},
+    "stable": {},
+}
+TOOLCHAIN = os.environ.get("CYNTHION_TOOLCHAIN", "yosys070")
+if TOOLCHAIN not in TOOLCHAINS:
+    sys.exit(f"CYNTHION_TOOLCHAIN={TOOLCHAIN!r} is not one of: {', '.join(TOOLCHAINS)}")
+for _key, _value in TOOLCHAINS[TOOLCHAIN].items():
+    if _key not in _EXPLICIT_ENV:
+        os.environ[_key] = _value
 from subprocess_timeout_from_history import (KilledEarly, limit_for,  # noqa: E402
                                              run_bounded)
 
@@ -326,13 +352,32 @@ def nextpnr_override():
     return os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
 
 
+def nextpnr_ecp5():
+    """A `nextpnr-ecp5` by path (exported as NEXTPNR_ECP5, which the generated build script
+    honours), taking the placer from another suite than yosys; or ''."""
+    return os.environ.get("CYNTHION_NEXTPNR_ECP5") or ""
+
+
+def script_identity(script):
+    """The post-synth script, with the repo path normalised (worktrees share a cache) and the
+    content hash of every .v file it names: an edit at the same path changes the netlist."""
+    import hashlib
+    text = script.replace(str(ROOT), "<repo>")
+    for word in script.split():
+        path = Path(word)
+        if word.endswith(".v") and path.is_file():
+            text += f"\n# {path.name} {hashlib.sha256(path.read_bytes()).hexdigest()[:12]}"
+    return text
+
+
 @functools.lru_cache(maxsize=None)
 def toolchain_identity():
     """What a build would run: yosys and nextpnr versions as the build resolves them,
     the synth options, the post-synth script and the placer flags (all in the digest)."""
+    nextpnr = f'"{nextpnr_ecp5()}"' if nextpnr_ecp5() else "nextpnr-ecp5"
     probe = (f'source "{oss_cad_suite()}/environment" && '
              + (f'export PATH="{nextpnr_override()}:$PATH" && ' if nextpnr_override() else "")
-             + "yosys -V && nextpnr-ecp5 --version 2>&1")  # nextpnr prints its version on stderr
+             + f"yosys -V && {nextpnr} --version 2>&1")  # nextpnr prints its version on stderr
     # Both tools print one line in well under a second; 30 s only guards a hung shell.
     # On failure the identity says so, so it cannot match a good build's.
     try:
@@ -344,7 +389,7 @@ def toolchain_identity():
     yosys_version, nextpnr_version = (versions + ["", ""])[:2]
     return (yosys_version, nextpnr_version,
             os.environ.get("AMARANTH_synth_opts", ""),
-            os.environ.get("AMARANTH_script_after_synth", ""),
+            script_identity(os.environ.get("AMARANTH_script_after_synth", "")),
             PNR_OPTS)
 
 
@@ -1039,6 +1084,7 @@ def main():
         emit(f"toolchain: {yosys_version} / {nextpnr_version}")
         build = (f'source "{suite}/environment" && '
                  + (f'PATH="{override}:$PATH" ' if override else "")
+                 + (f'NEXTPNR_ECP5="{nextpnr_ecp5()}" ' if nextpnr_ecp5() else "")
                  + f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
                  # Inherited too, but stated here so the log line carries the whole
                  # toolchain contract. It is correctness, not speed -- see #306.

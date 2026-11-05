@@ -81,7 +81,9 @@ def identity(tmp_path, nextpnr_override=None):
     fake_tool(suite / "bin", "yosys", "Yosys FAKE 1.0")
     fake_tool(suite / "bin", "nextpnr-ecp5", "nextpnr FAKE 2.0", ">&2")
     (suite / "environment").write_text(f'export PATH="{suite / "bin"}:$PATH"\n')
-    env = {"PATH": "/usr/bin:/bin", "CYNTHION_OSS_CAD_SUITE": str(suite)}
+    # `stable`: these tests are about the probe; a profile would add its own nextpnr path.
+    env = {"PATH": "/usr/bin:/bin", "CYNTHION_OSS_CAD_SUITE": str(suite),
+           "CYNTHION_TOOLCHAIN": "stable"}
     if nextpnr_override:
         override = tmp_path / "override"
         fake_tool(override, "nextpnr-ecp5", nextpnr_override, ">&2")
@@ -106,6 +108,7 @@ def script_identity(tmp_path, techmap_text):
     techmap = tmp_path / "fix.v"
     techmap.write_text(techmap_text)
     env = {"PATH": "/usr/bin:/bin", "CYNTHION_OSS_CAD_SUITE": str(suite),
+           "CYNTHION_TOOLCHAIN": "stable",
            "AMARANTH_script_after_synth": f"techmap -max_iter 1 -map {techmap}"}
     done = subprocess.run(
         [sys.executable, "-c", "import soc_run; print(repr(soc_run.toolchain_identity()))"],
