@@ -329,9 +329,11 @@ class SocClocks(Elaboratable):
         if platform is not None:
             m.d.comb += osc.eq(platform.request("clk_60MHz", 0).i)
 
-        clk_sync = Signal()
-        clk_fast = Signal()
-        clk_swd = Signal()
+        # keep: the constraints below find these by name, and yosys 0.70 merges an alias away
+        # (nextpnr then ignores the constraint). build_log_audit.dropped_clock_constraints.
+        clk_sync = Signal(attrs={"keep": True})
+        clk_fast = Signal(attrs={"keep": True})
+        clk_swd = Signal(attrs={"keep": True})
         locked = Signal()
 
         m.submodules.pll = Instance(

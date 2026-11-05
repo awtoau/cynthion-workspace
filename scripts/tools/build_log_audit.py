@@ -185,6 +185,15 @@ def warnings(text, keep_all=False):
     return found
 
 
+def dropped_clock_constraints(text):
+    """Nets a `FREQUENCY NET` constraint named that nextpnr did not find.
+
+    nextpnr warns and times that clock domain against nothing. Synthesis can merge a signal's
+    name away (yosys 0.70 did to `car.clk_sync`); the build must fail, not print a warning.
+    """
+    return re.findall(r"net '([^']+)' does not exist in design, ignoring clock constraint", text)
+
+
 def audit(path, keep_all=False):
     text = path.read_text(errors="replace")
     counted = cells(text)

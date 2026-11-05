@@ -999,7 +999,12 @@ def main():
         override = os.environ.get("CYNTHION_NEXTPNR_BIN") or ""
         if override:
             emit(f"nextpnr OVERRIDDEN: {override} (not the toolchain's)")
-        build = (f'source "$HOME/opt/oss-cad-suite/environment" && '
+        # A whole OSS CAD Suite other than the installed one, side by side, to try a
+        # yosys / nextpnr upgrade (docs/yosys-070-upgrade.md). Said in the log.
+        suite = os.environ.get("CYNTHION_OSS_CAD_SUITE") or "$HOME/opt/oss-cad-suite"
+        if "CYNTHION_OSS_CAD_SUITE" in os.environ:
+            emit(f"OSS CAD Suite OVERRIDDEN: {suite}")
+        build = (f'source "{suite}/environment" && '
                  + (f'PATH="{override}:$PATH" ' if override else "")
                  + f'AMARANTH_nextpnr_opts="{PNR_OPTS}" '
                  # Inherited too, but stated here so the log line carries the whole
@@ -1120,6 +1125,11 @@ def main():
         for entry in latest.values():
             emit("  " + entry)
 
+        # A clock constraint nextpnr could not find a net for is a domain placed against
+        # nothing. Read from this build's own output; `top.tim` accumulates across runs.
+        from build_log_audit import dropped_clock_constraints
+        dropped = dropped_clock_constraints(output)
+
         # Cost and unfiltered warnings from the yosys log (#527); never fails the build.
         try:
             from build_log_audit import audit as audit_log
@@ -1150,8 +1160,16 @@ def main():
         # tmp/build-metrics/pending/ and said so loudly; the bitstream is still
         # good and throwing it away over a stopped database would be absurd.
         build_metrics.record_build(
-            BITSTREAM.parent, status="ok" if result.returncode == 0 else "fail",
+            BITSTREAM.parent, status="ok" if result.returncode == 0 and not dropped else "fail",
             build_seconds=build_seconds)
+
+        if dropped and result.returncode == 0:
+            emit("gateware build REFUSED: nextpnr ignored a clock constraint, so that domain "
+                 "was placed against no frequency:")
+            for name in dropped:
+                emit(f"  net '{name}' is not in the netlist (synthesis merged its name away; "
+                     f"give the signal attrs={{'keep': True}})")
+            return 1
 
         if result.returncode != 0:
             emit("gateware build failed:")
