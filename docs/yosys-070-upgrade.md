@@ -1,11 +1,12 @@
 # yosys 0.70 / nextpnr 0.11 upgrade: gains, blocker, workaround, size
 
-Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr 0.11.1; the default.** Tracked in [#602](https://github.com/awtoau/cynthion-workspace/issues/602). Measured 2026-11-05 on the SoC `top.il` (ck180), host `selwyn`, `YOSYS_MAX_THREADS=1`.
+Status: **default is yosys main `8f3cc3d0c` plus our abc9 fix, nextpnr 0.11.1, no `M`/`CE` workaround** (`CYNTHION_TOOLCHAIN=yosys070`). Tracked in [#602](https://github.com/awtoau/cynthion-workspace/issues/602) and [#605](https://github.com/awtoau/cynthion-workspace/issues/605). Measured 2026-11-05 on the SoC `top.il` (ck180), host `selwyn`, `YOSYS_MAX_THREADS=1`.
 
 ## Board result (r1.4, seed 6, default synth options)
 - yosys 0.70+329 + `trellis_ff_without_m.v` + nextpnr 0.10-74: `soc_test --board` 131/131, `hyperram_board_test` 13/13 at 343.5 / 340.1 / 341.8 MB/s. Build 155 s (yosys ~37 s).
 - Select with one setting, `CYNTHION_TOOLCHAIN` (read by `soc_run`; an explicitly set variable still wins):
-  - `yosys070` (default): yosys 0.70+329 and `ecppack` from `~/opt/oss-cad-suite-20261104`, that suite's own nextpnr 0.11.1, `-nowidelut`, the `M` workaround.
+  - `yosys070` (default): yosys `8f3cc3d0c` + [`patches/yosys-abc9-unlisted-ports-fix.patch`](../patches/yosys-abc9-unlisted-ports-fix.patch), installed to `~/opt/yosys-patched/8f3cc3d0c` by [`scripts/yosys/build_patched_yosys.py`](../scripts/yosys/build_patched_yosys.py) (soc_run exits with that command if it is missing); `ecppack` and nextpnr 0.11.1 from `~/opt/oss-cad-suite-20261104`; `-nowidelut`; no workaround. Default build, board: `soc_test --board` 132/132, `hyperram_board_test` 13/13 (20781 COMB).
+  - `yosys070-stock`: the suite's yosys 0.70+329 with the `M` workaround (the previous default).
   - `yosys070-widelut`: the same with yosys's default (wide-LUT) mapping.
   - `stable`: the installed suite, no workaround.
 - `-nowidelut` on the board (yosys 0.70, seed 6): `soc_test --board` 132/132, `hyperram_board_test` 13/13, COMB 20893 (86.0%).
