@@ -38,14 +38,15 @@ CYNTHION_PIDS = {"615b", "615c", "6180"}        # analyzer stub, Apollo, SoC con
 APOLLO = (0x1d50, 0x615c)
 REQUEST_GET_ID = 0xA0                           # apollo_fpga.ApolloDebugger.REQUEST_GET_ID
 
-# A healthy Apollo enumerates in under a second. A dead one costs the kernel two 5 s descriptor
-# reads per attempt: 16 s measured (2026-11-05 14:53:16 -> 14:53:32). 25 s is 1.5x that; on expiry the
-# step counts as not having recovered it.
+# A dead Apollo costs the kernel two 5 s descriptor reads per attempt: 16 s measured (2026-11-05
+# 14:53:16 -> 14:53:32). 25 s is 1.5x that; on expiry the step counts as not having recovered it.
 SETTLE_S = 25
 POLL_S = 0.5            # a local sysfs / USB probe is cheap
-# `uhubctl cycle` returns only after the kernel stops trying to enumerate the port: ~7 s for a healthy
-# device, ~92 s for a dead one (power cut 14:49:47, "unable to enumerate" 14:51:19, 2026-11-05).
-# 120 s = 1.25x the dead case; on expiry the step is reported failed and the ladder goes on.
+# After a power-on the kernel retries enumerating a dead device for ~92 s ("unable to enumerate"), and
+# every request to that hub (uhubctl's status read, usbreset) queues behind it. Measured 92, 93, 92 s
+# for `uhubctl cycle` on the dead port (2026-11-05); the healthy case was never measured. Terminating
+# early does not help: uhubctl runs as root under sudo and cannot be signalled. 120 s = 1.25x the
+# measured; on expiry the step is reported failed and the ladder goes on.
 STEP_LIMIT_S = 120
 OFF_S = 5               # port off time: long enough for a bus-powered board's rails to discharge
 
