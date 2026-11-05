@@ -730,6 +730,7 @@ class AwtoSoc(Elaboratable):
         m.submodules.car = car = SocClocks(
             sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST,
             fast_ratio=FLASH_FAST_RATIO)
+        m.domains += car.domains
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
         # toolchain freeze against Java 25 does not apply -- that blocks

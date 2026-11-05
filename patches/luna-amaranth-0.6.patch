@@ -1,16 +1,18 @@
-From a2bfe9613e3419e00280a36915a0f4c4124e45d6 Mon Sep 17 00:00:00 2001
+From 327ae37e2961ca624551a0b244d67d96a3ee8bf4 Mon Sep 17 00:00:00 2001
 From: Dan on Selwyn <dan@awto.au>
-Date: Fri, 6 Nov 2026 08:50:42 +1100
+Date: Fri, 6 Nov 2026 10:12:02 +1100
 Subject: [PATCH] Run on Amaranth 0.6: keep Record in-tree, copy
  lib.coding.Encoder, use public imports
 
-Amaranth 0.6 removes amaranth.hdl.rec (Record), amaranth.lib.coding and the
-public amaranth.hdl.<submodule> modules.
+Amaranth 0.6 removes amaranth.hdl.rec (Record), amaranth.lib.coding,
+ValueCastable.lowermethod and the public amaranth.hdl.<submodule> modules.
 
 - luna/gateware/utils/record.py: Amaranth 0.5.10's Record on public API only.
 - luna/gateware/utils/coding.py: Encoder, as amaranth.lib.coding asks.
 - Point every Record/DIR_* import at the new module; replace amaranth.hdl.xfrm
   and amaranth.hdl.ast imports with top-level ones.
+- interface/jtag.py: ECP5DebugSPIBridge memoises as_value itself instead of
+  ValueCastable.lowermethod, so the module imports on 0.6.
 
 The 93 tests pass on Amaranth 0.5.10 and 0.6.0.dev140.
 
@@ -20,7 +22,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  .../interface/gateware_phy/receiver.py        |   2 +-
  .../interface/gateware_phy/transmitter.py     |   2 +-
  luna/gateware/interface/i2c.py                |   2 +-
- luna/gateware/interface/jtag.py               |   4 +-
+ luna/gateware/interface/jtag.py               |  11 +-
  luna/gateware/interface/psram.py              |   4 +-
  luna/gateware/interface/spi.py                |   4 +-
  luna/gateware/interface/ulpi.py               |   4 +-
@@ -44,7 +46,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  luna/gateware/utils/record.py                 | 284 ++++++++++++++++++
  tests/test_ulpi.py                            |   2 +-
  tests/test_usb2_packet.py                     |   2 +-
- 28 files changed, 368 insertions(+), 31 deletions(-)
+ 28 files changed, 372 insertions(+), 34 deletions(-)
  create mode 100644 luna/gateware/utils/coding.py
  create mode 100644 luna/gateware/utils/record.py
 
@@ -100,7 +102,7 @@ index 76f2d17..8c8d21d 100644
  
  __all__ = ["I2CBus", "I2CInitiator", "I2CRegisterInterface"]
 diff --git a/luna/gateware/interface/jtag.py b/luna/gateware/interface/jtag.py
-index ebf7993..3f013d1 100644
+index ebf7993..771e8a4 100644
 --- a/luna/gateware/interface/jtag.py
 +++ b/luna/gateware/interface/jtag.py
 @@ -8,8 +8,8 @@
@@ -114,6 +116,22 @@ index ebf7993..3f013d1 100644
  
  from ..utils        import falling_edge_detected, rising_edge_detected
  from .spi           import SPIRegisterInterface
+@@ -114,11 +114,12 @@ class ECP5DebugSPIBridge(Elaboratable, ValueCastable):
+     # interchangeably with requested I/O objects.
+     #
+ 
+-    @ValueCastable.lowermethod
+     def as_value(self):
+-        return Record(self.layout)
++        # memoised, as Amaranth 0.5's (removed) ValueCastable.lowermethod did
++        if "_as_value" not in self.__dict__:
++            self._as_value = Record(self.layout)
++        return self._as_value
+ 
+-    @ValueCastable.lowermethod
+     def __getitem__(self, key):
+         return {
+             'sck': self.sck,
 diff --git a/luna/gateware/interface/psram.py b/luna/gateware/interface/psram.py
 index 1b7e4e7..c01a873 100644
 --- a/luna/gateware/interface/psram.py

@@ -17,7 +17,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from amaranth             import (Cat, ClockSignal, Const, DomainRenamer, Elaboratable,
+from amaranth             import (Cat, ClockDomain, ClockSignal, Const, DomainRenamer, Elaboratable,
                                   Module, Mux, ResetInserter, Signal)
 from amaranth.lib         import memory, wiring
 from amaranth.lib.cdc     import FFSynchronizer, ResetSynchronizer
@@ -717,6 +717,8 @@ class HyperRAM(wiring.Component):
             # as the PLL's own: hr held in reset while unlocked, released synchronously
             m.submodules.hr_rst = ResetSynchronizer(~self.sim_locked, domain="hr")
         else:
+            # defined here, where the PLL, PHY, engine and FIFOs share them (#609)
+            m.domains += [ClockDomain("hr"), ClockDomain("hr90")]
             m.submodules.pll = pll = BaselinePLL(domain="hr", mhz=self.ck_mhz,
                                                  clki=ClockSignal("usb"),
                                                  phase90_domain="hr90", sync_reset=True)

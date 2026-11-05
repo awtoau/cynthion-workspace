@@ -28,7 +28,7 @@ Where a patch belongs upstream, the issue that tracks that is named below.
 ## luna-amaranth-0.6.patch, luna-soc-amaranth-0.6.patch
 
 - Make luna and luna_soc run on Amaranth 0.6 (amaranth main), which removes `Record`, `amaranth.lib.coding`, `amaranth.hdl.<submodule>` imports and `log2_int`.
-- luna (`352cdbf`): `luna/gateware/utils/record.py` is Amaranth 0.5.10's `Record` on public API; `utils/coding.py` copies `Encoder`; imports point at them. luna's own 93 tests pass on 0.5.10 and 0.6.0.dev140.
+- luna (`352cdbf`): `luna/gateware/utils/record.py` is Amaranth 0.5.10's `Record` on public API; `utils/coding.py` copies `Encoder`; imports point at them; `ECP5DebugSPIBridge` memoises `as_value` without `ValueCastable.lowermethod` (removed in 0.6; `interface/jtag.py` would not import). luna's own 93 tests pass on 0.5.10 and 0.6.0.dev140.
 - luna_soc (our `awto-luna-soc` fork at `368174f`): `exact_log2`, top-level `ResetInserter` / `DomainRenamer`.
 - Local only: luna's `CONTRIBUTING.md` does not accept LLM-assisted contributions, so nothing is offered upstream.
 - Reproduce and test together: `scripts/tools/amaranth_main_probe.py` (scratch install, never the system environment). Remaining blocker is our own gateware: [#609](https://github.com/awtoau/cynthion-workspace/issues/609).
