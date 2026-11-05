@@ -36,6 +36,7 @@ SYSFS = Path("/sys/bus/usb/devices")
 CYNTHION_VID = "1d50"
 CYNTHION_PIDS = {"615b", "615c", "6180"}        # analyzer stub, Apollo, SoC console
 APOLLO = (0x1d50, 0x615c)
+ANALYZER = (0x1d50, 0x615b)
 REQUEST_GET_ID = 0xA0                           # apollo_fpga.ApolloDebugger.REQUEST_GET_ID
 REQUEST_BOOT_TO_DFU = 0xED                      # apollo_fpga.ApolloDebugger.REQUEST_BOOT_TO_DFU
 # The bootloader was listed by the first lsusb after `apollo enter-dfu` returned (2026-11-05, not
@@ -221,6 +222,15 @@ def bootloader_reset():
             time.sleep(POLL_S)
 
 
+def leave_analyzer():
+    """The FPGA flash holds an analyzer (after a flash or power cycle) and the board enumerates as
+    1d50:615b; Apollo's stub is alive behind it and force-offline brings the debugger back."""
+    import usb.core
+    if usb.core.find(idVendor=ANALYZER[0], idProduct=ANALYZER[1]) is None:
+        raise Skip("the analyzer is not on the bus")
+    run_step(["apollo", "force-offline"], limit=BOOTLOADER_S, prefix=())
+
+
 def leave_bootloader():
     """A watchdog reset lands in the Saturn-V bootloader and stays there (#67): exit-dfu, then
     force-offline to take CONTROL back from the FPGA the application hands it to."""
@@ -259,7 +269,8 @@ def choose_hub(names, sysfs=SYSFS):
 
 
 def build_steps(hub, ports, reset_hub_too):
-    steps = [("leave bootloader", leave_bootloader),
+    steps = [("leave analyzer", leave_analyzer),
+             ("leave bootloader", leave_bootloader),
              ("bootloader reset", bootloader_reset),
              ("port power cycle", lambda: cycle_ports(hub, ports))]
     if reset_hub_too:

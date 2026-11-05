@@ -48,7 +48,7 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - WDT clock is 32.768 kHz, not 1.024 kHz: `./scripts/apollo/wd_timing.py` (vendor `0xED`, firmware stops kicking) saw the device vanish 0.527 s after the request with 16384 clocks. The first build used 512 clocks (16 ms): shorter than boot, so the application reset-looped into the bootloader until reflashed.
 - Timeout: longest stall from the code is 100 ms (`board_delay(100)` in `usb_switch.c`), not measured on a board; 500 ms is 5x.
 - Flash 13736 of 14336 (ceiling 13748): `scripts/apollo/apollo_budget_check.py`, `verify_vectors.py`, `repos/apollo/firmware/test` `test_hang_wd` pass.
-- `usb_recover.py` first rung: `leave bootloader` (`exit-dfu`, `force-offline`) when Apollo shows as the bootloader.
+- `usb_recover.py` first rung: `leave analyzer` (`apollo force-offline` when the board shows as the analyzer `1d50:615b`, as after a flash; not run against real hardware yet), then `leave bootloader` (`exit-dfu`, `force-offline`) when Apollo shows as the bootloader.
 - Root cause (found 2026-11-05 with the experiment build `repos/apollo` branch `exp-hang-pc`: WDT early-warning and HardFault handlers saving the stacked PC, the request history and the bytes after `comms` into RAM above the stack): `jtag_scan_finish_step` stored the bit-banged tail's TDO byte at `jtag_in_buffer + slow_offset` even for scans that discard TDO. `jtag_in_buffer` is the second 512 bytes of the 1024-byte `comms` region and `slow_offset` reaches the chunk length, so a final chunk over 513 bytes wrote past the region.
   - `isolate B`'s final chunk is 692 bytes: the byte landed on the last byte of `_ctrl_xfer.complete_cb`. TDO was high (`0xFF`), giving `0xff003851`; the next control-transfer ACK called it: HardFault at `0xff003874`, the USB stack dead, the device still enumerated.
   - Why only some loads hung: the offset depends on the final chunk length (X's 818 bytes lands elsewhere) and on TDO (`X` padded to `B`'s length and the invalid stream read TDO low, writing `0x00`, a NULL callback that TinyUSB skips).
@@ -65,6 +65,5 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - Instruments kept: [`wd_capture.py`](../scripts/apollo/wd_capture.py) (needs the experiment firmware), [`hang_bisect.py`](../scripts/apollo/hang_bisect.py), [`wd_timing.py`](../scripts/apollo/wd_timing.py), [`adv_health.py`](../scripts/apollo/adv_health.py).
 
 ## Not done
-- `usb_recover.py` reports "Apollo is not on the bus" when the board comes up as the analyzer (`1d50:615b`, as after a flash); `cynthion info --force-offline` brings Apollo back. Not handled by the ladder.
 - A controller-wide reset (`xhci_hcd` unbind/bind): never run, because it drops every USB device on the host.
 - Why the hang starts: see [`yosys-070-upgrade.md`](yosys-070-upgrade.md) (every job loading one particular bitstream killed Apollo; cause open).

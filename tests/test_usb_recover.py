@@ -153,9 +153,10 @@ def test_a_command_that_succeeds_is_quiet():
 
 def test_the_bootloader_reset_is_the_first_rung_and_the_hub_reset_can_be_left_out():
     names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=True)]
-    assert names == ["leave bootloader", "bootloader reset", "port power cycle", "hub reset"]
+    assert names == ["leave analyzer", "leave bootloader", "bootloader reset", "port power cycle",
+                     "hub reset"]
     names = [name for name, _ in usb_recover.build_steps("1-1.3.1.3.3", [3, 4], reset_hub_too=False)]
-    assert names == ["leave bootloader", "bootloader reset", "port power cycle"]
+    assert names == ["leave analyzer", "leave bootloader", "bootloader reset", "port power cycle"]
 
 
 def test_the_bootloader_reset_is_skipped_when_apollo_is_not_on_the_bus(monkeypatch):
@@ -184,3 +185,19 @@ def test_ports_on_different_hubs_use_the_apollo_hub(tmp_path):
     make_device(tmp_path, "1-1.3.1.3.4", "1d50", "6180", 1, 78)
     hub, ports = usb_recover.choose_hub(["1-1.3.1.3.3.3", "1-1.3.1.3.4"], sysfs=tmp_path)
     assert (hub, ports) == ("1-1.3.1.3.3", [3])
+
+
+def test_leaving_the_analyzer_runs_force_offline_only_when_the_analyzer_is_on_the_bus(monkeypatch):
+    import pytest
+    import usb.core
+    ran = []
+    monkeypatch.setattr(usb_recover, "run_step", lambda command, **kw: ran.append(command))
+    monkeypatch.setattr(usb.core, "find", lambda **kw: None)
+    with pytest.raises(usb_recover.Skip, match="analyzer is not on the bus"):
+        usb_recover.leave_analyzer()
+    assert ran == []
+    seen = []
+    monkeypatch.setattr(usb.core, "find", lambda **kw: seen.append(kw) or object())
+    usb_recover.leave_analyzer()
+    assert seen == [{"idVendor": 0x1d50, "idProduct": 0x615b}]
+    assert ran == [["apollo", "force-offline"]]
