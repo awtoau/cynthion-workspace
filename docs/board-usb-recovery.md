@@ -35,7 +35,9 @@ Script: [`scripts/board/usb_recover.py`](../scripts/board/usb_recover.py). Tests
 - `apollo enter-dfu` / `exit-dfu`: vendor `0xed`, WDT reset of the SAMD11 into the Saturn-V bootloader and back. [`programming-paths.md`](chips/ecp5/programming-paths.md), [`hardware.md`](hardware.md), [`upstream-bugs.md`](upstream-bugs.md) (#67).
 - Vendor `0xec` emergency reset: control-plane state only, not an MCU reset.
 - DTR/RTS: `tud_cdc_line_state_cb` only starts the UART; no reset.
+- Tested 2026-11-05 on a healthy Apollo: `apollo enter-dfu` re-enumerated as "Cynthion Bootloader"; `exit-dfu` returned to the application as `1d50:615b` (FPGA analyzer owns CONTROL); `apollo force-offline` took it back as `1d50:615c`, GET_ID answers.
 - All of these are control requests the firmware must serve. Not tried on a hung Apollo (the board was not enumerating).
+- Apollo returns CONTROL to itself when the FPGA's advertisement stops (EIC edges or UART frame; [`cynone-sideband.md`](chips/cynone-sideband.md) §8, §14). PROGRAM held at RESET forces the FPGA offline ([`hardware.md`](hardware.md)); both are physical buttons.
 
 ## Not done
 - A controller-wide reset (`xhci_hcd` unbind/bind): never run, because it drops every USB device on the host.
