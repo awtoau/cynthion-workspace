@@ -64,21 +64,18 @@ threads were buying nothing here. The failure mode is what matters: a run that
 silently synthesises a different netlist is a bitstream nobody knows is
 different.
 
-## The synthesis flag, and why it is NOT enabled by default
+## yosys skips `autoname` (#602)
 
-`synth_ecp5 -run :check` skips `autoname`, which profiling showed is **27.9% of yosys
-time** -- 8.68 s renaming `$abc$1234$` nets into readable ones, purely cosmetic, running
-after all real synthesis is complete.
-
-It is not enabled here because skipping the `check` label also skips `hierarchy -check`,
-`check -noinit` and `blackbox =A:whitebox`, which must then be replayed by hand or the
-build fails with `Module DPR16X4C contains processes`. Amaranth's `synth_opts` appends to
-one command, so it cannot express "run this label but not that pass". Getting it needs a
-custom build script rather than an override, and the cost is unreadable net names in the
-timing report -- which matters precisely when reading a critical path.
-
-`fpga_flow_bench.py` measured it, and was retired once it had; recover it from git if
-that trade becomes worthwhile again.
+- `synth_ecp5 -run :check` leaves out the `check` label, whose only slow pass is `autoname`:
+  it renames the temporary `$abc$` nets after synthesis is complete.
+- The label's other passes (`hierarchy -check`, `stat`, `check -noinit`, `blackbox`) are
+  replayed through `script_after_synth`. Without `blackbox` the build fails with
+  `Module DPR16X4C contains processes`; without `stat` the pre-pack counts read 0.
+- Both are documented Amaranth overrides (`synth_opts`, `script_after_synth`); no custom
+  build script.
+- Same netlist: identical cell types and counts. Cost: the `$abc$` nets keep their names
+  in a timing report, which this project does not use as evidence.
+- Pinning yosys to one thread (above) costs nothing: it uses about one core either way.
 
     ./scripts/fast_build_env.py            # print the shell exports
     python3 -c "import fast_build_env"     # or set them in-process
@@ -102,9 +99,15 @@ NEXTPNR_OPTS = "--parallel-refine --threads 31 --router router1"
 # ones, at the same wall clock. Evidence and the mechanism are in #306.
 YOSYS_MAX_THREADS = "1"
 
+# yosys without `autoname` (#602): skip the `check` label, replay its other passes.
+SYNTH_OPTS = "-run :check"
+SCRIPT_AFTER_SYNTH = "hierarchy -check\nstat\ncheck -noinit\nblackbox =A:whitebox"
+
 OVERRIDES = {
     "AMARANTH_nextpnr_opts": NEXTPNR_OPTS,
     "YOSYS_MAX_THREADS": YOSYS_MAX_THREADS,
+    "AMARANTH_synth_opts": SYNTH_OPTS,
+    "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
 }
 
 
