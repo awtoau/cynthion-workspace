@@ -8,7 +8,7 @@
 A PAC binding is NOT a user: `firmware/cynthion-soc-pac/` is generated from the
 memory map by `scripts/soc/soc_generate_pac.py`, so every window has one whether or
 not a line of firmware ever names it. Three peripherals were already found on
-the bus with bindings and no driver (`FlashILA`, `FlashPinProbe`,
+the bus with bindings and no driver (`FlashPinProbe`,
 `HyperRAMProbe`), which is what this exists to make repeatable.
 
 ## The method, and how it can be wrong

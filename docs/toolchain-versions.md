@@ -158,7 +158,7 @@ Generated, not vendored: [`riscv-core-build.md`](riscv-core-build.md).
 | linker used by that gcc | Fedora's binutils | `-print-prog-name=ld` -> `/usr/arm-none-eabi/bin/ld`, **not** the one on PATH |
 | `arm-none-eabi-nm` / `size` / `objcopy` on PATH | **2.41.0.20231009** | Arm GNU Toolchain 13.2.rel1 (2023) |
 
-**ARM toolchain: dnf only** (`arm-none-eabi-gcc` 15.2, binutils 2.45). The `/opt/arm-gnu-toolchain` 13.2 directory (binutils only, no gcc) and its `/etc/profile.d` PATH entry were removed 2026-11-06; copy in `/mnt/2tb/wastebasket/arm-gnu-toolchain-13.2-*`. Apollo links 8 B larger with the 2.45 linker (13780 B, ceiling 13784).
+**ARM toolchain: dnf only** (`arm-none-eabi-gcc` 15.2, binutils 2.45). The `/opt/arm-gnu-toolchain` 13.2 directory (binutils only, no gcc) and its `/etc/profile.d` PATH entry were removed 2026-11-06; copy in the machine-wide wastebasket (`arm-gnu-toolchain-13.2-*`). Apollo links 8 B larger with the 2.45 linker (13780 B, ceiling 13784).
 
 - The guards still resolve binutils beside the compiler: `scripts/apollo/arm_binutils_resolve.py`.
 

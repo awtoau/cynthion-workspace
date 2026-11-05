@@ -25,7 +25,8 @@ BASE = ROOT / "tmp" / "amaranth_main_probe"
 AMARANTH_PIN = "90449f1e6d5abdfb8cac7519ac7b34d83a9f42b7"
 LUNA_PIN = "352cdbfc284465b346e66b851eaf3ab68635060a"
 LUNA_SOC_PIN = "368174f26eb1749cbc621e3b609e32b9124e1a7a"
-LUNA_STORE = Path("/mnt/2tb/git_mirror/greatscottgadgets/luna")
+# Shared source stores: $GIT_MIRROR, else <repo>/../../git_mirror.
+LUNA_STORE = Path(os.environ.get("GIT_MIRROR") or ROOT.parents[1] / "git_mirror") / "greatscottgadgets" / "luna"
 LUNA_SOC_URL = "https://github.com/awtoau/awto-luna-soc.git"
 # Stall limit: pip and git print nothing for long only when hung; tests and the repro check print
 # per test / per step. 300 s covers a cold pip install of amaranth from git.

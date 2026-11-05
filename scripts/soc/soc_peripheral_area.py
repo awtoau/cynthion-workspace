@@ -29,7 +29,7 @@ believing any Fmax difference, because this design has closed anywhere between
 71.45 and 76.99 MHz across identical builds.
 
     ./scripts/soc/soc_peripheral_area.py
-    ./scripts/soc/soc_peripheral_area.py --only uart16550,flash_ila
+    ./scripts/soc/soc_peripheral_area.py --only uart16550,flash_probe
 
 Output is mirrored to ./tmp/logs/soc_peripheral_area.log.
 """
@@ -121,10 +121,6 @@ def _peripherals():
         from peripherals.flash import FlashPinProbe
         return FlashPinProbe()
 
-    def flash_ila():
-        from peripherals.flash import FlashILA
-        return FlashILA(sample_depth=1024)
-
     def hyperram():
         from peripherals.hyperram import HyperRAM
         return HyperRAM(sim=True)
@@ -145,7 +141,6 @@ def _peripherals():
         ("stream_buffer_async", stream_buffer_async, "depth 16, CDC"),
         ("wishbone_pipe",      wishbone_pipe,      ""),
         ("flash_probe",        flash_probe,        "instrumentation"),
-        ("flash_ila",          flash_ila,          "instrumentation, 1 DP16KD"),
         ("hyperram",           hyperram,           "#588, no PLL/PHY (sim build)"),
     ]
 

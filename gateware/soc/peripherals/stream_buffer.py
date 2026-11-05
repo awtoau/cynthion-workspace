@@ -23,7 +23,7 @@ none".
   * Do not guess large. On the ECP5, 16 entries of 8 bits are distributed LUT
     RAM (TRELLIS_DPR16X4); 1024 entries are a block RAM (DP16KD). This design
     uses 42 of the die's 56 DP16KD, and the caches, firmware BRAM, USB endpoint
-    buffers and flash ILA all compete for the rest.
+    buffers all compete for the rest.
 
 ## Overflow
 

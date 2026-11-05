@@ -5,7 +5,7 @@
 """
     ./scripts/yosys/build_fpga_toolchain.py
 
-- Worktrees of the shared stores under /mnt/2tb/git_mirror/YosysHQ at the pins in
+- Worktrees of the shared stores under $GIT_MIRROR/YosysHQ at the pins in
   `scripts/toolchain_env.py` (`tmp/yosys-main`, `tmp/trellis-main`, `tmp/nextpnr-main`).
 - yosys gets `patches/yosys-abc9-unlisted-ports-*.patch` (#605).
 - Everything installs to `~/opt/fpga-main/` (yosys, ecppack, nextpnr-ecp5, ecppll, ...).
@@ -30,7 +30,8 @@ from toolchain_env import (BASE_SUITE, FPGA_PREFIX, NEXTPNR_PIN, TRELLIS_DB_PIN,
                            TRELLIS_PIN, YOSYS_PIN)
 
 LOG = ROOT / "tmp" / "logs" / "build_fpga_toolchain.log"
-STORES = Path("/mnt/2tb/git_mirror/YosysHQ")
+# Shared source stores: $GIT_MIRROR, else <repo>/../../git_mirror.
+STORES = Path(os.environ.get("GIT_MIRROR") or ROOT.parents[1] / "git_mirror") / "YosysHQ"
 PREFIX = Path(os.path.expandvars(FPGA_PREFIX))
 PATCHES = [ROOT / "patches" / "yosys-abc9-unlisted-ports-fix.patch",
            ROOT / "patches" / "yosys-abc9-unlisted-ports-test.patch"]

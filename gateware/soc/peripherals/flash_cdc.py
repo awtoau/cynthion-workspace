@@ -90,17 +90,9 @@ class ClockCrossedPHY(wiring.Component):
     burst.
     """
 
-    #: The inner PHY's instrumentation signals, forwarded so the ILA and the pin
-    #: probe still build.
-    #:
-    #: **These are in `phy_domain`, and anything sampling them in `sync` is
-    #: reading across a clock boundary.** For the pin probe that is tolerable --
-    #: it counts edges and reports coarse state. For `FlashILA` it is not: its
-    #: whole purpose is the sub-cycle relationship between `sample_stb` and the
-    #: data it latches, and that relationship does not survive an unsynchronised
-    #: crossing. The ILA belongs in `phy_domain` with its own bus crossing, or it
-    #: belongs retired -- it was built to find the JEDEC read fault, which is
-    #: fixed. Until then its captures are evidence about gross behaviour only.
+    #: The inner PHY's instrumentation signals, forwarded for the pin probe.
+    #: In `phy_domain`: sampling them in `sync` crosses a clock boundary, which
+    #: is fine for the probe's edge counts, not for sub-cycle timing.
     OBSERVED = ("o_sr_in_shift", "o_sr_out_load", "o_sample", "o_update",
                 "o_clk", "o_dq_i1", "o_dq_o0", "o_in_xfer", "o_in_xfer_end")
 

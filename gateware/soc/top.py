@@ -94,12 +94,10 @@ import variant
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import usb_ids
 
-# Import order matters. amaranth_soc is vendored inside luna_soc rather than
-# installed standalone, and importing a luna_soc peripheral is what aliases it
-# onto sys.modules under the bare name. Importing the vendored path directly
-# instead yields a *different* class object for wishbone.Interface, so
-# Decoder.add() rejects a bus that is structurally identical -- these must come
-# first, and the bare name must be used afterwards.
+# `amaranth_soc` is the installed package; luna_soc/__init__.py only falls back
+# to its vendored copy when the real one is missing.
+# Use the bare `amaranth_soc` name throughout: the vendored path would give a
+# different wishbone.Interface class, which Decoder.add() rejects.
 from soc.peripherals.block_ram      import BlockRAM
 
 import sys as _sys
@@ -700,7 +698,7 @@ class AwtoSoc(Elaboratable):
     - block RAM, memory-mapped SPI flash, and HyperRAM behind registers + a window
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
-    - a flash ILA and a flash pin probe
+    - a flash pin probe
     - a JTAG debug tap, and a JTAG bitstream stager
     - two 16550 consoles: one on USB serial, one on the Apollo UART
     """
@@ -995,15 +993,14 @@ class AwtoSoc(Elaboratable):
         # clock, and `ECP5ConfigurationFlashInterface` exists to bridge that
         # gap: it proxies every other attribute through to the real pins while
         # supplying `sck` as a plain signal that USRMCLK consumes.
-        from luna_soc.gateware.core.spiflash import ECP5ConfigurationFlashInterface, SPIPHYController
+        from luna_soc.gateware.core.spiflash import ECP5ConfigurationFlashInterface
 
         m.submodules.flash_pins = flash_pins = QSPIFlashPins("qspi_flash")
         m.submodules.flash_bus  = flash_bus  = ECP5ConfigurationFlashInterface(
             bus=flash_pins.pins)
         # ObservablePHY, not SPIPHYController: behaviourally identical (verified
         # in simulation -- same edge count, same completion cycle) but with the
-        # internal input-capture strobes brought out so the ILA below can see
-        # WHEN a bit is latched, which is the question left after the pin probe.
+        # internal input-capture strobes brought out for the pin probe.
         # The PHY runs in `fast`, and `ClockCrossedPHY` presents it in `sync`.
         #
         # SCK comes from the PHY's domain, so this is the whole of what decouples the

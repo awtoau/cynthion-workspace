@@ -15,7 +15,7 @@ luna_soc's (`SPIFlashMemoryMap`, `SPIPHYController`,
     quad in the body of `elaborate`
   * an arbiter that cannot starve a port (`FairSPIControlPortCrossbar`)
   * a chip select that holds across CPU register writes (see `HoldSPIController`)
-  * an ILA on the SPI wires, readable over the USB console
+  * a pin probe on the SPI wires (`FlashPinProbe`)
 
 `../../docs/architecture.md` records why each is ours rather than upstream's.
 
@@ -56,13 +56,9 @@ from amaranth               import Cat, C, Module, Signal, DomainRenamer, unsign
 from amaranth.lib.cdc       import FFSynchronizer
 from amaranth.lib           import wiring
 
-# luna_soc first, and the order is load-bearing. amaranth_soc is VENDORED
-# inside luna_soc rather than installed standalone, and importing a luna_soc
-# peripheral is what aliases it onto sys.modules under the bare name. Importing
-# `amaranth_soc` before any luna_soc import fails outright; importing the
-# vendored path directly instead yields a DIFFERENT class object for
-# wishbone.Interface, so Decoder.add() rejects a bus that is structurally
-# identical. Same constraint the SoC file documents at its own imports.
+# `amaranth_soc` is the installed package (luna_soc only falls back to a
+# vendored copy when it is missing); import it by the bare name, never the
+# vendored path, which gives a different wishbone.Interface class.
 from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
 
 from amaranth_soc           import csr
@@ -73,8 +69,6 @@ from luna_soc.gateware.core.spiflash.port  import (SPIControlPort,
                                                    StreamCore2PHY,
                                                    StreamPHY2Core)
 from luna_soc.gateware.core.spiflash.utils import WaitTimer
-
-from luna.gateware.debug.ila import IntegratedLogicAnalyzer
 
 
 # Read modes, as (opcode, addr_width, bus_width, dummy_bits, dummy_value).
@@ -383,7 +377,7 @@ class ObservablePHY(SPIPHYController):
 
     In `SPIPHYController.elaborate` that signal is `sr_in_shift`, a local. This
     subclass re-implements the same elaborate body verbatim and assigns the
-    interesting signals to attributes so an ILA can reach them.
+    interesting signals to attributes so the pin probe can reach them.
 
     RE-IMPLEMENTED RATHER THAN PATCHED, and the copy is deliberate: the point of
     this class is to observe what the real PHY does, so any behavioural
@@ -839,114 +833,6 @@ class FlashPinProbe(wiring.Component):
             self._dq_driven.f.seen.r_data.eq(dq_driven),
             self._grants.f.count.r_data.eq(grant_count),
             self._oe_edges.f.count.r_data.eq(oe_edges),
-        ]
-        return m
-
-
-class FlashILA(wiring.Component):
-    """A logic analyser on the flash path, read back over the CPU's console.
-
-    The pin probe answered "does anything happen" and cornered the fault at the
-    input sampling path. It cannot answer what is left, because what is left is
-    PHASE: whether the input bit is latched on the wrong edge, a cycle early or
-    late, or not at all on the second through fourth transfers of a multi-part
-    command. Counters have no time axis. This does.
-
-    Built on LUNA's `IntegratedLogicAnalyzer`, which is the capture engine --
-    trigger, sample memory and a read port. What is added here is a CSR face, so
-    samples come back over the USB console rather than needing a spare UART pin.
-    That matters on r1.4: the `uart` pins are shared with JTAG TDI/TMS, so a
-    design that drives them fights the adapter loading its own bitstream, and
-    `AsyncSerialILA` would need exactly those pins.
-
-    NARROW AND DEEP, deliberately. Eight signals is enough to answer the
-    question and 1024 samples is 32 SCK edges at divisor 0 with room for the
-    gaps between transfers -- the window has to span all four transfers of a
-    JEDEC read, because "does the strobe still fire on transfer 2" is the
-    hypothesis. A wider capture would buy signals nobody is asking about at the
-    cost of the depth that makes the trace readable.
-
-    One DP16KD at 8 bits x 1024. The SoC uses 41 of 56, so this fits without
-    displacing anything else -- the constraint that matters, since a build that
-    stops reproducing the fault wastes the run.
-    """
-
-    # The eight signals, in bit order. This list IS the trace format: the host
-    # side decodes by position, so changing the order changes the meaning of
-    # every captured byte.
-    # Bit 7 carries the OUTGOING data bit rather than in_xfer_end. The FSM
-    # windows are already understood from the previous capture; what is not
-    # known is whether the command actually driven onto DQ0 is the command the
-    # firmware asked for. Eight bits is one BRAM-friendly byte per sample and
-    # this is the more valuable eighth signal.
-    SIGNAL_NAMES = ["sck", "dq_i1", "cs", "sr_in_shift",
-                    "sample", "update", "in_xfer", "dq_o0"]
-
-    def __init__(self, *, sample_depth=1024):
-        self.sample_depth = sample_depth
-
-        self._status = csr.Register({
-            "complete": csr.Field(csr.action.R, 1),
-            "sampling": csr.Field(csr.action.R, 1),
-        }, access="r")
-        self._arm = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
-                                 access="w")
-        # Which sample to read. 16 bits covers any depth this will ever have.
-        self._index = csr.Register({"value": csr.Field(csr.action.RW, 16)},
-                                   access="rw")
-        self._sample = csr.Register({"bits": csr.Field(csr.action.R, 8)},
-                                    access="r")
-
-        builder = csr.Builder(addr_width=5, data_width=8)
-        builder.add("status", self._status)
-        builder.add("arm",    self._arm)
-        builder.add("index",  self._index)
-        builder.add("sample", self._sample)
-        self._bridge = csr.Bridge(builder.as_memory_map())
-
-        super().__init__({
-            "bus": wiring.In(csr.Signature(addr_width=5, data_width=8)),
-            # The probed signals. All inputs -- this module drives nothing into
-            # the flash path and cannot perturb what it measures.
-            "sck":          wiring.In(unsigned(1)),
-            "dq_i1":        wiring.In(unsigned(1)),
-            "cs":           wiring.In(unsigned(1)),
-            "sr_in_shift":  wiring.In(unsigned(1)),
-            "sample_stb":   wiring.In(unsigned(1)),
-            "update_stb":   wiring.In(unsigned(1)),
-            "in_xfer":      wiring.In(unsigned(1)),
-            "dq_o0":        wiring.In(unsigned(1)),
-            # Asserted by software immediately before the transaction to be
-            # captured. Triggering on the TRANSACTION rather than on `cs`
-            # falling is the point: if the fault were that nothing is issued,
-            # triggering on the symptom's absence would capture nothing and
-            # confirm only what is already known.
-            "trigger":      wiring.In(unsigned(1)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
-
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-
-        signals = [self.sck, self.dq_i1, self.cs, self.sr_in_shift,
-                   self.sample_stb, self.update_stb, self.in_xfer,
-                   self.dq_o0]
-
-        # samples_pretrigger=2 doubles as a synchroniser for the pin inputs,
-        # and catches the couple of cycles before the trigger so the first
-        # clock edge is not lost off the front of the window.
-        m.submodules.ila = ila = IntegratedLogicAnalyzer(
-            signals=signals, sample_depth=self.sample_depth,
-            samples_pretrigger=2)
-
-        m.d.comb += [
-            ila.trigger.eq(self.trigger | self._arm.f.strobe.w_stb),
-            ila.captured_sample_number.eq(self._index.f.value.data),
-            self._sample.f.bits.r_data.eq(ila.captured_sample),
-            self._status.f.complete.r_data.eq(ila.complete),
-            self._status.f.sampling.r_data.eq(ila.sampling),
         ]
         return m
 
