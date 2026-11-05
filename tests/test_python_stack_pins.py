@@ -15,7 +15,8 @@ from toolchain_env import LUNA_PIN  # noqa: E402
 
 def test_luna_usb_is_the_pinned_commit():
     version = metadata.version("luna-usb")
-    assert version.endswith(f"git.{LUNA_PIN[:8]}"), (
+    # `.dirty` is the amaranth-main probe's patched luna (patches/luna-amaranth-0.6.patch on the pin).
+    assert f"git.{LUNA_PIN[:8]}" in version, (
         f"luna-usb {version} is not the pinned {LUNA_PIN[:8]}: "
         f'pip install --no-deps "luna-usb @ git+https://github.com/greatscottgadgets/luna.git@{LUNA_PIN}"')
 
