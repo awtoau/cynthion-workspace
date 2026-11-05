@@ -1,3 +1,101 @@
+diff --git a/firmware/Makefile b/firmware/Makefile
+index 4174a13..b5aad50 100644
+--- a/firmware/Makefile
++++ b/firmware/Makefile
+@@ -83,6 +83,10 @@ CFLAGS += \
+ # default balanced partitioning GCC cannot inline across partition boundaries,
+ # which on a program this small costs most of the benefit.
+ CFLAGS  += -flto=auto -flto-partition=one
++
++# GCC 15 turns a bit-serial CRC loop into a 256-byte lookup table (`-foptimize-crc`).
++# Off: the loop is smaller on a part with no flash to spare (#607).
++CFLAGS  += -fno-optimize-crc
+ # Stack reservation, from measurement rather than convention.
+ #
+ # The default is 0x400 (1024 bytes) and was never measured. stack_probe.c paints
+diff --git a/firmware/src/boards/cynthion_d11/fpga_adv.c b/firmware/src/boards/cynthion_d11/fpga_adv.c
+index 6625b7a..84c1737 100644
+--- a/firmware/src/boards/cynthion_d11/fpga_adv.c
++++ b/firmware/src/boards/cynthion_d11/fpga_adv.c
+@@ -525,26 +525,6 @@ uint8_t fpga_adv_command(uint8_t command, uint8_t *buffer, uint8_t length)
+ #endif
+ }
+ 
+-/**
+- * CRC-8/ATM over a buffer: polynomial 0x07, init 0x00, no reflection.
+- *
+- * Matches the responder gateware. Bitwise rather than table-driven: a 256-byte
+- * table would cost more flash than this saves in cycles, on a link that moves
+- * 18 bytes at a time.
+- */
+-uint8_t fpga_adv_crc8(const uint8_t *data, uint8_t length)
+-{
+-	uint8_t crc = 0;
+-	for (uint8_t i = 0; i < length; i++) {
+-		crc ^= data[i];
+-		for (uint8_t bit = 0; bit < 8; bit++) {
+-			crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07)
+-			                   : (uint8_t)(crc << 1);
+-		}
+-	}
+-	return crc;
+-}
+-
+ /**
+  * Report link health: responses OK, CRC failures, timeouts, then the watchdog
+  * health byte (fpga_adv_wd.h; a level, not cleared).
+diff --git a/firmware/src/fpga_adv.h b/firmware/src/fpga_adv.h
+index b91bea1..9c2dd78 100644
+--- a/firmware/src/fpga_adv.h
++++ b/firmware/src/fpga_adv.h
+@@ -75,7 +75,7 @@ uint8_t fpga_adv_command(uint8_t command, uint8_t *buffer, uint8_t length);
+ /**
+  * CRC-8/ATM over a buffer, matching the responder gateware.
+  */
+-uint8_t fpga_adv_crc8(const uint8_t *data, uint8_t length);
++#include "fpga_adv_crc.h"  // fpga_adv_crc8()
+ 
+ /**
+  * Report link health: [ok, crc_fail, timeout, watchdog health]. The first three
+diff --git a/firmware/src/fpga_adv_crc.h b/firmware/src/fpga_adv_crc.h
+new file mode 100644
+index 0000000..40da40b
+--- /dev/null
++++ b/firmware/src/fpga_adv_crc.h
+@@ -0,0 +1,33 @@
++/*
++ * CRC-8 for FPGA_ADV frames.
++ *
++ * Own header so a host test can include it without the hardware.
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#ifndef __FPGA_ADV_CRC_H__
++#define __FPGA_ADV_CRC_H__
++
++#include <stdint.h>
++
++/**
++ * CRC-8/ATM over a buffer: polynomial 0x07, init 0x00, no reflection.
++ *
++ * Matches the responder gateware. Bitwise: a 256-byte table costs more flash than it
++ * saves on a link that moves 18 bytes at a time (the Makefile sets -fno-optimize-crc).
++ */
++static inline uint8_t fpga_adv_crc8(const uint8_t *data, uint8_t length)
++{
++	uint8_t crc = 0;
++	for (uint8_t i = 0; i < length; i++) {
++		crc ^= data[i];
++		for (uint8_t bit = 0; bit < 8; bit++) {
++			crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07)
++			                   : (uint8_t)(crc << 1);
++		}
++	}
++	return crc;
++}
++
++#endif
 diff --git a/firmware/src/jtag.c b/firmware/src/jtag.c
 index ce6ec23..3462463 100644
 --- a/firmware/src/jtag.c
@@ -396,7 +494,7 @@ index 0000000..1dc7dc1
 +
 +#endif
 diff --git a/firmware/test/Makefile b/firmware/test/Makefile
-index c843d08..986cd04 100644
+index c843d08..103e1a5 100644
 --- a/firmware/test/Makefile
 +++ b/firmware/test/Makefile
 @@ -12,7 +12,7 @@ SRC_DIR := ../src
@@ -404,11 +502,19 @@ index c843d08..986cd04 100644
  
  BUILD   := _build
 -TESTS   := test_apollo_mode test_fpga_adv_wd test_hang_wd
-+TESTS   := test_apollo_mode test_fpga_adv_wd test_hang_wd test_jtag_tail test_jtag_scan_tail
++TESTS   := test_apollo_mode test_fpga_adv_crc test_fpga_adv_wd test_hang_wd test_jtag_tail test_jtag_scan_tail
  
  .PHONY: all clean
  all: $(addprefix run-,$(TESTS))
-@@ -29,6 +29,14 @@ $(BUILD)/test_fpga_adv_wd: test_fpga_adv_wd.c $(SRC_DIR)/fpga_adv_wd.h | $(BUILD
+@@ -25,10 +25,22 @@ $(BUILD)/test_apollo_mode: test_apollo_mode.c $(SRC_DIR)/apollo_mode.c | $(BUILD
+ $(BUILD)/test_fpga_adv_wd: test_fpga_adv_wd.c $(SRC_DIR)/fpga_adv_wd.h | $(BUILD)
+ 	$(CC) $(CFLAGS) test_fpga_adv_wd.c -o $@
+ 
++# fpga_adv_crc test: header-only, the same file the firmware includes.
++$(BUILD)/test_fpga_adv_crc: test_fpga_adv_crc.c $(SRC_DIR)/fpga_adv_crc.h | $(BUILD)
++	$(CC) $(CFLAGS) test_fpga_adv_crc.c -o $@
++
+ # hang_wd test: header-only logic, the same file the firmware includes.
  $(BUILD)/test_hang_wd: test_hang_wd.c $(SRC_DIR)/hang_wd.h | $(BUILD)
  	$(CC) $(CFLAGS) test_hang_wd.c -o $@
  
@@ -469,6 +575,95 @@ index 0000000..13d5695
 +bool tud_control_xfer(uint8_t rhport, tusb_control_request_t const *request, void *buffer, uint16_t len);
 +void tud_task(void);
 +#endif
+diff --git a/firmware/test/test_fpga_adv_crc.c b/firmware/test/test_fpga_adv_crc.c
+new file mode 100644
+index 0000000..1f32f99
+--- /dev/null
++++ b/firmware/test/test_fpga_adv_crc.c
+@@ -0,0 +1,83 @@
++/**
++ * Host-native test of fpga_adv_crc8 (src/fpga_adv_crc.h): CRC-8/ATM, polynomial 0x07,
++ * init 0, no reflection. Checked against the standard check value and an independent
++ * table-driven implementation, so the bitwise loop the firmware ships is the one tested.
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ */
++
++#include <stdio.h>
++#include <stdint.h>
++#include <string.h>
++
++#include "fpga_adv_crc.h"
++
++static int failures = 0;
++
++#define CHECK(cond, ...)                                                       \
++	do {                                                                       \
++		if (cond) { printf("  ok   - "); }                                     \
++		else { printf("  FAIL - "); failures++; }                              \
++		printf(__VA_ARGS__);                                                   \
++		printf("\n");                                                          \
++	} while (0)
++
++static uint8_t table[256];
++
++static void build_table(void)
++{
++	for (int i = 0; i < 256; i++) {
++		uint8_t crc = (uint8_t)i;
++		for (int bit = 0; bit < 8; bit++) {
++			crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
++		}
++		table[i] = crc;
++	}
++}
++
++static uint8_t reference(const uint8_t *data, uint8_t length)
++{
++	uint8_t crc = 0;
++	for (uint8_t i = 0; i < length; i++) {
++		crc = table[crc ^ data[i]];
++	}
++	return crc;
++}
++
++int main(void)
++{
++	build_table();
++
++	const uint8_t check[] = "123456789";
++	CHECK(fpga_adv_crc8(check, 9) == 0xF4, "CRC-8/ATM of \"123456789\" is 0xF4 (got 0x%02X)", fpga_adv_crc8(check, 9));
++	CHECK(fpga_adv_crc8(check, 0) == 0x00, "an empty buffer gives 0x00");
++
++	int bad_single = 0;
++	for (int value = 0; value < 256; value++) {
++		uint8_t byte = (uint8_t)value;
++		if (fpga_adv_crc8(&byte, 1) != reference(&byte, 1)) bad_single++;
++	}
++	CHECK(bad_single == 0, "all 256 single-byte inputs match the table implementation (%d differ)", bad_single);
++
++	// Frame shapes the link uses: 3-byte replies and longer buffers, pseudo-random content.
++	int bad_buffers = 0;
++	uint32_t state = 0x12345678u;
++	for (int round = 0; round < 2000; round++) {
++		uint8_t buffer[18];
++		uint8_t length = (uint8_t)(1 + round % 18);
++		for (int i = 0; i < length; i++) {
++			state = state * 1664525u + 1013904223u;
++			buffer[i] = (uint8_t)(state >> 24);
++		}
++		if (fpga_adv_crc8(buffer, length) != reference(buffer, length)) bad_buffers++;
++	}
++	CHECK(bad_buffers == 0, "2000 buffers of 1..18 bytes match the table implementation (%d differ)", bad_buffers);
++
++	// A frame followed by its CRC checks to zero (the property the receiver relies on).
++	uint8_t frame[4] = { 0xC1, 0x14, 0x01, 0 };
++	frame[3] = fpga_adv_crc8(frame, 3);
++	CHECK(fpga_adv_crc8(frame, 4) == 0x00, "a frame plus its CRC checks to zero");
++
++	printf(failures ? "FAILED\n" : "all passed\n");
++	return failures != 0;
++}
 diff --git a/firmware/test/test_jtag_scan_tail.c b/firmware/test/test_jtag_scan_tail.c
 new file mode 100644
 index 0000000..d29e904
