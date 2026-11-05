@@ -235,3 +235,7 @@ export PATH="$HOME/opt/cpython-ft/bin:$PATH"
 Upstream `pyproject.toml` files declare open lower bounds (`requires-python =
 ">=3.9"`) with no upper cap, so 3.15t is permitted — the pins that previously
 held this workspace on 3.12/3.14 were all in local tooling, not upstream.
+
+## Licence
+
+GPL-3.0-or-later, see [`LICENSE`](LICENSE) and [`docs/licensing.md`](docs/licensing.md). Per-file headers and third-party notices stay as they are.
