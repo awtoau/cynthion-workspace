@@ -1,0 +1,61 @@
+# yosys 0.70 / nextpnr 0.11 upgrade: gains, blocker, workaround, size
+
+Status: **not adopted.** Tracked in [#602](https://github.com/awtoau/cynthion-workspace/issues/602). Measured 2026-11-05 on the SoC `top.il` (ck180), host `selwyn`, `YOSYS_MAX_THREADS=1`.
+
+## Toolchains
+- Active: `~/opt/oss-cad-suite` — yosys 0.65+57, nextpnr 0.10-74.
+- Candidate: `~/opt/oss-cad-suite-20261104` ([release](https://github.com/YosysHQ/oss-cad-suite-build/releases/tag/2026-11-04)) — yosys 0.70+329 (`b8d84f823`), nextpnr 0.11.1-86. Side by side, nothing replaced.
+
+## Gain
+- yosys step with `autoname`: 104.5 s -> 37 s. `autoname` itself 53.3 s -> 0.12 s (rewritten in 0.70), so the `autoname` skip in [`fast_build_env.py`](../scripts/fast_build_env.py) is not needed there.
+
+## Blocker: abc9 ties `M` of async flip-flops to 0
+- `common_sim.vh:247`: `TRELLIS_FF` with `SRMODE=="ASYNC"` is an `abc9_box`.
+- 0.70's abc9 gives every box input pin an AIG output; an unconnected pin comes back as constant 0. Result: `M` connected to `1'b0` on every async FF (576 here; 0 in 0.65+57).
+- nextpnr 0.10-74 and 0.11.1 then fail in the packer: `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net`.
+- Bisected to the `abc9` call; four-line repro in the upstream draft below.
+- Workaround: [`scripts/yosys/trellis_ff_without_m.v`](../scripts/yosys/trellis_ff_without_m.v), after synthesis. To enable: `AMARANTH_script_after_synth` gets `techmap -max_iter 1 -map <path>` (append to the replay lines in `fast_build_env.py`). Tested with `--pack-only`; no full build or board run yet.
+- Parameters in that file must not carry a `[127:0]` range: it turns `CEMUX="1"` into the integer 49 in the JSON.
+- A source fix was tried and dropped: skipping box inputs that nothing drives in `abc_ops_reintegrate.cc`. By reintegration time ABC has already absorbed the logic feeding most pins, so "undriven" cannot be decided there; it strips real connections (all flip-flops vanished). Needs the maintainers.
+
+## Size (nextpnr `--pack-only`, TRELLIS_COMB of 24288)
+
+| option | 0.65+57 | 0.70+329 with the `M` fix |
+|---|---|---|
+| default | 21876 (90.0%) | 22362 (92.1%) |
+| `-cmp2softlogic` | 21040 | 21696 |
+| `-nowidelut` | 20901 | 20855 |
+| both | 20501 | 20412 |
+
+- 0.70 default is +486 COMB, all in wide-LUT mapping (PFUMX 2478 vs 2038, L6MUX21 469 vs 289). LUT4-only mapping is equal.
+- No new size switch in 0.70: `-abc2`, `-noabc9`, `-retime` removed (accepted, ignored); `-latches` added. `abc9 -W 300` is a constant.
+- Not measured: timing with `-nowidelut` (deeper logic), a full build, a board run.
+- Tool: [`scripts/yosys_synth_sweep.py`](../scripts/yosys_synth_sweep.py).
+
+## Upstream report (draft, not posted: needs Dan's go)
+
+**Title:** `synth_ecp5`: abc9 ties the unused `M` input of async `TRELLIS_FF` to 0; nextpnr-ecp5 then rejects the netlist
+
+**Versions:** Yosys 0.70+329 (`b8d84f823`, OSS CAD Suite 2026-11-04); nextpnr-ecp5 0.11.1-86 and 0.10-74. Yosys 0.65+57 is not affected.
+
+**Repro** (`t.v`):
+```verilog
+module t(input clk, input rst_n, input d, output reg q);
+  always @(posedge clk or negedge rst_n)
+    if (!rst_n) q <= 1'b0; else q <= d;
+endmodule
+```
+```
+yosys -p "read_verilog t.v; synth_ecp5 -top t; write_json t.json"
+```
+- 0.70+329: the `TRELLIS_FF` has `"M": ["0"]` in `connections`.
+- 0.65+57: no `M` connection.
+- `synth_ecp5 -run :map_luts` first: `M` absent. After `abc9 -W 300`: present. So it is the `abc9` step.
+
+**Cause (from reading the source):** `techlibs/lattice/common_sim.vh` marks `TRELLIS_FF` with `SRMODE=="ASYNC"` as `abc9_box`. The box path gives every box input an AIG output; `abc_ops_reintegrate` sets every box port from ABC's result, so a pin that was never connected comes back as constant 0.
+
+**Impact:** on a ~32k-cell design with 576 async flip-flops, nextpnr-ecp5 (both versions) stops in packing with `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net '...'`. `M` is unused in `ASYNC` mode without `LSRMODE="PRLD"`.
+
+**Workaround:** a `techmap -max_iter 1` that re-instantiates `TRELLIS_FF` without `M` for `SRMODE=="ASYNC" && LSRMODE!="PRLD"` after `synth_ecp5`; the packer then accepts the netlist.
+
+**Expected:** a pin left unconnected stays unconnected after `abc9`, as in 0.65. Possibly nextpnr should also accept a constant on `M`.
