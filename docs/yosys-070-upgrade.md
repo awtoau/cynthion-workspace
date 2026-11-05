@@ -41,7 +41,7 @@ Status: **works on the board with yosys 0.70+329, the `M` workaround and nextpnr
 
 ### Results of the fix (2026-11-05, yosys `8f3cc3d0c` + the patch, nextpnr 0.11.1, no workaround)
 - New test passes; 26 ECP5, 18 gowin, 14 nexus, 10 machxo2, 12 intel_alm, 26 ice40, 11 anlogic arch tests and 5 abc9 `various` tests pass. `arch/xilinx` `abc9_dff` and `dsp_abc9` fail identically with and without the patch (an unlisted `ABC: Warning: The network is combinational`), not investigated.
-- SoC build (seed 11, 20781 COMB): loads, selftest passes, `hyperram_board_test` 13/13.
+- SoC build (seed 11, 20781 COMB): loads, `soc_test --board` 132/132, `hyperram_board_test` 13/13.
 - A build cache hit reused an earlier image twice: the cache key does not include a locally patched yosys. `--seed` or deleting the cached bitstream forces a build.
 
 ## Size (nextpnr `--pack-only`, TRELLIS_COMB of 24288)
