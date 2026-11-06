@@ -9,7 +9,7 @@ Established 2026-07-30 with `amaranth_soc_dropin_test.py` (now in `debris/script
 | Is it a hard dependency of `cynthion`? | Yes, unconditionally: `import luna_soc` at `cynthion/python/src/__init__.py:9`, top level. `import cynthion` fails without it (also the analyzer and facedancer tops) |
 | Does the analyzer gateware use it? | No (zero references in `gateware/analyzer/`) |
 | Does the facedancer gateware use it? | Yes: 5 import sites in `gateware/facedancer/top.py` |
-| Does our `gateware/` use it? | `luna_soc.gateware.core.spiflash` (`soc/peripherals/flash.py`, `flash_cdc.py`, `soc/top.py`); `blockram` earlier |
+| Does our `gateware/` use it? | No, since [#593](https://github.com/awtoau/cynthion-workspace/issues/593) (was `core.spiflash` for the flash controller; `blockram` earlier) |
 
 - The facedancer SoC needs peripherals `amaranth-soc` does not have: `blockram`, `spiflash` (`ECP5ConfigurationFlashInterface`, `SPIPHYController`), `timer`, `uart`, `usb2`, `InterruptController`, `VexRiscv`, `provider.cynthion`, `top_level_cli`.
 - Size of the trade: 321 lines of Python to carry (`blockram` 127, `VexRiscv` 149 + `InterruptController` 45, plus 5 pre-built VexRiscv `.v` files under `gateware/cpu/verilog/vexriscv/`) against 4078 lines of vendored `amaranth_soc` not carried.

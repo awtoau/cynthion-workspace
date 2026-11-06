@@ -2,7 +2,7 @@
 
 Which parts of LUNA, luna-soc and cynthion this workspace uses as-is, which it has diverged from, and why.
 
-- `luna`: the USB device stack, ULPI and packet layers are kept (production AUX console and USB host port). Defects found and replaced: `JTAGRegisterInterface` ([#204](https://github.com/awtoau/cynthion-workspace/issues/204)), the non-DQS HyperRAM `psram` controller ([#215](https://github.com/awtoau/cynthion-workspace/issues/215)). Endpoint submodule names came from `id()`, which made builds non-reproducible; fixed upstream (luna PR #307).
+- `luna`: the USB device stack, ULPI and packet layers are kept (production AUX console and USB host port). Defects found and replaced: `JTAGRegisterInterface` ([#204](https://github.com/awtoau/cynthion-workspace/issues/204)), the non-DQS HyperRAM `psram` controller ([#215](https://github.com/awtoau/cynthion-workspace/issues/215)). Endpoint submodule names came from `id()`, which made builds non-reproducible; fixed upstream (luna PR [#307](https://github.com/awtoau/cynthion-workspace/issues/307)).
 - `luna_soc`: three defects traced to it. Great Scott Gadgets (GSG) code is reserved for the genuinely Cynthion-specific.
 
 ## No upstreaming
@@ -34,7 +34,7 @@ Which parts of LUNA, luna-soc and cynthion this workspace uses as-is, which it h
 - TODO: check whether anything else still needs the fork; if not, pin upstream `luna-soc~=0.3.2`.
 - Fork tags use the PEP 440 local form: [`toolchain-versions.md`](toolchain-versions.md#constraints-that-must-hold).
 - `import cynthion` hard-requires `luna_soc` (top-level import in `cynthion/python/src/__init__.py`).
-- `gateware/` still imports `luna_soc.gateware.core.spiflash` (`soc/peripherals/flash.py`, `flash_cdc.py`, `soc/top.py`).
+- `gateware/` imports nothing from `luna_soc` since [#593](https://github.com/awtoau/cynthion-workspace/issues/593) (the config flash is the [#590](https://github.com/awtoau/cynthion-workspace/issues/590) core: [`chips/flash-soc-peripheral.md`](chips/flash-soc-peripheral.md)).
 
 ## Used as-is
 
@@ -43,8 +43,7 @@ Which parts of LUNA, luna-soc and cynthion this workspace uses as-is, which it h
 | `USBSerialDevice` (CDC-ACM) | `luna.gateware.usb.devices.acm` | Production AUX console on `aux_phy` (`top.py`). Pulls in luna's USB device stack, ULPI/UTMI and packet layers (44 files, 7817 code lines, `scripts/tools/luna_closure.py --only soc`). 195.4 Mbps loopback was measured on probes deleted in `cf62c6d` ([`usb-performance.md`](usb-performance.md)); not re-measurable today |
 | `ULPIRegisterWindow` | `luna.gateware.interface.ulpi` | Register access on both PHYs: `peripherals/ulpi_window.py`, inside `UsbPort` (`peripherals/usb_host.py`) and inside our ULPI translator (`gateware/usbcore/ulpi.py`). Imported for `usbcore` and `usb_host.py` from one place, `gateware/usbcore/ulpi_regwin.py`; replacement is a later stage of [#612](https://github.com/awtoau/cynthion-workspace/issues/612). `aux_phy`'s bus is owned by the console |
 | `USBDevice`, stream endpoints, `ControlRequestHandler`, `StreamSerializer` | `luna.gateware.usb`, `luna.gateware.stream` | Simulation models only (`gateware/probes/usb_host/{aoa_phone,target_device,model}.py`), reference devices for the host engine. Not in the production SoC |
-| `JTAGRegisterInterface` | `luna.gateware.interface.jtag` | Replaced by our wire-compatible `gateware/probes/jtag_registers.py` (#204). Both baselines (`flash_baseline`, `hyperram_baseline`) switched to it 2026-11-06. Luna's remains only in one deliberate negative control (`scripts/soc/soc_jtag_registers_sim.py`) and upstream's selftest in `repos/cynthion` |
-| `SPIFlashMemoryMap`, `SPIClockGenerator`, `WaitTimer`, `SPIController`, `SPIControlPort` and stream signatures, `ECP5ConfigurationFlashInterface` | `luna_soc.gateware.core.spiflash` | Subclassed or wrapped by `ModalSPIFlashMemoryMap`, `ObservablePHY` (whose `elaborate` is our copy), `HoldableSPIController`; `USRMCLK` handling correct, the bugs were a layer above. Verified byte-exact against `apollo flash-read`. `SPIPHYController` is imported in `top.py` and never used. Replacement: the clean-room #590 core, planned in [#593](https://github.com/awtoau/cynthion-workspace/issues/593) |
+| `JTAGRegisterInterface` | `luna.gateware.interface.jtag` | Replaced by our wire-compatible `gateware/probes/jtag_registers.py` ([#204](https://github.com/awtoau/cynthion-workspace/issues/204)). Both baselines (`flash_baseline`, `hyperram_baseline`) switched to it 2026-11-06. Luna's remains only in one deliberate negative control (`scripts/soc/soc_jtag_registers_sim.py`) and upstream's selftest in `repos/cynthion` |
 | `amaranth_soc.gpio.Peripheral` | upstream `amaranth-soc` | Six LEDs, power monitor PWRDN, USER button. `INPUT_ONLY` reset mode lets fabric drive the LEDs until firmware asks (LED comment in `top.py`) |
 | `AsyncSerial` | `amaranth-stdio` | Bit engine for the Apollo-facing UART; `gateware/soc/peripherals/serial_line.py` adds the pad handling |
 
@@ -55,8 +54,7 @@ Technical detail is in [`architecture.md`](architecture.md); this is the policy 
 | what | ours | why it diverged | detail |
 |---|---|---|---|
 | Clock generation | `SocClocks` (`gateware/soc/clocks.py`) | **limit.** Upstream: 60/120/240 MHz only, blocked the RISC-V clock sweep. Ours solves `sync` and `usb` together so `usb` is exactly 60 MHz. [#111](https://github.com/awtoau/cynthion-workspace/issues/111) | [architecture](architecture.md#soc-core) |
-| SPI crossbar | `FairSPIControlPortCrossbar` (`gateware/soc/peripherals/flash.py`) | **upstream defect.** Re-arbitrates only when the grant-holder stops asserting `cs`, but `cs` is a hold, not a request. Reproducer: `riscv_flash_crossbar_sim.py` (now in `debris/scripts/`) | [architecture](architecture.md#peripherals) |
-| SPI controller | `HoldableSPIController` (same file) | **upstream defect.** CS field is `csr.action.W` (one-cycle pulse) used as a latch. Reproducer: ILA capture | [architecture](architecture.md#peripherals) |
+| Config flash | `Flash` (`gateware/soc/peripherals/flash.py`) on the [#590](https://github.com/awtoau/cynthion-workspace/issues/590) core | **upstream defects + rate.** luna_soc's crossbar starved its controller (CS is a hold, not a request) and the controller's CS was a one-cycle pulse; SCK was `sync`/2. The clean-room core holds /CS per transaction by construction and runs SCK 180 MHz. [#593](https://github.com/awtoau/cynthion-workspace/issues/593) | [flash-soc-peripheral](chips/flash-soc-peripheral.md) |
 | UART pad output enable | `SerialLine` (`gateware/soc/peripherals/serial_line.py`) | **upstream defect, a hold expressed as a ready.** `oe = ~tx.rdy` releases at the start of the stop bit. Reproducer `scripts/soc/soc_serial_sim.py`. [#113](https://github.com/awtoau/cynthion-workspace/issues/113) | [architecture](architecture.md#peripherals) |
 | Console peripheral | `Uart16550` (`gateware/soc/peripherals/uart16550.py`) | **standard adopted.** Published register map that QEMU also models: one driver for board and test gate | [architecture](architecture.md#peripherals) |
 | Interrupt controller | `amaranth_soc.csr.event.EventMonitor`, wrapped by [`gateware/soc/cpu/intc.py`](../gateware/soc/cpu/intc.py) | **upstream, adopted.** luna_soc's is reserved by policy and shaped for VexRiscv's in-CPU CSRs; VexiiRiscv's is Tilelink-only | [architecture](architecture.md#interrupts-and-time) |
@@ -108,8 +106,8 @@ Source patches, tracked in this repository's issues. `facedancer` and `luna` are
 
 ## HyperRAM: written, not taken
 
-- Clean-room core (`gateware/hyperram_baseline/`, #581) from the datasheet and public designs; nothing from luna's `psram.py`.
-- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588).
+- Clean-room core (`gateware/hyperram_baseline/`, [#581](https://github.com/awtoau/cynthion-workspace/issues/581)) from the datasheet and public designs; nothing from luna's `psram.py`.
+- HyperRAM: register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
 
 ## Vendored: the USB host engine
 

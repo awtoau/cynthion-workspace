@@ -16,7 +16,7 @@ All built for r1.4, same device, package and speed grade.
 
 ## Current SoC count
 
-- Counts recorded before #441 came from non-reproducible builds; see [`lfe5u-12f.md`](lfe5u-12f.md#block-ram).
+- Counts recorded before [#441](https://github.com/awtoau/cynthion-workspace/issues/441) came from non-reproducible builds; see [`lfe5u-12f.md`](lfe5u-12f.md#block-ram).
 - Count by mode, not one mode: `grep -cE "^enum: EBR[0-9]+\.MODE " top.config` (all modes) agrees with nextpnr's `N/56` line; a `DP16KD`-only grep undercounts `PDPW16KD` cells (details: [`lfe5u-12f.md`](lfe5u-12f.md#block-ram)).
 - Recorded counts: 44 of 56 (42 `DP16KD` + 2 `PDPW16KD`; [`lfe5u-12f.md`](lfe5u-12f.md)); 48 of 56 with 8 KiB caches, 49 for the shipping geometry in the 2026-08-12 sweep below (those builds differ).
 - USB host SIE tx/rx FIFOs (512x8 each) moved to block RAM, 2 blocks ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)): build #445, 2026-11-06, 33/56 BRAM, 19555 COMB (main before: 31, 20809).
@@ -27,13 +27,13 @@ All built for r1.4, same device, package and speed grade.
 ## Capture work barely touches block RAM
 
 - Analyzer buffers into HyperRAM via `HyperRAMPacketFIFO`; block RAM holds only small FIFOs: `out_fifo_depth=128` out, a 4-deep async FIFO into the `usb` domain.
-- USB caps at 48.5 MB/s, far below the HyperRAM bus ([`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md), #581): no block RAM needed for bulk buffering.
+- USB caps at 48.5 MB/s, far below the HyperRAM bus ([`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md), [#581](https://github.com/awtoau/cynthion-workspace/issues/581)): no block RAM needed for bulk buffering.
 
 ## Firmware, not buffers, consumes it
 
 - Both heavy designs are soft-CPU systems with block-RAM program memory: 64 KiB is 32 blocks before anything else.
 - A 16 KiB-cache configuration reached 32/56 in the RISC-V sweep ("nearly full" only because 64 KiB of firmware is assumed alongside).
-- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through `SPIFlashMemoryMap`, freeing block RAM.
+- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through the XIP window (`peripherals/flash.py`), freeing block RAM.
 - Cost of flash execution: flash fetch costs many cycles against block RAM's one, which the I-cache hides; with a too-small cache the stall is measurable: [`../../rtic.md`](../../rtic.md) ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)): RTIC's extra 1,700 bytes of `.text` moved frontend stalls from 44 to **452 per 1,000 cycles** through a 4 KiB direct-mapped I-cache.
 
 ## Cache geometry

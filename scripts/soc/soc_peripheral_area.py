@@ -29,7 +29,7 @@ believing any Fmax difference, because this design has closed anywhere between
 71.45 and 76.99 MHz across identical builds.
 
     ./scripts/soc/soc_peripheral_area.py
-    ./scripts/soc/soc_peripheral_area.py --only uart16550,flash_probe
+    ./scripts/soc/soc_peripheral_area.py --only uart16550,flash
 
 Output is mirrored to ./tmp/logs/soc_peripheral_area.log; each module's full
 yosys log (memory_libmap decisions included) to ./tmp/peripheral-area/<name>.yosys.log.
@@ -118,9 +118,9 @@ def _peripherals():
                                   granularity=8,
                                   features={"cti", "bte", "err"})
 
-    def flash_probe():
-        from peripherals.flash import FlashPinProbe
-        return FlashPinProbe()
+    def flash():
+        from peripherals.flash import Flash
+        return Flash(sim=True)
 
     def hyperram():
         from peripherals.hyperram import HyperRAM
@@ -141,7 +141,7 @@ def _peripherals():
         ("stream_buffer_sync", stream_buffer_sync, "depth 64"),
         ("stream_buffer_async", stream_buffer_async, "depth 16, CDC"),
         ("wishbone_pipe",      wishbone_pipe,      ""),
-        ("flash_probe",        flash_probe,        "instrumentation"),
+        ("flash",              flash,              "#593, no pins/DCCA/USRMCLK (sim build)"),
         ("hyperram",           hyperram,           "#588, no PLL/PHY (sim build)"),
     ]
 

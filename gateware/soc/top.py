@@ -122,12 +122,9 @@ from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
 from peripherals.stream_buffer import StreamBuffer
 from bus.wishbone_pipe import RegisteredResponse
-from bus.fault         import BusFault, worst_ack_cycles
-from peripherals.flash_cdc import ClockCrossedPHY
+from bus.fault         import BusFault
 from peripherals.hyperram import HyperRAM
-from peripherals.flash import (FairSPIControlPortCrossbar, FlashPinProbe,
-                         HoldableSPIController, ModalSPIFlashMemoryMap,
-                         ObservablePHY, QSPIFlashPins, READ_MODES)
+from peripherals.flash import Flash, SCK_MHZ as FLASH_SCK_MHZ, xip_worst_sync_cycles
 
 from amaranth_soc                   import csr, gpio, wishbone
 from amaranth_soc.wishbone          import Decoder
@@ -374,21 +371,11 @@ FLASH_CACHED = True
 HYPERRAM_BASE = 0xf0000800
 HYPERRAM_WINDOW_BASE = 0xf0010000
 
-# The SPI controller's own registers -- the arbitrary-command path, used here
-# only to read the JEDEC ID.
-#
-# This has to sit inside the CSR region declared `main=0`, alongside the
-# console, and not next to the flash's memory map: these are volatile registers
-# where a read has a side effect (it pops the RX FIFO). Caching them would mean
-# the second read of `data` returns the first read's byte from a cache line,
-# forever. The flash's *memory* wants the cache; the flash controller's
-# *registers* must never see it.
+# The flash command port's registers (`peripherals/flash.py`, #593) and its 256 B
+# data buffer (reads: received bytes; writes: bytes to send). Both in the uncached
+# CSR region: the status changes under the CPU and the buffer between commands.
 FLASH_CSR_BASE = 0xf0000100
-
-# The pin probe's registers. Same uncached CSR region as everything else here:
-# these are counters that change underneath the CPU, so a cached read would
-# return a stale line and report no activity on a busy bus.
-FLASH_PROBE_BASE = 0xf0000200
+FLASH_BUF_BASE = 0xf0000200
 
 # The interrupt controller: two registers, `cpu/intc.py`.
 #
@@ -505,6 +492,9 @@ IRQ_PLL_LOSS = 17
 # HyperRAM op done / error (#588), gated by its IRQ_EN.
 IRQ_HYPERRAM = 18
 
+# Flash command done / error (#593), gated by its IRQ_EN.
+IRQ_FLASH = 19
+
 # Every source's trigger, fixed at elaboration. Firmware cannot change one: an
 # edge source latches, a level source does not, and which is which is a fact
 # about the signal.
@@ -524,6 +514,7 @@ IRQ_TRIGGERS = {
     IRQ_BUTTON:        "rise",
     IRQ_PLL_LOSS:      "fall",
     IRQ_HYPERRAM:      "level",
+    IRQ_FLASH:         "level",
 }
 
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
@@ -531,84 +522,13 @@ IRQ_TRIGGERS = {
 # twice under two addresses.
 FLASH_SIZE = 4 * 1024 * 1024
 
-# THE BITSTREAM LIVES AT OFFSET 0. Nothing in this design writes or erases --
-# `ModalSPIFlashMemoryMap` issues read opcodes only and the FSM has no write
-# path -- but the offset the firmware reads for its data check is chosen well
-# clear of the bitstream anyway, because a read of a region being actively
-# rewritten by something else would be an unstable test.
-#
-# 0x00300000 is 3 MiB in, past a 308 KiB bitstream by an order of magnitude.
-FLASH_TEST_OFFSET = 0x00300000
-
-# Read mode. "single" is 0x03, one lane, no dummy cycles -- the mode to bring up
-# first, because there is nothing in it to get subtly wrong. "quad" is 0xeb,
-# address and data on four lanes with `dummy_value=0xff0000`.
-# See gateware/soc/peripherals/flash.py.
-#
-# Quad needs no register write on this part: QE (SR2 bit 1) is already set, read
-# back as 0x02 (docs/chips/w25q32-config-flash.md). And 0xeb's dummy count is
-# fixed at four clocks in SPI mode -- the configurable one is a QPI command --
-# so there is nothing to tune and nothing that can be left half-configured.
-#
-# Measured on this board, cache-line refill for 64 B: 0x03 3833 ns, 0xeb 1083 ns
-# (#100). What that buys the CPU is in the bench rows, not in the ratio: the
-# flash 16 KiB random walk misses the D-cache on every access and is therefore
-# very nearly pure refill.
-FLASH_MODE = "quad"
-
-# SCK = sync / (2 * (1 + divisor)), so at SYNC_MHZ = 60 and divisor 0 this design
-# clocks the flash at 30 MHz. That is the SLOWEST rung on the measured table and
-# the reason is below.
-#
-# TWO CLAIMS ABOUT THIS PATH ARE WRONG. `docs/chips/w25q32-config-flash.md`
-# supersedes both:
-#
-#   * "inside the ECP5 MCLK pin's 62 MHz specification". THERE IS NO SUCH
-#     SPECIFICATION. The 62 MHz is `fCCLK` in the sysCONFIG port timing table --
-#     the configuration engine's oscillator ceiling, which has nothing to do with
-#     user mode. `USRMCLK` does not appear in the ECP5 datasheet at all, and
-#     prjtrellis has no timing entry for the path in any speed grade.
-#   * "divisor 0 produces no clock; SCK capped at sync/2". Divisor 0 reads
-#     byte-exact at every rung, at exactly half the cycle count of divisor 1.
-#
-# WHAT THE PART ACTUALLY DOES: 60 points -- five modes x four divisors x three
-# sync rates -- all PASS, up to 144 MHz SCK and 71.70 MB/s on `0xEB` continuous.
-# Nothing failed. `0x03` runs at 144 MHz against a 50 MHz datasheet rating. The
-# limit reached was the TEST DESIGN'S OWN FMAX (it closes at 149 MHz), not the
-# flash and not the pin.
-#
-# So the ceiling here is not the divisor: it is that SCK is derived from `sync`,
-# and `sync` is the CPU's clock. Raising it is a CPU change. Reaching the
-# measured speeds without touching the CPU needs the flash PHY in its own clock
-# domain -- see #100.
-FLASH_DIVISOR = 0
-
-# How long a Wishbone request may go unanswered before the fabric answers ERR.
-#
-#   waits for   ACK from a decoded subordinate
-#   expected    the memory-mapped flash, worst legitimate case: a cold quad read
-#               (69 cycles) with one maximal SPI-controller transfer stealing the
-#               crossbar before each of its four phases. `worst_ack_cycles`
-#               derives it; nothing else here is close -- CSR peripherals answer
-#               in 5, block RAM and the HyperRAM window in 1.
-#   multiplier  1.25x
-#   on expiry   ERR to the CPU -- a load/store access fault the trap handler
-#               names -- and the red LED, which means any bus error (#411).
-#
-# In cycles, so it does not move with SYNC_MHZ, and derived from FLASH_MODE and
-# FLASH_DIVISOR, so raising either does not silently make it tight. Without it
-# an unanswered request is a hang, and a hang is what #409 is.
-BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
-                                             divisor=FLASH_DIVISOR) // 4)
-
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
 # requires it and it is not a free parameter -- while this is arbitrary.
 #
 # The CPU clock. Bounded by:
 #   - the PLL: 13 in-spec frequencies 63..130 MHz, listed in `clocks.py`
 #   - the fabric: what nextpnr closes, which varies with placement
-#   - `fast` = FLASH_FAST_RATIO x sync when built, and the flash PHY closes at
-#     124.77 MHz -- so it caps sync whenever FLASH_PHY_FAST is on
+#   - the flash clocks share its VCO: a multiple of both, or `SocClocks` refuses
 # `usb` is the A8 oscillator, so the PHY does not constrain this.
 #
 # ONE VALUE, for one design. `CYNTHION_SYNC_MHZ=<n>` overrides it, which is what
@@ -625,60 +545,14 @@ BUS_TIMEOUT_CYCLES = -(-5 * worst_ack_cycles(mode=READ_MODES[FLASH_MODE],
 # see `cpu/cpu.py`, where it was added for exactly this symptom at 57.55 MHz.
 SYNC_MHZ = float(variant.value("CYNTHION_SYNC_MHZ"))
 
-# The flash domain is this multiple of `sync`, and the pair is ONE decision.
+# How long a Wishbone request may go unanswered before the fabric answers ERR.
 #
-# Both outputs divide one VCO, so `sync` and `fast` cannot be picked independently.
-# OFF by default, because at `sync` 60 it buys nothing. See the measurements below.
-#
-# 60 x 2 = 120.000 MHz would give SCK 60 MHz through the PHY's /2 clock generator.
-#
-# 144 WAS TRIED AND DOES NOT CLOSE. nextpnr: "Max frequency for clock
-# '$glbnet$fast_clk': 124.77 MHz (FAIL at 144.01 MHz)". The PHY is the ONLY thing in
-# this domain, so 124.77 MHz is the PHY's own critical path inside a full SoC -- the
-# 149 MHz in the chip doc belongs to a design that contained the flash and nothing
-# else, and that difference is the whole of the gap.
-#
-# So 120 is the fastest rung that closes, and it doubles SCK from 30 to 60 MHz.
-# Reaching the measured 144 MHz SCK needs BOTH an ODDR clock output -- which removes
-# the /2 and would give 120 MHz SCK at this same domain rate -- and timing work on the
-# PHY to lift 124.77 toward 144.
-FLASH_FAST_RATIO = 2
-
-# Whether the flash PHY gets its own domain at all.
-#
-# THE MEASUREMENTS, on this SoC, from nextpnr:
-#
-#     fast 144 MHz -> "Max frequency for '$glbnet$fast_clk': 124.77 MHz (FAIL)"
-#     fast 120 MHz -> "Max frequency for '$glbnet$fast_clk': 111.26 MHz (FAIL)"
-#
-# The PHY is the only thing in that domain, so those are the PHY's own fmax, and the
-# spread between two runs at different targets shows it is placement-dependent around
-# 110-125 MHz. The 149 MHz in `docs/chips/w25q32-config-flash.md` belongs to a design
-# containing the flash and nothing else; that difference is the whole gap.
-#
-# WHY THAT MAKES THE DOMAIN USELESS ON ITS OWN. `fast` must divide the same VCO as
-# `sync` by an integer, so at `sync` 60 the only choices are 60 (SCK 30, no change) and
-# 120 (does not close). Getting SCK above 30 this way means dropping `sync` to 50 for
-# `fast` 100 -- trading 17% of the CPU for 67% more flash, roughly one for one, on a
-# firmware that now executes from flash.
-#
-# WHAT ACTUALLY UNLOCKS IT is the /2 in `SPIClockGenerator`, which toggles SCK as a
-# register in the PHY's domain so SCK can never exceed half of it. Driving SCK through
-# an ODDR instead makes SCK equal the domain rate: at `fast` 100 MHz -- which closes --
-# that is 100 MHz SCK and roughly 50 MB/s, against 14.95 today, for a CPU that drops
-# only 60 to 50 MHz.
-#
-# So the order is ODDR first, then this. The crossing itself is built and works
-# (`peripherals/flash_cdc.py`); it is switched off because turning it on today would cost CPU clock
-# for no net gain.
-FLASH_PHY_FAST = False
-
-# SCK at the domain rate rather than half it: 60 MHz instead of 30, no clock
-# change and no new domain. `peripherals/flash_sck_full.py` has the mechanism --
-# a gated clock at the pad, which is the only path a global clock has to
-# USRMCLKI -- and what it costs. Apollo's controller reaches the same rate and
-# has run byte-exact at 144 MHz SCK on this board (#100).
-FLASH_FULL_SCK = False
+# - waits for: ACK from a decoded subordinate
+# - expected: an XIP line fill queued behind one maximal flash command transaction
+#   (`flash.xip_worst_sync_cycles`); CSRs answer in 5, block RAM and windows in 1-2
+# - 1.25x (+4 for the ack path); the XIP's own fill watchdog fires first
+# - on expiry: ERR to the CPU (an access fault the trap handler names), red LED (#411)
+BUS_TIMEOUT_CYCLES = -(-5 * (xip_worst_sync_cycles(sync_mhz=SYNC_MHZ) + 4) // 4)
 
 # HyperRAM CK, MHz: 180, clean in the #581 sweep (#588). Own PLL off the 60 MHz `usb`.
 HYPERRAM_CK_MHZ = float(variant.value("CYNTHION_HYPERRAM_CK_MHZ"))
@@ -698,7 +572,6 @@ class AwtoSoc(Elaboratable):
     - block RAM, memory-mapped SPI flash, and HyperRAM behind registers + a window
     - the board: LEDs, button, VBUS control, ULPI registers, sideband
     - a PAC1954 power monitor behind an I2C mux
-    - a flash pin probe
     - a JTAG debug tap, and a JTAG bitstream stager
     - two 16550 consoles: one on USB serial, one on the Apollo UART
     """
@@ -709,27 +582,9 @@ class AwtoSoc(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        # A `fast` domain, for the flash and nothing else.
-        #
-        # SCK is derived from the PHY's domain, so a flash PHY in `sync` makes the
-        # flash rate a function of the CPU clock -- and the CPU clock is chosen
-        # for the CPU. The flash needs `fast`; the HyperRAM does not.
-        #
-        # SYNC_MHZ 72 with FLASH_FAST_RATIO 2 solves to exactly 144.000 MHz, which is
-        # the fastest rung on the measured table (71.70 MB/s, `0xEB` continuous) and
-        # the fastest the flash has ever been driven on this board.
-        #
-        # The cost is paid deliberately: a PLL output, a global buffer, and
-        # CLKOP_DIV forced even, which restricts which sync frequencies are
-        # reachable. 72 is reachable and is inside the 72-91 MHz nextpnr already
-        # estimates for this design.
-        # `usb` comes from the 60 MHz oscillator directly, not from this PLL --
-        # the FPGA sources the ULPI clock, so it is exactly 60.000 by
-        # construction. That is what frees `sync`: it does not share a VCO with
-        # a domain pinned to 60. See `clocks.py`.
-        m.submodules.car = car = SocClocks(
-            sync_mhz=SYNC_MHZ, with_fast=FLASH_PHY_FAST,
-            fast_ratio=FLASH_FAST_RATIO)
+        # `sync` and the flash clocks (`fsck`, `fcap`, MCLK) on PLL0; `usb` is the
+        # 60 MHz oscillator itself. See `clocks.py`.
+        m.submodules.car = car = SocClocks(sync_mhz=SYNC_MHZ, flash_mhz=FLASH_SCK_MHZ)
         m.domains += car.domains
 
         # The variant moondancer ships. Pre-generated Verilog, so the Scala
@@ -958,6 +813,7 @@ class AwtoSoc(Elaboratable):
             "board_gpio":    {"BUTTON":       IRQ_BUTTON},
             "board_clocks":  {"PLL_LOSS":     IRQ_PLL_LOSS},
             "hyperram":      IRQ_HYPERRAM,
+            "spi0":          IRQ_FLASH,
         }
 
         intc_bridge = WishboneCSRBridge(intc.bus, data_width=32)
@@ -974,152 +830,17 @@ class AwtoSoc(Elaboratable):
         m.submodules.clint_bridge = clint_bridge
         decoder.add(clint_bridge.wb_bus, addr=CLINT_BASE, name="clint")
 
-        # The configuration SPI flash, memory-mapped read-only.
-        #
-        # Four objects, each doing one thing, and all four must be submodules --
-        # `flash_bus` in particular looks like a passive adapter and is not: its
-        # elaborate() is what instantiates USRMCLK, so leaving it out produces a
-        # design with no clock reaching the flash at all, and reads that return
-        # a constant.
-        #
-        #   flash_pins  requests `qspi_flash` (T8 T7 M7 N7, CS on N8)
-        #   flash_bus   routes SCK through USRMCLK -- see below
-        #   flash_phy   shift registers and clock generation
-        #   flash_mmap  Wishbone side: address decode, burst continuation
-        #
-        # SCK is not a pin that can be requested. On the ECP5 the configuration
-        # clock MCLK is tristated on entry to user mode and stays owned by the
-        # configuration block; the only route to it is the USRMCLK macro. The
-        # platform's `qspi_flash` resource accordingly has dq and cs but no
-        # clock, and `ECP5ConfigurationFlashInterface` exists to bridge that
-        # gap: it proxies every other attribute through to the real pins while
-        # supplying `sck` as a plain signal that USRMCLK consumes.
-        from luna_soc.gateware.core.spiflash import ECP5ConfigurationFlashInterface
-
-        m.submodules.flash_pins = flash_pins = QSPIFlashPins("qspi_flash")
-        m.submodules.flash_bus  = flash_bus  = ECP5ConfigurationFlashInterface(
-            bus=flash_pins.pins)
-        # ObservablePHY, not SPIPHYController: behaviourally identical (verified
-        # in simulation -- same edge count, same completion cycle) but with the
-        # internal input-capture strobes brought out for the pin probe.
-        # The PHY runs in `fast`, and `ClockCrossedPHY` presents it in `sync`.
-        #
-        # SCK comes from the PHY's domain, so this is the whole of what decouples the
-        # flash rate from the CPU clock. Everything upstream -- the mmap core, the
-        # controller, the crossbar -- is unchanged and still beside the CPU; the wrapper
-        # has the same flipped SPIControlPort, so the crossbar cannot tell.
-        #
-        # `peripherals/flash_cdc.py` has the argument for FIFOs over a timing constraint, and for
-        # synchronising `cs` rather than queueing it.
-        flash_phy_domain = "fast" if FLASH_PHY_FAST else "sync"
-        flash_phy_inner = ObservablePHY(pads=flash_bus, divisor=FLASH_DIVISOR,
-                                        domain=flash_phy_domain,
-                                        full_sck=FLASH_FULL_SCK)
-        if FLASH_PHY_FAST:
-            flash_phy = ClockCrossedPHY(flash_phy_inner, phy_domain="fast")
-        else:
-            flash_phy = flash_phy_inner
-        m.submodules.flash_phy = flash_phy
-        # `spiflash.Peripheral` builds the mmap core, a CSR-poked controller,
-        # and the round-robin crossbar that lets both share one PHY.
-        #
-        # The controller is here for one reason: the JEDEC ID. `0x9f` is a
-        # register read, not an address read, so it cannot come through the
-        # memory map -- the mmap FSM knows exactly one opcode and it is a read
-        # of a 24-bit address. Identifying the chip needs a path that can issue
-        # an arbitrary command, and that is what the controller's `phy`/`data`
-        # registers are.
-        #
-        # It can also write. Nothing here does, and nothing should: the
-        # bitstream is at offset 0. It is an arbitrary-command path, so the
-        # discipline has to come from the firmware rather than the gateware.
-
-        # The two cores and the crossbar are built here rather than by
-        # `spiflash.Peripheral`, which would construct all three -- but with
-        # upstream's `SPIControlPortCrossbar`, whose arbitration starves the
-        # controller whenever the memory map holds chip select. That is a real
-        # bug with a precise and misleading symptom: memory-mapped reads work
-        # perfectly while every controller command returns zeros, which reads
-        # as a broken controller when in fact its requests never reach the PHY.
-        # It cost a hardware run to find and a simulation to prove
-        # (scripts/riscv_flash_crossbar_sim.py). See
-        # FairSPIControlPortCrossbar for the mechanism.
-        #
-        # Upstream's Peripheral also hardcodes the mmap read opcode at 0xeb with
-        # no parameter to change it, which is the other reason it is not used.
-        flash_mmap = ModalSPIFlashMemoryMap(
-            size=FLASH_SIZE, mode=FLASH_MODE, name="spiflash", domain="sync")
-        m.submodules.flash_mmap = flash_mmap
-
-        # HoldableSPIController, not SPIController: upstream's chip select
-        # collapses to the TX FIFO's occupancy, so it drops between transfers of
-        # a multi-part command and the flash resets its command state each time.
-        # The ILA caught this directly -- four separate 8-bit windows for a
-        # JEDEC read with CS deasserted for 81, 36 and 36 samples between them.
-        # This adds a latching `hold` register so software can keep CS asserted
-        # across a whole command.
-        flash_ctrl = HoldableSPIController(data_width=32, name="spi0",
-                                           domain="sync")
-        m.submodules.flash_ctrl = flash_ctrl
-
-        m.submodules.flash_xbar = flash_xbar = FairSPIControlPortCrossbar(
-            data_width=32, num_ports=2, domain="sync")
-
-        # Port 0 is the controller, port 1 the memory map. The order is not
-        # arbitrary: the round-robin starts from the port after the current
-        # holder, so the memory map -- which requests far more often -- yielding
-        # to port 0 is the common case and the one that must work.
-        wiring.connect(m, flash_ctrl.source, flash_xbar.slave0.source)
-        wiring.connect(m, flash_ctrl.sink,   flash_xbar.slave0.sink)
-        m.d.comb += flash_xbar.slave0.cs.eq(flash_ctrl.cs)
-
-        wiring.connect(m, flash_mmap.source, flash_xbar.slave1.source)
-        wiring.connect(m, flash_mmap.sink,   flash_xbar.slave1.sink)
-        m.d.comb += flash_xbar.slave1.cs.eq(flash_mmap.cs)
-
-        wiring.connect(m, flash_xbar.controller.source, flash_phy.source)
-        wiring.connect(m, flash_xbar.controller.sink,   flash_phy.sink)
-        m.d.comb += flash_phy.cs.eq(flash_xbar.controller.cs)
-
-        decoder.add(flash_mmap.bus, addr=FLASH_BASE, name="spiflash")
-
-        # The controller's CSRs, on the same CSR bridge shape as the console.
-        flash_csr_bridge = WishboneCSRBridge(flash_ctrl.bus, data_width=32)
-        m.submodules.flash_csr_bridge = flash_csr_bridge
-        decoder.add(flash_csr_bridge.wb_bus, addr=FLASH_CSR_BASE,
-                    name="spi0")
-
-        # Instrumentation on the pins themselves.
-        #
-        # Simulation and hardware disagree about this path and only the pins can
-        # settle it. Every stage passes in simulation -- controller, PHY,
-        # crossbar, and the whole chain end to end, all producing the expected
-        # eight SCK edges -- while on hardware the JEDEC ID reads zeros and an
-        # erase "completes" 14,000 times faster than the datasheet allows.
-        #
-        # These taps are downstream of everything: `flash_pins.pins` is what
-        # QSPIFlashPins drives onto the pads, so a count here means the signal
-        # genuinely left the fabric. `flash_bus.sck` is the signal handed to
-        # USRMCLK, which is as close to the clock pad as this device allows --
-        # MCLK has no ordinary I/O buffer and cannot be read back.
-        #
-        # The crossbar grant is included so the starvation fix can be confirmed
-        # on hardware rather than resting on a simulation result, which is
-        # precisely the kind of claim this investigation has found unreliable.
-        m.submodules.flash_probe = flash_probe = FlashPinProbe()
-        m.d.comb += [
-            flash_probe.cs         .eq(flash_pins.pins.cs.o),
-            flash_probe.sck        .eq(flash_bus.sck),
-            flash_probe.dq_oe      .eq(flash_pins.pins.dq.oe),
-            # Port 0 is the controller. `grant == 0` means the controller holds
-            # the PHY; the probe counts rising edges of that condition.
-            flash_probe.grant_ctrl .eq(flash_xbar.grant == 0),
-        ]
-
-        flash_probe_bridge = WishboneCSRBridge(flash_probe.bus, data_width=32)
-        m.submodules.flash_probe_bridge = flash_probe_bridge
-        decoder.add(flash_probe_bridge.wb_bus, addr=FLASH_PROBE_BASE,
-                    name="flash_probe")
+        # The configuration SPI flash (#593): `peripherals/flash.py` on the #590 core.
+        # - `spiflash`: XIP, read-only, cached by the CPU (FLASH_CACHED)
+        # - `spi0`: command CSRs; `spi0_buf`: the command's data bytes
+        # - SCK is MCLK through DCCA + USRMCLK inside the peripheral; clocks from `car`
+        m.submodules.flash = flash = Flash(sck_mhz=car.actual_flash_mhz, sync_mhz=SYNC_MHZ,
+                                           n_steps=car.flash_phase_steps)
+        m.d.comb += [flash.locked.eq(car.locked), car.flash_phasestep.eq(flash.phasestep),
+                     flash.mclk.eq(car.flash_mclk), intc.lines[IRQ_FLASH].eq(flash.irq)]
+        decoder.add(flash.xip, addr=FLASH_BASE, name="spiflash")
+        decoder.add(flash.bus, addr=FLASH_CSR_BASE, name="spi0")
+        decoder.add(flash.buf, addr=FLASH_BUF_BASE, name="spi0_buf")
 
         # HyperRAM (#588): `peripherals/hyperram.py`. Stream ring tied off until #580.
         m.submodules.hyperram = hyperram = HyperRAM(ck_mhz=HYPERRAM_CK_MHZ,
@@ -1145,7 +866,8 @@ class AwtoSoc(Elaboratable):
             stager.shift.eq(user_jtag.shift),
             user_jtag.tdo1.eq(stager.tdo),
 
-            cpu.ext_reset.eq(stager.cpu_reset),
+            # Also held until the flash's first calibration: `.text` executes from it.
+            cpu.ext_reset.eq(stager.cpu_reset | ~flash.boot_ready),
         ]
 
         m.d.comb += [
@@ -1927,9 +1649,7 @@ def main():
     # Set here rather than by the runner so that every route into this build --
     # `soc_run.py`, `soc_repro_check.py`, a bare `top.py --build` -- stamps the
     # same value, computed once and reused for the record below.
-    platform = CynthionPlatformRev1D4(
-        flash_drive=variant.value("CYNTHION_FLASH_DRIVE"),
-        flash_slewrate=variant.value("CYNTHION_FLASH_SLEWRATE"))
+    platform = CynthionPlatformRev1D4()
     code = usercode()
     os.environ["AMARANTH_ecppack_opts"] = ecppack_opts(code=code)["ecppack_opts"]
 

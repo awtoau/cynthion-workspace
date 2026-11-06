@@ -7,7 +7,6 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 | script | answers |
 |---|---|
 | [soc_peripheral_area.py](../scripts/soc/soc_peripheral_area.py) | each peripheral synthesised alone (upper bound) |
-| [soc_upstream_copy_check.py](../scripts/soc/soc_upstream_copy_check.py) | is our copy of luna_soc's SPI PHY still verbatim |
 | [pnr_noise.py](../scripts/soc/pnr_noise.py) | how much of an Fmax difference is placement luck |
 | [soc_icache_model.py](../scripts/soc/soc_icache_model.py) | I-cache misses of a `.text` layout |
 | [soc_review.py](../scripts/soc/soc_review.py) | what moved vs [soc-review-baseline.json](soc-review-baseline.json), what got duplicated; run after every change |
@@ -76,7 +75,7 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 
 ## 4. Instrumentation in context
 
-- `ObservablePHY` (`peripherals/flash.py`) re-implements `luna_soc`'s `SPIPHYController.elaborate` statement for statement (130 lines). `soc_upstream_copy_check.py`: in sync with the installed `luna_soc` (83 upstream statements, 85 in the copy: instrumentation assignments + the `as fsm:` handle); validated against known-bad mutations both directions.
+- No copied upstream code left: the flash controller is the [#590](https://github.com/awtoau/cynthion-workspace/issues/590) core since [#593](https://github.com/awtoau/cynthion-workspace/issues/593) ([flash-soc-peripheral.md](chips/flash-soc-peripheral.md)).
 
 ## 5. Firmware bytes (`llvm-nm --print-size`, `b403978`)
 
@@ -101,12 +100,11 @@ Measured reference: fabric (LUT/FF/BRAM) and firmware (`.text`/`.rodata`), plus 
 |---|---|---|
 | `StreamBuffer` FIFO<->stream wiring | `amaranth.lib.fifo` `w_stream`/`r_stream` | replaced; byte-identical Verilog (differences only `src` attributes and order of two `assign`s) |
 | `blockram` (luna_soc) | `amaranth_soc.wishbone.sram.WishboneSRAM` | not a swap: no `cti`/`bte`/`err`, so cache-line refills lose registered-feedback bursting; same 2 cycles/beat |
-| `flash_cdc.ClockCrossedPHY` | `luna_soc` `SPIControlPortCDC` | ours uses `AsyncFIFOBuffered` (upstream `AsyncFIFO` put the FIFO output mux and the PHY carry chain on one path); ours is the fixed one |
 | `SplitRW` | nothing in `amaranth_soc.csr.action` | correct, shared by four peripherals |
 | `SerialLine` | `amaranth_stdio.serial.AsyncSerial` | already a wrapper; the four things it adds are what `AsyncSerial` leaves out |
 
 - Interrupt controller: `gateware/soc/cpu/intc.py` wraps `amaranth_soc.csr.event.EventMonitor` (see [soc-interrupts.md](soc-interrupts.md)); the PLIC was removed in `857c45d`.
-- `luna_soc` surface is 1,125 lines, not 127: `core.blockram` 127 + `core.spiflash` 998 (`mmap.py` 207, `phy.py` 246, `port.py` 172, `controller.py` 164, `utils.py` 93, `__init__.py` 116), imported by `peripherals/flash.py` (`SPIFlashMemoryMap`, `SPIPHYController`, `SPIClockGenerator`, `SPIController`, `SPIControlPort`, `StreamCore2PHY`, `StreamPHY2Core`, `WaitTimer`, `PinSignature`), `top.py` (`ECP5ConfigurationFlashInterface`), `peripherals/flash_cdc.py` (`SPIControlPort`). [toolchain-simplification.md](toolchain-simplification.md) section 2 says "exactly two things" (predates the flash work).
+- `luna_soc`: no import left in `gateware/soc/` since [#593](https://github.com/awtoau/cynthion-workspace/issues/593) (it was `core.spiflash`, 998 lines, for the flash controller).
 
 ## 7. Changes made
 

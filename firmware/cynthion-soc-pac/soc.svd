@@ -193,253 +193,27 @@
     </peripheral>
     <peripheral>
       <name>SPI0</name>
-      <description>spi0: 5 registers at 0xf0000100</description>
+      <description>spi0: 64 bytes of memory at 0xf0000100</description>
       <baseAddress>0xF0000100</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
         <size>0x40</size>
-        <usage>registers</usage>
+        <usage>buffer</usage>
       </addressBlock>
-      <registers>
-        <register>
-          <name>PHY</name>
-          <description>SPI0.PHY, 18 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>32</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x3FFFF</resetMask>
-          <fields>
-            <field>
-              <name>LENGTH</name>
-              <description>length [5:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>6</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>WIDTH</name>
-              <description>width [9:6]</description>
-              <bitOffset>6</bitOffset>
-              <bitWidth>4</bitWidth>
-              <access>read-write</access>
-            </field>
-            <field>
-              <name>MASK</name>
-              <description>mask [17:10]</description>
-              <bitOffset>10</bitOffset>
-              <bitWidth>8</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CS</name>
-          <description>SPI0.CS, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>STATUS</name>
-          <description>SPI0.STATUS, 2 bits at +0x05</description>
-          <addressOffset>0x5</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>RX_READY</name>
-              <description>rx_ready [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>TX_READY</name>
-              <description>tx_ready [1]</description>
-              <bitOffset>1</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DATA</name>
-          <description>SPI0.DATA, 64 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>64</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>RX</name>
-              <description>rx [31:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>TX</name>
-              <description>tx [63:32]</description>
-              <bitOffset>32</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>HOLD</name>
-          <description>SPI0.HOLD, 1 bits at +0x20</description>
-          <addressOffset>0x20</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x1</resetMask>
-          <fields>
-            <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
+      <interrupt>
+        <name>SPI0</name>
+        <value>19</value>
+      </interrupt>
     </peripheral>
     <peripheral>
-      <name>FLASH_PROBE</name>
-      <description>flash_probe: 6 registers at 0xf0000200</description>
+      <name>SPI0_BUF</name>
+      <description>spi0_buf: 256 bytes of memory at 0xf0000200</description>
       <baseAddress>0xF0000200</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x20</size>
-        <usage>registers</usage>
+        <size>0x100</size>
+        <usage>buffer</usage>
       </addressBlock>
-      <registers>
-        <register>
-          <name>CS_FELL</name>
-          <description>FLASH_PROBE.CS_FELL, 1 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>SCK_EDGES</name>
-          <description>FLASH_PROBE.SCK_EDGES, 16 bits at +0x02</description>
-          <addressOffset>0x2</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DQ_DRIVEN</name>
-          <description>FLASH_PROBE.DQ_DRIVEN, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>GRANTS</name>
-          <description>FLASH_PROBE.GRANTS, 16 bits at +0x06</description>
-          <addressOffset>0x6</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>OE_EDGES</name>
-          <description>FLASH_PROBE.OE_EDGES, 16 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CLEAR</name>
-          <description>FLASH_PROBE.CLEAR, 1 bits at +0x0a</description>
-          <addressOffset>0xA</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>STROBE</name>
-              <description>strobe [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
     </peripheral>
     <peripheral>
       <name>APOLLO_UART</name>
@@ -2361,7 +2135,7 @@
       <registers>
         <register>
           <name>ENABLE</name>
-          <description>INTC.ENABLE, 19 bits at +0x00</description>
+          <description>INTC.ENABLE, 20 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2370,16 +2144,16 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
           <name>PENDING</name>
-          <description>INTC.PENDING, 19 bits at +0x04</description>
+          <description>INTC.PENDING, 20 bits at +0x04</description>
           <addressOffset>0x4</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2388,9 +2162,9 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>

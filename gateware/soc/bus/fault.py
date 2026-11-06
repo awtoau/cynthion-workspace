@@ -73,41 +73,6 @@ from amaranth.utils        import exact_log2
 from amaranth_soc          import wishbone
 
 
-# What one maximal transfer from the SPI controller costs, in SCK beats.
-#
-# `phy.length` is a six-bit CSR field (`luna_soc/.../port.py`), so 63 bits on one
-# lane is the longest transfer firmware can command, and the crossbar may let one
-# through between any two phases of a memory-mapped read.
-CONTENDING_BEATS = 63
-
-
-def worst_ack_cycles(*, mode, divisor):
-    """The slowest a healthy subordinate on this decoder can answer, in cycles.
-
-    The memory-mapped flash is that subordinate and nothing else is close: every
-    CSR peripheral here answers in 5 (four byte cycles through the 32/8 bridge
-    plus one), block RAM in 1, and the HyperRAM window in 20.
-
-    Per SPI phase, `luna_soc`'s PHY costs `2 * beats * (1 + divisor) + 3` cycles
-    -- one to accept, two per SCK beat, one to end the transfer and one to hand
-    the status back -- plus one cycle to leave IDLE, and each phase may be
-    preceded by one maximal transfer from the controller sharing the crossbar.
-
-    `mode` is an entry of `peripherals/flash.READ_MODES`. In cycles, not
-    nanoseconds, so it does not move with `SYNC_MHZ`.
-    """
-    phases = [(8, 1), (24, mode["addr_width"])]
-    if mode["dummy_bits"]:
-        phases.append((mode["dummy_bits"], mode["bus_width"]))
-    phases.append((32, mode["bus_width"]))
-
-    def transfer(beats):
-        return 2 * beats * (1 + divisor) + 3
-
-    cold = 1 + sum(transfer(bits // width) for bits, width in phases)
-    return cold + len(phases) * transfer(CONTENDING_BEATS)
-
-
 class BusFault(wiring.Component):
     """Answer ERR where the decoder answers nothing at all.
 

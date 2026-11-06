@@ -16,7 +16,7 @@ map, the generated PAC and the firmware's addresses are unchanged and the only
 difference is the logic -- which UNDERSTATES a real deletion by the CSR bridge
 and the decoder window it would also remove.
 
-    ./scripts/soc/soc_trim_delta.py --trim spi-controller --runs 3
+    ./scripts/soc/soc_trim_delta.py --trim bus-fault-claimed --runs 3
     ./scripts/soc/soc_trim_delta.py --list
 
 ## Reading the numbers
@@ -129,38 +129,6 @@ wishbone.Decoder = _Extra
 # imported. One statement of setup per entry, and the entry's key is what
 # `--trim` names.
 TRIMS = {
-    # SPI0: the arbitrary-command path to the flash. The shipping Rust firmware
-    # never reads or writes it -- `scripts/soc/soc_dead_peripherals.py` reports it
-    # reachable only from the generated C firmware.
-    "spi-controller": """
-import peripherals.flash as flash
-from amaranth import Module
-from amaranth.lib import wiring
-
-class _Controller(flash.HoldableSPIController):
-    # The CSR window still answers -- its decoder, its `hold` register and the
-    # WishboneCSRBridge in front of it all stay, so the memory map and the PAC
-    # are unchanged. Only `inner`, upstream's SPIController, goes. A real
-    # deletion recovers this PLUS that window.
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.hold_bridge = self._hold_bridge
-        m.submodules.decoder     = self._decoder
-        m.d.comb += [
-            self._decoder.bus.addr.eq(self.bus.addr),
-            self._decoder.bus.r_stb.eq(self.bus.r_stb),
-            self._decoder.bus.w_stb.eq(self.bus.w_stb),
-            self._decoder.bus.w_data.eq(self.bus.w_data),
-            self.bus.r_data.eq(self._decoder.bus.r_data),
-        ]
-        return m
-
-# The crossbar is left alone. With port 0 never asserting `valid`, synthesis
-# folds most of its arbitration anyway -- it measures 139 COMB unflattened and
-# 2 flat -- so stubbing it would add nothing this can attribute.
-flash.HoldableSPIController = _Controller
-""",
-
     # The `claimed` switch in BusFault: a second copy of the decoder's window
     # comparison, over the same 30-bit address, to answer ERR one cycle sooner
     # than the timeout would. The timeout catches strictly more.
@@ -188,32 +156,6 @@ class _NoClaimed(fault.BusFault):
             self._decoder = keep
 
 fault.BusFault = _NoClaimed
-""",
-
-    # The whole SPI0 stack, window included: the controller, its hold register,
-    # its WishboneCSRBridge and the decoder window in front of them. #442's
-    # deletion, as opposed to `spi-controller` above which keeps the window.
-    "window-spi0": """
-import peripherals.flash as flash
-from amaranth import Module
-from amaranth_soc import wishbone
-
-class _Gone(flash.HoldableSPIController):
-    def elaborate(self, platform):
-        return Module()
-
-flash.HoldableSPIController = _Gone
-
-_real_add = wishbone.Decoder.add
-
-def _add(self, sub_bus, *, name=None, addr=None, sparse=False):
-    # The bridge is left constructed and unconnected; with its `wb_bus` read by
-    # nothing, synthesis prunes it, which is what a deletion would do.
-    if name == "spi0":
-        return None
-    return _real_add(self, sub_bus, name=name, addr=addr, sparse=sparse)
-
-wishbone.Decoder.add = _add
 """,
 
     # WHAT ONE DECODER WINDOW COSTS, measured by ADDING rather than removing:
