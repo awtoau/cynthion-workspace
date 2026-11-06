@@ -165,10 +165,22 @@ hierarchy -top top
 flatten
 delete t:$scopeinfo
 proc
-memory_collect
+opt_clean
+memory -nomap
+memory_libmap -lib dp16kd_only.txt
+techmap -map +/lattice/brams_map_16kd.v
+memory_map
 opt_clean
 write_verilog -noattr hr.v
 """
+# Memories mapped to DP16KD here: as reg arrays LSE builds them from FFs (132892 LUT4 on #628).
+# Only the DP16KD block of yosys' lib: its PDPW16KD maps to a 36-wide DP16KD Diamond refuses.
+YOSYS_SHARE = Path.home() / "opt" / "fpga-main" / "share" / "yosys" / "lattice"
+
+
+def dp16kd_lib(out):
+    lib = (YOSYS_SHARE / "brams_16kd.txt").read_text()
+    (out / "dp16kd_only.txt").write_text(lib.split("ram block $__PDPW16KD_")[0])
 
 
 def elaborate(out):
@@ -187,8 +199,8 @@ def lpf_for_diamond(src, dst):
         m = re.match(r'\s*FREQUENCY\s+PORT\s+("[^"]+")\s+([\d.eE+]+)\s+HZ\s*;', line)
         if m:
             out.append(f"FREQUENCY PORT {m.group(1)} {float(m.group(2)) / 1e6:g} MHZ;")
-        elif re.match(r"\s*FREQUENCY\s+NET", line):
-            continue
+        elif re.match(r"\s*FREQUENCY\s+NET", line) or re.search(r'COMP "clk_(sync|60MHz)_0__io"', line):
+            continue      # par refuses A8 / B14 as fabric clock sources (no CIB entry); it picks
         else:
             out.append(line)
     out += ["SYSCONFIG CONFIG_IOVOLTAGE=3.3;"]
@@ -202,8 +214,15 @@ def diamond(out, speed, paths):
     # LSE replicates the hr reset FF, so a PIO's ODDR and IDDR get different LSR nets and map
     # refuses to pack them. Analysis copy only: DDR resets tied low (data paths unchanged).
     v = out / "hr.v"
-    v.write_text(re.sub(r"\.RST\(\\hyperram\.pll\.rst(?:90)?\.stage1 \)", ".RST(1'h0)",
-                        v.read_text()))
+    text = re.sub(r"\.RST\(\\hyperram\.pll\.rst(?:90)?\.stage1 \)", ".RST(1'h0)", v.read_text())
+    # yosys' DP16KD carries nextpnr-only CLK*MUX and bit-vector INITVALs; Diamond wants strings.
+    text = re.sub(r"\n\s*\.CLK[AB]MUX\(\"CLK[AB]\"\),", "", text)
+    text = re.sub(r"\.(INITVAL_[0-9A-F]{2})\(320'h([0-9a-fA-F]+)\)",
+                  lambda m: f'.{m.group(1)}("0x{m.group(2).upper()}")', text)
+    # map derives PLL timing from FREQUENCY_PIN_*; Amaranth's instance has none.
+    text = text.replace("EHXPLLL #(", '(* FREQUENCY_PIN_CLKI="60", FREQUENCY_PIN_CLKOP="180",'
+                        ' FREQUENCY_PIN_CLKOS="180" *)\n  EHXPLLL #(', 1)
+    v.write_text(text)
     lpf_for_diamond(out / "top.lpf", out / "diamond.lpf")
     run(["synthesis", "-a", ARCH, "-d", DEVICE, "-t", PACKAGE, "-s", speed, "-top", "top",
          "-ngd", "top.ngd", "-optimization_goal", "Timing", "-frequency", "180",
@@ -249,6 +268,7 @@ def main():
             shutil.rmtree(out)
         elaborate(out)
     (out / "to_verilog.ys").write_text(TO_VERILOG)
+    dp16kd_lib(out)
     if args.nextpnr:
         nextpnr(out, args.seed)
     else:
