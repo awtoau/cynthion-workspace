@@ -1,7 +1,7 @@
 # USB host mode on Cynthion at 480 Mbps
 
 - Status: proposal; first increment built (engine vendored, enumerates in simulation). No hardware exercised.
-- Issues: [#105](https://github.com/awtoau/cynthion-workspace/issues/105) (keep open), [#101](https://github.com/awtoau/cynthion-workspace/issues/101) (duplicate of #105), [#120](https://github.com/awtoau/cynthion-workspace/issues/120), [#125](https://github.com/awtoau/cynthion-workspace/issues/125), [#115](https://github.com/awtoau/cynthion-workspace/issues/115).
+- Issues: [#105](https://github.com/awtoau/cynthion-workspace/issues/105) (keep open), [#101](https://github.com/awtoau/cynthion-workspace/issues/101) (duplicate of [#105](https://github.com/awtoau/cynthion-workspace/issues/105)), [#120](https://github.com/awtoau/cynthion-workspace/issues/120), [#125](https://github.com/awtoau/cynthion-workspace/issues/125), [#115](https://github.com/awtoau/cynthion-workspace/issues/115).
 - Target: LFE5U-12F (24288 LUT, 56 BRAM), Cynthion r1.4.
 - Linux needs a driver for any bespoke 480 Mbps interface; the full-speed OHCI route is in [../linux-on-cynthion/ANALYSIS.md](../linux-on-cynthion/ANALYSIS.md).
 - Superseded text from earlier drafts: [history/soc-usb.md](history/soc-usb.md).
@@ -54,7 +54,7 @@
 
 - ~1200 lines Amaranth taken. Vendoring per [upstream-boundary.md](upstream-boundary.md).
 - Gaps: hubs enumerate but not devices behind them; no split transactions; error handling incomplete (watchdog recommended, babble/STALL/retry/toggle resync); three class engines only.
-- Other prior art: GSG `cynthion#230` / `#174` closed as "deferred", pointing at Tiliqua PR #65 (FS-only ancestor); no `uhc_*` driver for any FPGA soft core in Zephyr (`uhc_dwc2.c`, `uhc_max3421e.c`, `uhc_mcux_*`, `uhc_virtual.c` = `native_sim` loopback); daisho archived, SuperSpeed; LUNA forks all device-only. SpinalHDL OHCI (4.7) is FS/LS only.
+- Other prior art: GSG `cynthion#230` / `#174` closed as "deferred", pointing at Tiliqua PR [#65](https://github.com/awtoau/cynthion-workspace/issues/65) (FS-only ancestor); no `uhc_*` driver for any FPGA soft core in Zephyr (`uhc_dwc2.c`, `uhc_max3421e.c`, `uhc_mcux_*`, `uhc_virtual.c` = `native_sim` loopback); daisho archived, SuperSpeed; LUNA forks all device-only. SpinalHDL OHCI (4.7) is FS/LS only.
 
 ## 5. Area and timing (synthesis + PnR only)
 
@@ -102,7 +102,7 @@
   - Its docstring promises `address`, `read_data`, `write_data`, `manual_read`, `manual_write` (`ulpi.py:683-687`); `__init__` (`ulpi.py:718`) does not create them.
   - `ULPIControlTranslator` ties `register_window.read_request` to 0 (`ulpi.py:524`) with a free `m.Else()` at `ulpi.py:519` for manual access.
   - Implementing the documented ports makes `UlpiRegisters` a client; candidate for [upstreamable-patches.md](upstream-boundary.md).
-- #125: the RX-CMD status peripheral taps the translator outputs (`line_state`, `vbus_valid`, `session_valid`, `session_end`, `rx_error`, `host_disconnect`, `id_digital`; `ulpi.py:694-697`), one per translator, no bus access.
+- [#125](https://github.com/awtoau/cynthion-workspace/issues/125): the RX-CMD status peripheral taps the translator outputs (`line_state`, `vbus_valid`, `session_valid`, `session_end`, `rx_error`, `host_disconnect`, `id_digital`; `ulpi.py:694-697`), one per translator, no bus access.
 - Host and analyzer share one translator: analyzer attaches a bare `UTMITranslator` in non-driving mode (`repos/cynthion/.../analyzer/top.py:277-278, 391-394`); `USBSIE` exposes `self.utmi`, `USBAnalyzer` consumes UTMI.
 
 ### 7.2 Clocking
@@ -193,13 +193,13 @@ Not served: USB 3.x, spec compliance, multi-tier hubs, guaranteed throughput.
 ## 11. Next, in order
 
 1. Bump/keep GUH pin `923c8490`; build the `sie` configuration of `usb_host_area.py` inside `AwtoSoc`; read in-situ LUT and `sync`/`usb` fmax (with the timing sweep).
-2. Re-parent `target_phy` behind `UTMITranslator` (7.1); unblocks #120 and #125.
+2. Re-parent `target_phy` behind `UTMITranslator` (7.1); unblocks [#120](https://github.com/awtoau/cynthion-workspace/issues/120) and [#125](https://github.com/awtoau/cynthion-workspace/issues/125).
 3. VBUS/CC (7.5).
 4. CSR/FIFO shim + interrupt (7.3, section 10).
 5. Firmware enumeration; milestone: print a device descriptor.
 6. Measure PIO byte rate; then decide on tier two.
 
-- Acceptance loopback (AUX to TARGET, proposed on #105) needs `aux_phy`, which is the console: move the console to `control_phy` behind `ApolloAdvertiser` for that test, or use a third-party device for first light.
+- Acceptance loopback (AUX to TARGET, proposed on [#105](https://github.com/awtoau/cynthion-workspace/issues/105)) needs `aux_phy`, which is the console: move the console to `control_phy` behind `ApolloAdvertiser` for that test, or use a third-party device for first light.
 
 ## 12. Alternative: OHCI (full speed only)
 

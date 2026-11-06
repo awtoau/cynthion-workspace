@@ -26,7 +26,7 @@
 | AOA phone model (51/52 x6/53 then 2d00 bulk echo) | I | [`aoa_phone.py`](../gateware/probes/usb_host/aoa_phone.py) |
 | UTMI wire model, LUNA device model | I | [`model.py`](../gateware/probes/usb_host/model.py) |
 | "Real host" model | GUH SIE is the model; no scripted AOA-host test bench outside the CSR shim sim | [`usb_host_sie_sim.py`](../scripts/soc/usb_host_sie_sim.py) |
-| Packet framer, ts16, counters, ring, collapser | **missing** (designed, #563) | [`capture-compression.md`](capture-compression.md) |
+| Packet framer, ts16, counters, ring, collapser | **missing** (designed, [#563](https://github.com/awtoau/cynthion-workspace/issues/563)) | [`capture-compression.md`](capture-compression.md) |
 | `UTMITranslator` behind `target_phy` in passive mode | **missing** ("register path only" today) | |
 | LZ4 compressor / decompressor | I standalone, not in `top.py` | [`gateware/soc/capture/`](../gateware/soc/capture/) |
 | HyperRAM block writer, index, CSRs | **missing** | |
@@ -106,8 +106,8 @@
   - Policy hooks (drop, delay, rewrite) default off; each marks the tap record `modified`.
 - **CPU involvement (mode R):** enable/speed clamp/status only. Optional later: in-flight byte substitution on a descriptor IN packet (fixed offset, CRC16 recomputed in the relay path, ~40 LUT UNSURE).
 
-## Tap record (per transaction, builds on #563)
-- #563 owns the base record (type, length, status, ts16, rollover, overflow); this section adds only the MITM fields.
+## Tap record (per transaction, builds on [#563](https://github.com/awtoau/cynthion-workspace/issues/563))
+- [#563](https://github.com/awtoau/cynthion-workspace/issues/563) owns the base record (type, length, status, ts16, rollover, overflow); this section adds only the MITM fields.
 - One record per transaction (token + data + handshake), ts16 at token start, 60 MHz tick (wraps 1.09 ms; `NONE` rollover record as upstream).
 ```
  b0     type (txn / event 0xFF / repeat / drop-marker) | side (H or D) | speed(2)
@@ -118,11 +118,11 @@
  b8     fwd_latency: clocks from host-side packet end to device-side packet start (0 if spoofed)
  b9..   payload (control SETUP always; bulk payload truncated to N bytes, N CSR)
 ```
-- Header ~9 B per transaction vs 4 B per packet upstream (3 packets = 12 B+); UNSURE overall win, depends on payload truncation. All field widths UNSURE until #563 fixes its record.
+- Header ~9 B per transaction vs 4 B per packet upstream (3 packets = 12 B+); UNSURE overall win, depends on payload truncation. All field widths UNSURE until [#563](https://github.com/awtoau/cynthion-workspace/issues/563) fixes its record.
 - Source: RX streams of both PHYs only (each packet exactly once: host->proxy on side H, phone->proxy on side D); the PHY's own TX is not re-tapped. In mode P, `spoofed` marks proxy-generated handshakes.
-- Counters (NAK, SOF, per PID/ep) count every packet **before** the optional repeat collapser; a NAK storm on bulk IN while the pump waits is expected in mode P, so the collapser is more useful here than in #563's passive case.
+- Counters (NAK, SOF, per PID/ep) count every packet **before** the optional repeat collapser; a NAK storm on bulk IN while the pump waits is expected in mode P, so the collapser is more useful here than in [#563](https://github.com/awtoau/cynthion-workspace/issues/563)'s passive case.
 - Path to PC: framer -> counters -> [collapse] -> ring (RV sample) -> LZ4 compressor -> 1 KiB blocks -> HyperRAM -> AUX bulk (PC decodes LZ4 in software; the gateware **decompressor is not needed** for the PC path, saves its cells).
-- Full-buffer policy `stall | drop` as in #563; in relay mode `stall` would delay forwarding, so **only `drop` is allowed in mode R** (a tap must never throttle the link).
+- Full-buffer policy `stall | drop` as in [#563](https://github.com/awtoau/cynthion-workspace/issues/563); in relay mode `stall` would delay forwarding, so **only `drop` is allowed in mode R** (a tap must never throttle the link).
 
 ## Cell and BRAM estimate
 Budget: 24288 LUT4-equivalent (COMB), 56 DP16KD. Baseline: brief says ~84% COMB (~3.9k free, UNSURE); [`aoa-adaptor.md`](aoa-adaptor.md) recorded 80% -> 91% after `usb_host` (~2.2k free). The two disagree; re-measure with `./dev.py metrics report` before committing to a design. Routing gets hard above ~75% logic.
@@ -179,7 +179,7 @@ Budget: 24288 LUT4-equivalent (COMB), 56 DP16KD. Baseline: brief says ~84% COMB 
 - Then hardware (not now): passive tap of RC<->phone on the shared bus, compared with the stock analyzer + Packetry capture of the same session.
 
 ## Build order (smallest first)
-0. **Passive tap on the shared bus**: `UTMITranslator` behind `target_phy`, framer, ts16, counters, CSR/RV readout, no compression. Observe RC<->phone on TARGET-C/A (A-to-C cable). Gives RC speed and timing. Sim: #563 checks.
+0. **Passive tap on the shared bus**: `UTMITranslator` behind `target_phy`, framer, ts16, counters, CSR/RV readout, no compression. Observe RC<->phone on TARGET-C/A (A-to-C cable). Gives RC speed and timing. Sim: [#563](https://github.com/awtoau/cynthion-workspace/issues/563) checks.
 1. Tap through compressor to AUX bulk (compress only), `drop` policy.
 2. Measure a second device controller on `control_phy` (cells, BRAM) and instantiate `UsbPort` on `control_phy` with a `device` role. Decides whether mode P fits.
 3. Mode P, same speed, EP0 + one bulk pair, CPU-assisted control passthrough, sim with AOA phone (checks 1-3, 9).

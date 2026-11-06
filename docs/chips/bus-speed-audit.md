@@ -30,7 +30,7 @@ one by an oscillator, and only one by the device on the far end.
 | **I²C** ×3 buses | 1 MHz Fm+ (both parts); the PAC1954 also does 3.4 MHz Hs | measured: 3.33 MHz power, 2.5 MHz target/aux — see the sweep below | **1.000 MHz**, `PRER` derived from the COUNTED sync clock ([#272](https://github.com/awtoau/cynthion-workspace/issues/272)) | **closed on the CPU path** at the parts' Fm+ rating. The JTAG probe bitstreams are still at 100 kHz, mostly for a stated reason |
 | **SPI flash SCK** | 133 MHz `fC1` | `USRMCLK` has no DDR ⇒ SCK ≤ the fabric clock; luna_soc's clock generator halves it again ⇒ SCK = `sync`/2 | **30 MHz** (`sync` 60, `FLASH_DIVISOR = 0`) | **4.4×** to the part, 2× of which is the `/2` |
 | **flash MCLK at boot** | 133 MHz on `0x0B` | `ecppack --freq` accepts only {2.4, 19.4, 38.8, 62.0}; ECP5 Table 4.7 stops at 62 | **38.8 MHz** | **1.6×** on configuration time |
-| **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** (Table 3.21) | **180 MHz** (#588) | above both; #581 measured CK 60-180 clean ([`hyperram/sequential-baseline.md`](hyperram/sequential-baseline.md)) |
+| **HyperRAM CK** | 166 MHz (the `6I` bin) | **LVCMOS33 output max 150 MHz** (Table 3.21) | **180 MHz** ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)) | above both; [#581](https://github.com/awtoau/cynthion-workspace/issues/581) measured CK 60-180 clean ([`hyperram/sequential-baseline.md`](hyperram/sequential-baseline.md)) |
 | **ULPI** ×3 | 60 MHz, fixed by the ULPI 1.1 specification | the FPGA *sources* the clock (`clk_dir='o'`) from the A8 oscillator: exactly 60.000 MHz | **60 MHz** | **none, and it is not a parameter** |
 | **JTAG TCK** | ECP5 `fMAX` 25 MHz | SAMD11 SERCOM: SCK = 48/(2·(BAUD+1)), so the only rungs are 24 and 12 MHz. 24 fails the TDO round trip | **12 MHz** (BAUD = 1) | **none — there is no legal rung in between** |
 | **Apollo UART** | SERCOM USART off a 48 MHz core clock | R14/T14 *are* JTAG TDI/TMS. The cost is arbitration, not bit rate | **115200** | large in principle; the constraint is the sharing |
@@ -126,7 +126,7 @@ ECP5 datasheet FPGA-DS-02012-1.9 **Table 3.21, Maximum I/O Buffer Speed**:
 
 Every fast signal on this board is `IO_TYPE="LVCMOS33"`, because every part on
 the far end is a 3.3 V CMOS device. The HyperRAM's rated 166 MHz CK is already
-outside the FPGA's published output ceiling; CK 180 runs past both (#588).
+outside the FPGA's published output ceiling; CK 180 runs past both ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
 
 Table 3.21 note 4 — *"All speeds are measured at fast slew"* — narrows it
 further: only five resources in

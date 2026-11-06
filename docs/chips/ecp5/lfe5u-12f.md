@@ -131,7 +131,7 @@ both permanent:
   port timing table, a different path — see the section further down, which
   retires that figure.
 
-**Hard DDR registers exist for the HyperRAM and are used.** The #581 core
+**Hard DDR registers exist for the HyperRAM and are used.** The [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core
 (`gateware/hyperram_baseline/hyperbus.py`) gears 2:1 through `ODDRX1F`/`IDDRX1F`,
 read data through `DELAYF`. `USRMCLK` above is the one place where DDR cannot be used.
 
@@ -147,7 +147,7 @@ transmitting unbidden rather than a faster link. See the pin-sharing section of
 
 **Two PLLs on this die, not four** (Table 1.1, and the 25F die does not add any).
 One is `SocClocks` in `gateware/soc/clocks.py`, giving `sync` and `fast`; the
-second clocks the HyperRAM core (`hr`, `hr90`, CK 180, #588). There is no third, so any future independent domain
+second clocks the HyperRAM core (`hr`, `hr90`, CK 180, [#588](https://github.com/awtoau/cynthion-workspace/issues/588)). There is no third, so any future independent domain
 displaces one of those two.
 
 **The PLL's reachable set is wider than this tree says, and out of spec for most
@@ -196,7 +196,7 @@ between runs:
 | SoC, BTB relaxed + relaxed branch (ships) | 12,903 | 6,942 | 44 | 64.23 / **71.81** / 72.88 MHz |
 | fabric test, 20,143 LUT4 | — | — | — | 86.43 MHz, one run |
 
-**HyperRAM DQ rate:** the #581 reference measurement is
+**HyperRAM DQ rate:** the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) reference measurement is
 [`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md).
 
 **Flash SCK: 144 MHz measured**, `0xEB` continuous, 71.70 MB/s — through
@@ -236,7 +236,7 @@ most pins carry.
 | LUT4 | 24,288 on the die (12,288 by the marking) | 24,288 — the marking is enforced nowhere in the flow | 14,755 in the SoC; 20,143 placed and verified once | 61% / 83% | nothing; not the binding resource |
 | block RAM | 56 × 18 Kb = 1,008 Kb (32 by the marking) | 56 | **44** (`top.config`, all EBR modes) | 79% | firmware out of block RAM: ~32 blocks |
 | fabric fmax | 441 MHz, 16-bit adder (Table 3.20) | 370 MHz, primary clock tree | 71.81 MHz median, 3 P&R runs, SoC netlist | 19% | design, not placement — see the CPU page |
-| DDR, DQ pin | 800 Mb/s (`fDATA_GDDRX2`, −8) | **300 Mb/s out / 400 in** (LVCMOS33, Table 3.21 + note 6) | [`sequential-baseline.md`](../hyperram/sequential-baseline.md) (#581) | — | an I/O standard the DDR tables cover — board revision |
+| DDR, DQ pin | 800 Mb/s (`fDATA_GDDRX2`, −8) | **300 Mb/s out / 400 in** (LVCMOS33, Table 3.21 + note 6) | [`sequential-baseline.md`](../hyperram/sequential-baseline.md) ([#581](https://github.com/awtoau/cynthion-workspace/issues/581)) | — | an I/O standard the DDR tables cover — board revision |
 | flash SCK | no vendor figure for user-mode `USRMCLK` | the design's own fmax, because SCK is fabric-rate | 144 MHz, `0xEB` continuous | — | raise design fmax, or SCK from a 2× domain |
 | PLL `sync` | 400 MHz `fOUT` | 130 MHz solved; **13 of 68** integer points keep `fPFD` ≥ 10 MHz | 60 MHz | 46% of the solved range | measure the CPU's real ceiling |
 | console | — | 115200 baud on pins shared with JTAG | 11.52 kB/s | 100% | a different transport, not a faster pin |
@@ -280,7 +280,7 @@ Measured 2026-08-03 (commit date) on the r1.4, commit
 - Why: a placer seed moves tile instances only; the design is 185 structurally identical blocks, so every build needs the same connection kinds and per-tile-type share saturates near 9.6%.
 - Marginal arcs per build fell 213,663 to 68,298, still falling; hundreds of seeds would be needed.
 - Site overlap 0.757 over all 276 pairs vs density floor 0.709: the seed moved about 83% of the movable sites.
-- Conclusion: seed variation cannot reach the coverage #116 assumes; that needs configurations built to select different sources per destination (a different generator).
+- Conclusion: seed variation cannot reach the coverage [#116](https://github.com/awtoau/cynthion-workspace/issues/116) assumes; that needs configurations built to select different sources per destination (a different generator).
 - Same result, pluribus side: its `docs/fabric-test.md:52-56`.
 
 ### What this does *not* establish

@@ -4,7 +4,7 @@ Wishbone classic (registered feedback) between VexiiRiscv and the subordinates. 
 
 **Index:** [`upstream-boundary.md`](upstream-boundary.md) · [`riscv-core-build.md`](riscv-core-build.md) · [`soc-interrupts.md`](soc-interrupts.md)
 
-HyperRAM is not on this bus: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588).
+HyperRAM is not on this bus: register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
 
 ## Wishbone B4 pipelined
 - `amaranth_soc` supports it: `wishbone/bus.py:32` `Feature.STALL`; `Signature.__init__` adds it (`:127-128`); `_FeatureShim` (`:256-322`) adapts pipelined/classic both ways. `Arbiter` re-evaluates grant only under `~cyc` (`:499`), so it is pipelined-correct. Read from amaranth_soc `0.1a1.dev32+g3e3d8b7`.

@@ -63,13 +63,13 @@ Four SAMD11 pins are contended by three subsystems with no hardware arbitration;
 - d11 has one CDC (`CFG_TUD_CDC 1`, `ITF_NUM_CDC = 0` in `mcu/samd11/usb_descriptors.c`) bridging to SERCOM2 on PA11/PA14.
 - Redundant as a second UART bridge: d11 has exactly one UART-capable pin pair, and it is JTAG's.
 - Still possible as a pinless side-channel that stays up while JTAG owns the pins: status/notification port (`BUSY`, progress, mode transitions), out-of-band control (emergency reset, mode query), framed GDB-server / diagnostics transport ([#20](https://github.com/awtoau/cynthion-workspace/issues/20)).
-- Cost is USB endpoints and ~1-2 KB of the 4 KiB RAM: a memory-budget question, not a pin question (why #56 was deferred). If re-opened under #55, scope it as that side-channel, not a second UART.
+- Cost is USB endpoints and ~1-2 KB of the 4 KiB RAM: a memory-budget question, not a pin question (why [#56](https://github.com/awtoau/cynthion-workspace/issues/56) was deferred). If re-opened under [#55](https://github.com/awtoau/cynthion-workspace/issues/55), scope it as that side-channel, not a second UART.
 
 ## Validation
 
 1. JTAG lock: enter JTAG mode, run a long program/configure, issue takeover/serial/reset-helper commands in parallel; blocked commands return deterministic errors.
 2. Serial: CDC/serial debug during JTAG mode is rejected or paused.
 3. Emergency reset during JTAG mode cancels ownership and returns to HOLD.
-4. Attach logs and a pass/fail matrix to #54; update #55.
+4. Attach logs and a pass/fail matrix to [#54](https://github.com/awtoau/cynthion-workspace/issues/54); update [#55](https://github.com/awtoau/cynthion-workspace/issues/55).
 
-Order: minimal JTAG lock (#54) -> re-run UART forwarding validation (#22) -> dual-CDC only as a new child of #55.
+Order: minimal JTAG lock ([#54](https://github.com/awtoau/cynthion-workspace/issues/54)) -> re-run UART forwarding validation ([#22](https://github.com/awtoau/cynthion-workspace/issues/22)) -> dual-CDC only as a new child of [#55](https://github.com/awtoau/cynthion-workspace/issues/55).

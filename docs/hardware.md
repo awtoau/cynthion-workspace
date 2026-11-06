@@ -13,7 +13,7 @@ Every hardware fact has one home; find it here. If something here is wrong, fix 
 |---|---|---|---|
 | **ECP5 `LFE5U-12F`** | the FPGA — **marked 12F, is a 25F die**; 20,143 LUT4 placed and verified on a 24,288-LUT die | JTAG (Apollo), config from flash | [`chips/ecp5/lfe5u-12f.md`](chips/ecp5/lfe5u-12f.md) |
 | **Winbond W25Q32JV-IQ** | 4 MiB SPI config flash, bitstream at offset 0 | SPI/QSPI from the fabric; `apollo flash` | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) |
-| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM (64 Mbit ÷ 8) | register interface on the #581 core at CK 180, `0xf0000800` (#588) | [`chips/hyperram/`](chips/hyperram/README.md) |
+| **Winbond W956A8MBYA6I** | 8 MiB HyperRAM (64 Mbit ÷ 8) | register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, `0xf0000800` ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)) | [`chips/hyperram/`](chips/hyperram/README.md) |
 | **PAC1954-1** | 4-channel power monitor (`PRODUCT_ID` `0x7B`, `MANUFACTURER_ID` `0x54`) | I2C `0x10` on `power_monitor` | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md) |
 | **FUSB302B ×2** | USB-C PD controllers | I2C `0x22` on `target_type_c` and `aux_type_c` | [`chips/fusb302b-type-c.md`](chips/fusb302b-type-c.md) |
 | **USB3343 ×3** | high-speed USB PHYs | **parallel ULPI, not I2C** | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |

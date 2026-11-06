@@ -1,6 +1,6 @@
 # Target-port test harness
 
-- Issue: #557 (fuzz strategy, perf tests). Engine: [`aoa-adaptor.md`](aoa-adaptor.md).
+- Issue: [#557](https://github.com/awtoau/cynthion-workspace/issues/557) (fuzz strategy, perf tests). Engine: [`aoa-adaptor.md`](aoa-adaptor.md).
 - One case table, two backends; same names, same expected results.
 
 ## Files
@@ -22,7 +22,7 @@
 - Expected = spec-legal `kinds` set, optional length/data/info; `pin` = exact LUNA-model behaviour (sim profile only).
 - Result kinds (driver level, what `usb <port> ...` prints): ack, nak (retry window spent), stall, timeout (handshake 4), crc (5), overflow (6), dropped, hang, noreset.
 - Profiles: `model` (HS), `model_fs`, `aoa_phone` (pre-AOA 18d1:4ee2), `generic` (any device: structure only).
-- `generic` (Dan, #572): a `ctrl` step that may STALL also passes on NAK-until-limit; the case ends there and the bus is reset before the next (the Pixel's EP0 stays wedged until a reset). `nak_is_refusal` in the cases file.
+- `generic` (Dan, [#572](https://github.com/awtoau/cynthion-workspace/issues/572)): a `ctrl` step that may STALL also passes on NAK-until-limit; the case ends there and the bus is reset before the next (the Pixel's EP0 stays wedged until a reset). `nak_is_refusal` in the cases file.
 
 ## Board shell verbs used
 - Existing: `role`, `reset`, `setup`, `in`, `out`, `addr`, `aoa`, `desc`.
@@ -39,9 +39,9 @@
 ## Driver/engine findings from this harness
 - `Host::control` took the direction bit as the data stage: wLength 0 with bmRequestType IN sent an OUT status stage. Fixed (status is IN when wLength is 0).
 - `Host::control` now restarts toggles after SET_CONFIGURATION and after CLEAR_FEATURE(ENDPOINT_HALT).
-- OUT payload over 512 B (#572): the shim's DRAIN waited for its TX FIFO to empty into a full SIE FIFO, forever; nothing but leaving host ended it. Fixed: refused at `start` (`tx_overflow` + `done`, both FIFOs emptied); a bus reset ends any transfer and empties TX. Cases `bulk_out_mps_plus_1`, `bulk_out_oversize_then_bus_reset`.
+- OUT payload over 512 B ([#572](https://github.com/awtoau/cynthion-workspace/issues/572)): the shim's DRAIN waited for its TX FIFO to empty into a full SIE FIFO, forever; nothing but leaving host ended it. Fixed: refused at `start` (`tx_overflow` + `done`, both FIFOs emptied); a bus reset ends any transfer and empties TX. Cases `bulk_out_mps_plus_1`, `bulk_out_oversize_then_bus_reset`.
 - OUT payloads up to 512 B pass (the 128-entry TX FIFO is not the limit in host role).
-- Pixel EP0 wedge after NAKed requests (#572): device-side. `ctrl_nak_forever_then_good` abandons four NAK-forever requests on the model (vendor 0x5A) and the next SETUPs are ACKed.
+- Pixel EP0 wedge after NAKed requests ([#572](https://github.com/awtoau/cynthion-workspace/issues/572)): device-side. `ctrl_nak_forever_then_good` abandons four NAK-forever requests on the model (vendor 0x5A) and the next SETUPs are ACKed.
 
 ## Waits
 - Sim: every wait is a poll count with a stated bound (`usb_target_sim.py` constants); a case over 60 s wall fails ("stall guard").

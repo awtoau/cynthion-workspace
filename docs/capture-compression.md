@@ -4,7 +4,7 @@
 **Index:** [`aoa-adaptor.md`](aoa-adaptor.md) · [`upstream-watch.md`](upstream-watch.md) (upstream has no compression anywhere on the capture path) · [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md)
 
 ## Why
-- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588). A saturated high-speed bus is ~40-50 MB/s of captured bytes. Compression is what raises the effective capture rate and buffer depth.
+- HyperRAM: register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)). A saturated high-speed bus is ~40-50 MB/s of captured bytes. Compression is what raises the effective capture rate and buffer depth.
 - Upstream analyzer: raw 16 KiB reads, no compression ([`upstream-watch.md`](upstream-watch.md)); it stops when its buffer fills.
 
 ## Path
@@ -133,7 +133,7 @@ Tags: V = verified in simulation, I = inferred, U = unverified (nothing is on ha
 ## Implementation: stage 2 (framer, ring, block feeder)
 Tags as above. Code: [`framer.py`](../gateware/soc/capture/framer.py) (`CaptureRing`), [`path.py`](../gateware/soc/capture/path.py) (`CapturePath` = ring + `SwitchableCompressor`); sim [`capture_framer_sim.py`](../scripts/soc/capture_framer_sim.py) (in `soc_sims.py`, about 36 s). **Not wired into `top.py`** (see [Integration plan](#integration-plan-not-done)).
 
-### Record: one per transaction (Dan, 2026-11-02, #557)
+### Record: one per transaction (Dan, 2026-11-02, [#557](https://github.com/awtoau/cynthion-workspace/issues/557))
 - Byte stream, little endian, 5-byte header then payload:
 
 | bytes | field | content |

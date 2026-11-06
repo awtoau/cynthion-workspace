@@ -38,7 +38,7 @@ Order (cheapest, most load-bearing first): multiplexed I2C master (done) -> LEDs
 ## Scope
 
 - All three USB ports as 480 Mbps CDC: proves all three can come up; the shipping bitstream configures ports differently. Largest item: three device stacks against 24288 LUTs with a CPU needing ~6000.
-- HyperRAM: register interface on the #581 core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) (#588).
+- HyperRAM: register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, see [docs/chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
 - FUSB302B and die temperature over the sideband: `gateware/probes/pins/fusb302_id.py` reads both controllers; missing are sideband commands ([chips/cynone-sideband.md](chips/cynone-sideband.md#4-commands)). Temperature needs the `DTR` primitive, instantiated nowhere.
 - Flash benchmarking driven by the CPU.
 

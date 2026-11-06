@@ -11,7 +11,7 @@ Apollo = ATSAMD11D14A (4 KiB SRAM, 16 KiB flash), bare metal. Pin/ISR facts: [..
 
 None: bare metal, only an ISR can preempt ([#61](https://github.com/awtoau/cynthion-workspace/issues/61)); what preempts what is in [../chips/samd11-apollo.md](../chips/samd11-apollo.md).
 
-- Open from #61: `src/debug_spi.c:138` releases the UART pinmux on every board revision; the `r0.2+` TODO above it was never answered. Decide whether `uart_release_pinmux()` runs on r0.2+, then delete the TODO.
+- Open from [#61](https://github.com/awtoau/cynthion-workspace/issues/61): `src/debug_spi.c:138` releases the UART pinmux on every board revision; the `r0.2+` TODO above it was never answered. Decide whether `uart_release_pinmux()` runs on r0.2+, then delete the TODO.
 
 ## Dual CDC ([#56](https://github.com/awtoau/cynthion-workspace/issues/56), closed, deferred)
 

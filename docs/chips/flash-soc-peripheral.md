@@ -89,6 +89,6 @@ Plain Wishbone words (`REG_*` in flash.py), not amaranth-soc CSRs: the byte-wide
 
 ## Board status (2026-11-06)
 
-- Flash side works on the board (builds #438-#442): 1-line eye 16-18 steps, 4-line eye 19-20 of 32 per lat, placed lat 4 xfer 1, JEDEC EF4016; `flash status` answers when the CPU runs.
+- Flash side works on the board (builds [#438](https://github.com/awtoau/cynthion-workspace/issues/438)-[#442](https://github.com/awtoau/cynthion-workspace/issues/442)): 1-line eye 16-18 steps, 4-line eye 19-20 of 32 per lat, placed lat 4 xfer 1, JEDEC EF4016; `flash status` answers when the CPU runs.
 - **HyperRAM fails with this peripheral in the SoC**: auto-calibration finds no clean tap of 128 (once also an underflow, once an XFER watchdog) on all 4 builds where the CPU ran. The previous design (0cd05bd, 20781 COMB) passes HyperRAM 13/13 and soc_test 132/132 on the same board the same day.
 - COMB 21878 (was 20781); the CPU is silent on some placements. Not yet separated: logic-cell pressure vs the extra 180 MHz clocks and 16 mA FAST flash pins. Open on [#593](https://github.com/awtoau/cynthion-workspace/issues/593).

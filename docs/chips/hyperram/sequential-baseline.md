@@ -1,6 +1,6 @@
 # HyperRAM sequential baseline (non-RV path)
 
-Reference measurement for the clean-room core (`gateware/hyperram_baseline/`); not the SoC driver ([soc-peripheral.md](soc-peripheral.md), #588).
+Reference measurement for the clean-room core (`gateware/hyperram_baseline/`); not the SoC driver ([soc-peripheral.md](soc-peripheral.md), [#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
 
 Issue: [#581](https://github.com/awtoau/cynthion-workspace/issues/581).
 

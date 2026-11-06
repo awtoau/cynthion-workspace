@@ -103,12 +103,12 @@ Recorded so they are not re-investigated:
 - Vary one variable per cell (AUX-through-hubs vs TARGET-direct changes two).
 - When a result surprises, suspect the instrument before the device.
 
-## Re-measurement 2026-11-06 (#612 S0)
+## Re-measurement 2026-11-06 ([#612](https://github.com/awtoau/cynthion-workspace/issues/612) S0)
 
 Everything above this section is the OLD measurement (undated, pre-cf62c6d harness). Numbers here are NEW.
 
 - **Conditions**
-  - Date 2026-11-06T11:28+11:00; commit `a5e54da` (worktree branch of #612 S0); `scripts/usb/usb_baseline.py run --runs 3 --pidcodes`.
+  - Date 2026-11-06T11:28+11:00; commit `a5e54da` (worktree branch of [#612](https://github.com/awtoau/cynthion-workspace/issues/612) S0); `scripts/usb/usb_baseline.py run --runs 3 --pidcodes`.
   - Host `selwyn`: Intel i9-14900K, Fedora kernel 7.2.15-300.fc45, Intel 700-series xHCI (`00:14.0`), Python 3.15.2t, pyusb 1.3.1, pyserial 3.5.
   - Gateware: luna_usb 0.2.3.post15+git.352cdbfc, amaranth 0.5.10, `usb`/`sync` = 60 MHz oscillator direct (no PLL, unlike the old LUNA generator); AUX PHY, high speed (sysfs `speed` 480), 512-byte bulk packets.
   - Host transfer 64 KiB; one-way window 3 s; loopback 32 MiB per run; per-transfer limit 23 ms.
@@ -157,7 +157,7 @@ Everything above this section is the OLD measurement (undated, pre-cf62c6d harne
 - Against the 426 Mbps protocol maximum: bulk IN 88% (old 91%), bulk OUT 73% (old 80%). Both are about 3-8% below the old figures; cause not isolated (clocking change from the PLL generator to the 60 MHz oscillator, host, kernel).
 - Direct versus four hubs: IN 374.8 vs 288.4, OUT 310.0 vs 290.6, FIFO loopback 384.1 vs 265.7, CDC loopback 263.9 vs 213.0. Spread falls from 4.5-7.5% to under 1% with the shared hub gone.
 - 0 data errors in every run; the negative control (one corrupted byte) was reported each time.
-- These are the baseline the own USB stack (#612) must beat or match.
+- These are the baseline the own USB stack ([#612](https://github.com/awtoau/cynthion-workspace/issues/612)) must beat or match.
 
 ## Files
 
@@ -175,4 +175,4 @@ Everything above this section is the OLD measurement (undated, pre-cf62c6d harne
 
 ## In context
 
-The capture path is bounded by the slower of USB (48.5 MB/s, direct port) and HyperRAM ([chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md), #588).
+The capture path is bounded by the slower of USB (48.5 MB/s, direct port) and HyperRAM ([chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md), [#588](https://github.com/awtoau/cynthion-workspace/issues/588)).
