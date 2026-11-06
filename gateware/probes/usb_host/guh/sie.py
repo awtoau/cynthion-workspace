@@ -7,12 +7,11 @@ Token packet generation, SOF controller, and the main transfer engine.
 """
 
 from amaranth import *
-from amaranth.lib import data, enum, stream, wiring
+from amaranth.lib import data, enum, fifo, stream, wiring
 from amaranth.lib.cdc import ResetInserter
 from amaranth.lib.wiring import In, Out
 
 from ..guh_lower import *
-from ..guh_lower import fifo
 
 from .types import *
 from .reset import *
@@ -391,8 +390,10 @@ class USBSIE(wiring.Component):
         tx_multiplexer.add_input(handshake_generator.tx)
 
         # Tx/Rx FIFOs
-        m.submodules.tx_fifo = tx_fifo = DomainRenamer("usb")(fifo.SyncFIFO(width=8, depth=self.fifo_depth))
-        m.submodules.rx_fifo = rx_fifo = DomainRenamer("usb")(fifo.SyncFIFO(width=8, depth=self.fifo_depth))
+        # awto #619: registered read (block RAM). "Has data" decisions use r_level, not r_rdy,
+        # so they hold for any read latency (docs/upstream-boundary.md, GUH section).
+        m.submodules.tx_fifo = tx_fifo = DomainRenamer("usb")(fifo.SyncFIFOBuffered(width=8, depth=self.fifo_depth))
+        m.submodules.rx_fifo = rx_fifo = DomainRenamer("usb")(fifo.SyncFIFOBuffered(width=8, depth=self.fifo_depth))
 
         # ============================================================
         # RESET CONTROLLER - Bus Reset and Speed Detection
@@ -492,7 +493,7 @@ class USBSIE(wiring.Component):
         ]
 
         m.d.comb += [
-            self.ctrl.tx_pending.eq(tx_fifo.r_rdy),
+            self.ctrl.tx_pending.eq(tx_fifo.r_level != 0),
             self.ctrl.status.rx_len.eq(rx_len),
             self.ctrl.status.response.eq(response),
             self.ctrl.status.sof_frame.eq(sof_controller.o.payload.data),
@@ -540,7 +541,7 @@ class USBSIE(wiring.Component):
             with m.State("DRAIN_RX"):
                 m.d.comb += send_sofs.eq(1)
                 m.d.comb += rx_fifo.r_en.eq(rx_fifo.r_rdy)
-                with m.If(~rx_fifo.r_rdy):
+                with m.If(rx_fifo.r_level == 0):
                     m.next = "WAIT_TXA"
 
             with m.State("WAIT_TXA"):
@@ -670,7 +671,7 @@ class USBSIE(wiring.Component):
                 ipd = Signal(range(self._XFER_IPD_FS), init=0)
                 m.d.usb += ipd.eq(ipd+1)
                 m.d.comb += tx_fifo.r_en.eq(tx_fifo.r_rdy)
-                with m.If((ipd == (ipd_max-1)) & ~tx_fifo.r_rdy):
+                with m.If((ipd == (ipd_max-1)) & (tx_fifo.r_level == 0)):
                     m.d.usb += ipd.eq(0)
                     m.next = "IDLE"
 

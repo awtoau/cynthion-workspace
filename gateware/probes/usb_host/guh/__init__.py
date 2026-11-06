@@ -45,6 +45,7 @@ Exception (#612 S1): the luna imports in `sie.py`, `reset.py` and `types.py` now
 read `from ..guh_lower import ...`, which provides luna's names on our
 `gateware/usbcore/` layers. A pin bump re-applies those lines.
 
-Exception (#619): `sie.py` takes `fifo` from `..guh_lower` instead of `amaranth.lib`
-(block-RAM `SyncFIFO`, same cycle behaviour). A pin bump re-applies that line too.
+Exception (#619): `sie.py`'s two FIFOs are `SyncFIFOBuffered` (block RAM) and its three
+"FIFO has data" tests read `r_level`; marked `awto #619` in the source. A pin bump
+re-applies them (docs/upstream-boundary.md).
 """
