@@ -51,6 +51,7 @@ from peripherals.usb_host import (  # noqa: E402
 SPEEDS = ("HS", "FS", "LS", "?")
 TY_SETUP, TY_IN, TY_OUT = 0, 1, 2
 RESP_ACK, RESP_NAK, RESP_STALL, RESP_TIMEOUT, RESP_CRC, RESP_OVERFLOW = 1, 2, 3, 4, 5, 6
+DATA_PID = (0xC3, 0x4B)     # DATA0, DATA1 as RXPID reads them
 
 # Poll budgets: each is an upper bound with a known expected duration (reads are 2 sync ticks).
 DONE_POLLS = 800            # one transaction < 12k usb cycles (shim_sim: DONE_POLLS)
@@ -107,6 +108,8 @@ class SimBackend(Backend):
         if events & (EV_BUSY_DROP | EV_TIMEOUT | EV_TX_OVERFLOW):
             return "dropped", 0, b""
         resp = await pc.read(REG_RESP) & 7
+        if resp == RESP_ACK and ty == TY_IN and await pc.read(REG_RXPID) != DATA_PID[pid]:
+            resp = "resend"
         length = await pc.read(REG_RXLEN_LO) | (await pc.read(REG_RXLEN_HI) << 8)
         data, spins = [], 0
         while len(data) < length and spins < length * RX_SPINS_PER_BYTE + 64:
@@ -122,6 +125,8 @@ class SimBackend(Backend):
             resp, length, data = await self.transact(ty, ep, pid, out)
             if resp in ("hang", "dropped"):
                 return resp, b""
+            if resp == "resend":            # wrong DATA PID: ACKed by the SIE, dropped (8.6.4)
+                continue
             if resp == RESP_ACK:
                 return "ack", data[:want] if want is not None else data
             if resp == RESP_NAK:

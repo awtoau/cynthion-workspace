@@ -19,6 +19,7 @@ const LINK: usize = 0x05;
 const EVENTS: usize = 0x06;
 const ADDR: usize = 0x08;
 const EP: usize = 0x09;
+const RXPID: usize = 0x07;
 const RESP: usize = 0x0a;
 const RXLEN_LO: usize = 0x0c;
 const RXLEN_HI: usize = 0x0d;
@@ -61,6 +62,9 @@ const TY_OUT: u8 = 2;
 const RESP_ACK: u8 = 1;
 const RESP_NAK: u8 = 2;
 const RESP_STALL: u8 = 3;
+
+/// DATA0 / DATA1 PID bytes, as `RXPID` reads them.
+const DATA_PID: [u8; 2] = [0xc3, 0x4b];
 
 /// Shim `SWITCH_LIMIT` = 1.25 x (PHY_PAD_RESET + PHY_PREP) = 90_160 usb cycles = 1.503 ms; x1.25.
 /// Expiry: `Timeout("role switch")`.
@@ -383,7 +387,7 @@ impl Host {
         Ok(len as usize)
     }
 
-    /// Repeat a transaction while the device NAKs, until `limit_us`.
+    /// Repeat a transaction while the device NAKs or resends, until `limit_us`.
     /// Errors (timeout, CRC) get `TRIES` attempts. Returns bytes read for IN.
     fn stage(&self, r: Regs, ty: u8, ep: u8, pid: u8, out: &[u8], inbuf: &mut [u8],
              op: &'static str, limit_us: u32) -> Result<usize, Error> {
@@ -397,6 +401,11 @@ impl Host {
             let (x, f) = self.prof.get();
             self.prof.set((x.wrapping_add(t0.elapsed(t1)), f));
             match resp {
+                // Wrong DATA PID: a resend after our ACK was lost. The SIE ACKed it; drop it,
+                // keep the toggle, ask again (USB 2.0 8.6.4).
+                RESP_ACK if ty == TY_IN && r.rd(RXPID) != DATA_PID[pid as usize & 1] => {
+                    self.read_rx(r, &mut [], len)?;
+                }
                 RESP_ACK => {
                     if ty != TY_IN {
                         return Ok(0);
