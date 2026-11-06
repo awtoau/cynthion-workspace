@@ -142,6 +142,23 @@ Everything above this section is the OLD measurement (undated, pre-cf62c6d harne
 - Build: TRELLIS_COMB oneway 2095, bulk FIFO 2095, CDC 2008 (of 24288).
 - `--pidcodes`: bulk probes enumerate as `1209:000a`; the installed `55-cynthion-test.rules` predates `ede08a0` and udev ignores every rule in it (trailing comments), so `1d50:6182`/`6188` get no uaccess. Fix: `sudo ./scripts/install_udev.py`.
 
+### Same day, AUX on a direct root port
+
+- Date 2026-11-06T11:52+11:00; commit `fb22981`; `scripts/usb/usb_baseline.py run --runs 3 --pidcodes`; same host, gateware and packet size as above.
+- **Topology: direct.** The runner reports each probe at `1-7`, 480 Mbps, 0 hub levels from the root port; `lsusb -t` shows `Bus 001 Port 007` (AUX, `1d50:6180`) on the xHCI root hub, no hub between. CONTROL (Apollo, `1d50:615c`) is still at 12M behind the hub chain.
+
+| test | run 1 | run 2 | run 3 | median | spread | old direct |
+|---|---|---|---|---|---|---|
+| bulk IN | 372.7 | 374.8 | 375.3 | 374.8 | 2.7 (0.7%) | 388.0 |
+| bulk OUT | 310.0 | 312.2 | 309.6 | 310.0 | 2.6 (0.8%) | 338.8 |
+| bulk loopback, FIFO (bus) | 386.1 | 383.7 | 384.1 | 384.1 | 2.4 (0.6%) | 244.2 |
+| CDC-ACM loopback (bus) | 265.0 | 263.9 | 262.8 | 263.9 | 2.2 (0.8%) | 195.4 |
+
+- Against the 426 Mbps protocol maximum: bulk IN 88% (old 91%), bulk OUT 73% (old 80%). Both are about 3-8% below the old figures; cause not isolated (clocking change from the PLL generator to the 60 MHz oscillator, host, kernel).
+- Direct versus four hubs: IN 374.8 vs 288.4, OUT 310.0 vs 290.6, FIFO loopback 384.1 vs 265.7, CDC loopback 263.9 vs 213.0. Spread falls from 4.5-7.5% to under 1% with the shared hub gone.
+- 0 data errors in every run; the negative control (one corrupted byte) was reported each time.
+- These are the baseline the own USB stack (#612) must beat or match.
+
 ## Files
 
 | path | purpose |
