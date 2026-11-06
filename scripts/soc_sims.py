@@ -69,6 +69,7 @@ from subprocess_timeout_from_history import limit_for, run_bounded  # noqa: E402
 # the gateware that is not part of the SoC at all.
 SIMS = [
     "soc_bus_sim",
+    "soc_csr_map_sim",
     "uart16550_sim",
     "soc_serial_sim",
     "soc_stream_buffer_sim",
