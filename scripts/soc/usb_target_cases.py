@@ -394,6 +394,14 @@ def table():
          S("bulk_in", E("ack", "nak"), ep=1, n=64)],
         profiles=("model", "model_fs"), after=NONE, board="no toggle override in the shell verbs",
         about="a fresh endpoint expects DATA0; DATA1 first is ACKed (data accepted or ignored)")
+    add("toggle_in_mismatch_discarded", "bulk_int",
+        [S("ctrl", E(), bm=0x02, req=1, val=0, idx=0x01, len=0), S("ctrl", E(), bm=0x02, req=1, val=0, idx=0x81, len=0),
+         S("bulk_out", E(), ep=1, data=b"\xaa", toggle=0),
+         S("bulk_in", E("nak"), ep=1, n=64, toggle=1),
+         S("bulk_out", E(), ep=1, data=b"\xbb", toggle=1),
+         S("bulk_in", E(data=b"\xbb", length=1), ep=1, n=64, toggle=1)],
+        profiles=("model", "model_fs"), after=NONE, board="no toggle override in the shell verbs",
+        about="IN DATA0 while DATA1 is due (a resend after a lost ACK): ACKed and dropped (8.6.4, #627)")
     add("toggle_alternates_across_sizes", "bulk_int",
         [S(op, E(length=1, data=bytes([i])) if op == "bulk_in" else E(), ep=1,
            **({"n": 64} if op == "bulk_in" else {"data": bytes([i])}))
