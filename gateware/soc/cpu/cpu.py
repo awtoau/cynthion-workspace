@@ -80,6 +80,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from shared_paths import resolve_shared            # noqa: E402
+from . import ramstyle                              # noqa: E402
 
 # The VexiiRiscv sources to generate from: this checkout, else the main one
 # behind a worktree, `VEXII_ROOT` overriding both. `build.sbt` is the marker
@@ -326,6 +327,8 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None,
         emitted = VEXII / "VexiiRiscv.v"
         if not emitted.exists():
             raise RuntimeError("generator produced no VexiiRiscv.v")
+
+        emitted.write_text(ramstyle.apply(emitted.read_text(), flags))
 
         if output:
             output = Path(output)
