@@ -168,8 +168,8 @@ Skeleton with the Cynthion **stubbed**: [`linux/cynthion_udc/`](../linux/cynthio
 - Core: `usb_gadget_ops` / `usb_ep_ops` over `struct cudc_backend_ops` (connect, disconnect, ep enable/disable, queue, dequeue, set_halt, setup_reply); the AUX transport implements the same table later.
 - Stub backend: in-kernel fake host. Pullup -> HS attach -> reset, GET_DESCRIPTOR(device, 64), reset, SET_ADDRESS (local, never reaches the gadget), GET_DESCRIPTOR device / config 9 / config full, SET_CONFIGURATION, SET_INTERFACE for bulk alts; then bulk IN -> OUT loopback per interface.
 - Test: [`scripts/linux/cudc_vm_test.py`](../scripts/linux/cudc_vm_test.py), virtme-ng VM only.
-- Result 2026-11-06, kernel 7.2.15-300.fc45, vng 1.41, 4 runs: PASS. ACM, NCM, ACM+NCM each reach state `configured`; ACM 2000 B tty loopback and NCM raw-frame loopback return in <= 0.4 ms; unbind + rmmod clean; dmesg has only the unsigned-module taint lines.
-- Timings behind the test's limits (same runs): module build <= 0.4 s cold, whole VM run <= 2.0 s.
+- Result 2026-11-06, kernel 7.2.15-300.fc45, vng 1.41, 6 runs: PASS. ACM, NCM, ACM+NCM each reach state `configured`; ACM 2000 B tty loopback and NCM raw-frame loopback return in <= 0.4 ms; unbind + rmmod clean; dmesg has only the unsigned-module taint lines.
+- Timings behind the test's limits (same runs): module build <= 0.5 s cold, whole VM run <= 2.2 s.
 - Not covered by the stub: no AUX link or URBs; GET_STATUS / SET_FEATURE / CLEAR_FEATURE not issued; no halt, dequeue, wedge, suspend/resume, remote wakeup, VBUS or FS paths exercised; no string descriptors or class requests; loopback is a byte stream (no packet boundaries, ZLPs or toggles); no dummy_hcd descriptor comparison.
 
 ## Open questions
