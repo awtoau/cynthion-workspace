@@ -66,6 +66,11 @@ PRODUCTS = {
     "riscv_console":     (0x6180, "VexiiRiscv console",   "AUX"),
     "riscv_vex_console": (0x6186, "VexRiscv console",      "TARGET"),
     "riscv_bench":       (0x6187, "RISC-V benchmark",      "TARGET"),
+
+    # LUNA USB throughput probes (docs/usb-performance.md, #612 S0).
+    "usb_serial":        (0x6181, "USB serial terminal",  "AUX"),
+    "usb_bulk":          (0x6182, "USB bulk loopback",     "AUX"),
+    "usb_oneway":        (0x6188, "USB one-way sink",      "AUX"),
 }
 
 

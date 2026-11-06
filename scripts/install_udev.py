@@ -71,10 +71,12 @@ def generate():
     lines.append("# USB devices.")
     for name, (pid, description, port) in sorted(usb_ids.PRODUCTS.items(),
                                                  key=lambda kv: kv[1][0]):
+        # Comment on its own line: udev has no trailing comments and drops the whole rule
+        # ("Invalid key/value pair, ignoring" in `udevadm test`).
+        lines.append(f"# {port} -- {name}")
         lines.append(
             f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{usb_ids.VENDOR_ID:04x}", '
-            f'ATTR{{idProduct}}=="{pid:04x}", TAG+="uaccess"'
-            f'   # {port} -- {name}')
+            f'ATTR{{idProduct}}=="{pid:04x}", TAG+="uaccess"')
 
     lines.append("")
     lines.append("# The tty interfaces some of them expose. SUBSYSTEM==\"tty\" matches the")
@@ -82,10 +84,10 @@ def generate():
     for name, (pid, description, port) in sorted(usb_ids.PRODUCTS.items(),
                                                  key=lambda kv: kv[1][0]):
         if "console" in name or "serial" in name:
+            lines.append(f"# {port} -- {name}")
             lines.append(
                 f'SUBSYSTEM=="tty", ATTRS{{idVendor}}=="{usb_ids.VENDOR_ID:04x}", '
-                f'ATTRS{{idProduct}}=="{pid:04x}", TAG+="uaccess"'
-                f'   # {port} -- {name}')
+                f'ATTRS{{idProduct}}=="{pid:04x}", TAG+="uaccess"')
     return "\n".join(lines) + "\n"
 
 
@@ -101,6 +103,10 @@ def main():
     GENERATED.parent.mkdir(parents=True, exist_ok=True)
     GENERATED.write_text(content)
     emit(f"generated {GENERATED.relative_to(ROOT)}")
+    verify = subprocess.run(["udevadm", "verify", str(GENERATED)], capture_output=True, text=True)
+    if verify.returncode != 0:
+        emit(f"udevadm verify rejects {GENERATED.relative_to(ROOT)}:\n{verify.stdout}{verify.stderr}")
+        return 1
 
     current = INSTALLED.read_text() if INSTALLED.exists() else None
     if current == content:
