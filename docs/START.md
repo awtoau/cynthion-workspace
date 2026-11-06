@@ -4,7 +4,7 @@ Read this first. Entry point is [`./dev.py`](../dev.py) (`--help`, `describe` = 
 
 ## Rules
 - Scripts live in [`scripts/`](../scripts), log to `tmp/logs/<name>.log`; most share `tmp/logs/dev.log`. Temp files in `tmp/`, never `/tmp`.
-- Python = free-threaded 3.15t, system env, **no venv** (`python3 -c "import sys; print(sys._is_gil_enabled())"` -> `False`).
+- Python = free-threaded 3.15t, the default `python3`: `~/opt/cpython-ft` is a symlink to a venv managed by awto-dan (`scripts/py315t.py`, 2026-11-06); do not create a venv in this repo (`python3 -c "import sys; print(sys._is_gil_enabled())"` -> `False`).
 - `./cyn` is retired: use `./dev.py`. Nothing runs on GitHub Actions: use [`scripts/check.py`](../scripts/check.py).
 - Never open the console tty or run `apollo configure` yourself: [board arbiter](board-arbiter.md) (`./dev.py board ...`).
 - No `sleep`/`timeout` in commands.

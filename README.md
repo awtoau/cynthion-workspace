@@ -209,7 +209,7 @@ serialises that work.
 | | |
 |---|---|
 | Interpreter | CPython **3.15t** free-threaded |
-| Environment | System / default — no venv to create or activate |
+| Environment | The default `python3` (`~/opt/cpython-ft`, a venv managed by awto-dan's `py315t.py`); nothing to create or activate in this repo |
 | Install | `python3 -m pip install -e repos/cynthion/cynthion/python` |
 | Verify | `python3 -c "import sys; print(sys._is_gil_enabled())"` → `False` |
 | Override | `CYN_PYTHON=/path/to/python` |
