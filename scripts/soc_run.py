@@ -1491,9 +1491,7 @@ def write_rodata_flash(args, emit):
     emit(f"  the CPU executes from here, so it goes quiet NOW and comes back "
          f"on the reconfigure a few seconds from now")
     started = time.perf_counter()
-    result = run([sys.executable,
-                  str(ROOT / "repos" / "apollo" / "apollo_fpga"
-                      / "commands" / "cli.py"),
+    result = run([sys.executable, str(soc_confirm.apollo_cli()),
                   "flash-program",
                   "--offset", str(FLASH_RODATA_OFFSET),
                   str(RODATA_BIN)])
