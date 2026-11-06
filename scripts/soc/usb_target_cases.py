@@ -908,6 +908,9 @@ def selftest():
             ("18d1:4ee2", "ack", bytes([0xD1, 0x18, 0xE2, 0x4E])), ("reset done", "ack", b"")):
         r = parse_reply(text)
         expect(f"parse {text!r}", (r.kind, r.data), (kind, data))
+    # #627: `in` with a buffer under the packet says so (the toggle has advanced, the tail is gone).
+    r = parse_reply("2 bytes\n01 02 \ntruncated: packet 512 bytes")
+    expect("parse truncated in", (r.kind, r.data, r.info.get("packet")), ("ack", b"\x01\x02", 512))
     link = FakeLink({"reset": "reset done", "enum": "18d1:4ee2", "ctrl": "ack", "in": "2 bytes\n01 02 ",
                      "role": "role host  switching 0  timeout 0  link d1 ls 1 HS up 1 rx 0 tx 0"})
     b = BoardBackend(link, "target_a", get_profile("generic"), print)
