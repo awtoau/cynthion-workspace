@@ -380,7 +380,7 @@ impl Host {
                 *slot = byte;
             }
         }
-        Ok((len as usize).min(buf.len()))
+        Ok(len as usize)
     }
 
     /// Repeat a transaction while the device NAKs, until `limit_us`.
@@ -437,15 +437,12 @@ impl Host {
         let want = length.min(inbuf.len());
         // No data stage when wLength is 0, whatever the direction bit: the status stage is IN.
         if setup[0] & 0x80 != 0 && length != 0 {
-            // Every packet lands in `spill` so its true length decides when the stage ends, even
-            // past the caller's buffer; the data stage completes before the status stage (8.5.3).
+            // `stage` returns the packet's true length; bytes past the caller's buffer are popped
+            // and dropped, so the data stage still completes before the status stage (8.5.3).
             let (mut done, mut last) = (0, mps);
             while done < length && last == mps {
-                let mut spill = [0u8; 64];
-                last = self.stage(r, TY_IN, 0, toggle, &[], &mut spill, "control data in", DATA_US)?;
-                let keep = last.min(want.saturating_sub(n));
-                inbuf[n..n + keep].copy_from_slice(&spill[..keep]);
-                n += keep;
+                last = self.stage(r, TY_IN, 0, toggle, &[], &mut inbuf[n..want], "control data in", DATA_US)?;
+                n += last.min(want - n);
                 done += last;
                 toggle ^= 1;
             }
@@ -474,10 +471,11 @@ impl Host {
     pub fn bulk_in(&mut self, ep: u8, buf: &mut [u8], limit_us: u32) -> Result<usize, Error> {
         let r = self.host()?;
         let bit = 1 << (ep & 15);
+        let cap = buf.len();
         let n = self.stage(r, TY_IN, ep & 15, (self.tog_in & bit != 0) as u8, &[], buf,
                            "bulk in", limit_us)?;
         self.tog_in ^= bit;
-        Ok(n)
+        Ok(n.min(cap))
     }
 
     /// Bulk/interrupt OUT on endpoint `ep`, one packet; NAK retried until `limit_us`.
