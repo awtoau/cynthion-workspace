@@ -165,9 +165,9 @@ class _Engine(Elaboratable):
         nbytes, acc, wcnt = Signal(9), Signal(32), Signal(9)
         res24, mismatch, saw_busy = Signal(24), Signal(), Signal()
         ref_and, ref_or = Signal(8), Signal(8)
-        ref = memory.Memory(shape=8, depth=CAL_REF_BYTES, init=[])
+        ref = memory.Memory(shape=8, depth=CAL_REF_BYTES, init=[], attrs={"ram_style": "block"})
         m.submodules.ref = ref
-        ref_wp, ref_rp = ref.write_port(), ref.read_port(domain="comb")
+        ref_wp, ref_rp = ref.write_port(), ref.read_port()
         cur_id = Signal(2)
 
         def issue(dsc, addr, length, csh, mode):
@@ -195,7 +195,8 @@ class _Engine(Elaboratable):
             for lane in range(1, 4):
                 with m.Case(lane):
                     m.d.comb += new_word.word_select(lane, 8).eq(b)
-        m.d.comb += ref_rp.addr.eq(nbytes[0:6])
+        # Registered read: the address leads by a cycle, so byte n compares against ref[n].
+        m.d.comb += ref_rp.addr.eq((nbytes + tx.rx_valid)[0:6])
         with m.If(tx.rx_valid):
             s += [nbytes.eq(nbytes + 1), acc.eq(new_word)]
             with m.Switch(rx_mode):
