@@ -199,6 +199,11 @@ def diamond(out, speed, paths):
     env = diamond_env()
     run(["bash", "-c", f'source "{OSS_CAD_ENV}" && exec yosys -q -p "script to_verilog.ys"'],
         out, dict(os.environ), "yosys", out / "to_verilog.log")
+    # LSE replicates the hr reset FF, so a PIO's ODDR and IDDR get different LSR nets and map
+    # refuses to pack them. Analysis copy only: DDR resets tied low (data paths unchanged).
+    v = out / "hr.v"
+    v.write_text(re.sub(r"\.RST\(\\hyperram\.pll\.rst(?:90)?\.stage1 \)", ".RST(1'h0)",
+                        v.read_text()))
     lpf_for_diamond(out / "top.lpf", out / "diamond.lpf")
     run(["synthesis", "-a", ARCH, "-d", DEVICE, "-t", PACKAGE, "-s", speed, "-top", "top",
          "-ngd", "top.ngd", "-optimization_goal", "Timing", "-frequency", "180",
