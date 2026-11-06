@@ -287,6 +287,9 @@ pub struct Host {
     tog_out: u16,
     pub ep_in: u8,
     pub ep_out: u8,
+    /// wMaxPacketSize of `ep_in` / `ep_out`; 0 until `find_endpoints`.
+    mps_in: u16,
+    mps_out: u16,
     naks: Cell<u32>,
     /// Ticks spent in `transact` and in `read_rx`, summed by `stage`; a pump zeroes it.
     prof: Cell<(u32, u32)>,
@@ -294,7 +297,8 @@ pub struct Host {
 
 impl Host {
     pub const fn new(base: Option<usize>) -> Self {
-        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0, naks: Cell::new(0),
+        Host { base, addr: 0, mps0: 8, tog_in: 0, tog_out: 0, ep_in: 0, ep_out: 0, mps_in: 0, mps_out: 0,
+               naks: Cell::new(0),
                prof: Cell::new((0, 0)) }
     }
 
@@ -525,9 +529,13 @@ impl Host {
         Ok(())
     }
 
-    /// Bulk max packet from the link speed (USB 2.0 5.8.3): 512 at HS, else 64.
-    fn bulk_mps(&self) -> Result<usize, Error> {
-        Ok(if (self.host()?.rd(LINK) >> 2) & 3 == 0 { 512 } else { 64 })
+    /// Bulk max packet of the found pair (`find_endpoints`): `(in, out)`.
+    fn bulk_mps(&self) -> Result<(usize, usize), Error> {
+        self.host()?;
+        if self.mps_in == 0 || self.mps_out == 0 {
+            return Err(Error::Bad("no bulk pair found yet (aoa)"));
+        }
+        Ok((self.mps_in as usize, self.mps_out as usize))
     }
 
     /// Microseconds left in the run; `Timeout` once `PUMP_US` is spent.
@@ -541,7 +549,7 @@ impl Host {
 
     fn pump_send(&mut self, ep: u8, p: &mut Pump, len: u32, gen: &mut Gen, started: clock::Instant)
                  -> Result<(), Error> {
-        let mps = self.bulk_mps()?;
+        let mps = self.bulk_mps()?.1;
         let mut buf = [0u8; 512];
         let mut n = (len - p.bytes_out).min(mps as u32) as usize;
         if let Gen::Aoat(a) = gen {
@@ -564,7 +572,7 @@ impl Host {
 
     fn pump_recv(&mut self, ep: u8, p: &mut Pump, seed: Option<u8>, started: clock::Instant)
                  -> Result<(), Error> {
-        let mps = self.bulk_mps()?;
+        let mps = self.bulk_mps()?.0;
         let mut buf = [0u8; 512];
         let n = self.bulk_in(ep, &mut buf[..mps], Self::pump_left(started, "pump in")?)?;
         let mut sum = p.sum;
@@ -618,7 +626,7 @@ impl Host {
     }
 
     fn pump_stream(&mut self, ep: u8, len: u32, mut gen: Gen, zlp: bool) -> Result<Pump, Error> {
-        let mps = self.bulk_mps()? as u32;
+        let mps = self.bulk_mps()?.1 as u32;
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
@@ -655,7 +663,8 @@ impl Host {
     /// The far read ends on a short packet: a whole-packet chunk under `ECHO_CHUNK` gets a
     /// ZLP out, and the ZLP the far write adds comes back in (#565).
     pub fn echo(&mut self, ep: u8, len: u32, seed: u8) -> Result<Pump, Error> {
-        let mps = self.bulk_mps()? as u32;
+        let (mps_in, mps_out) = self.bulk_mps()?;
+        let (mps_in, mps_out) = (mps_in as u32, mps_out as u32);
         if len > PUMP_MAX {
             return Err(Error::Bad("len over 1 MiB"));
         }
@@ -666,18 +675,17 @@ impl Host {
         while r.is_ok() && p.bytes_in < len {
             let chunk = (len - p.bytes_in).min(ECHO_CHUNK);
             let end = p.bytes_in + chunk;
-            let whole = chunk % mps == 0;
             while r.is_ok() && p.bytes_out < end {
                 r = self.pump_send(ep, &mut p, end, &mut gen, started);
             }
-            if r.is_ok() && whole && chunk < ECHO_CHUNK {
+            if r.is_ok() && chunk % mps_out == 0 && chunk < ECHO_CHUNK {
                 r = Self::pump_left(started, "echo zlp").and_then(|left| self.bulk_out(ep, &[], left));
                 p.packets += r.is_ok() as u32;
             }
             while r.is_ok() && p.bytes_in < end {
                 r = self.pump_recv(ep, &mut p, Some(seed), started);
             }
-            if r.is_ok() && whole {
+            if r.is_ok() && chunk % mps_in == 0 {
                 r = self.pump_recv(ep, &mut p, Some(seed), started);
             }
         }
@@ -737,7 +745,8 @@ impl Host {
         Ok(())
     }
 
-    /// Find the first bulk IN and OUT endpoints; stored in `ep_in` / `ep_out` (numbers).
+    /// Find the first bulk IN and OUT endpoints: numbers in `ep_in` / `ep_out`, and their
+    /// wMaxPacketSize, which the pumps use as the packet size.
     pub fn find_endpoints(&mut self) -> Result<(), Error> {
         let mut c = [0u8; usb_desc::CONFIG_MAX];
         let get = |len| setup_packet(0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, len);
@@ -745,7 +754,11 @@ impl Host {
         let total = usb_desc::total_length(&c[..n]).ok_or(Error::Bad("bad config descriptor header"))?;
         let n = self.control(&get(total), &[], &mut c)?;
         let pair = usb_desc::bulk_pair(&c[..n]).ok_or(Error::Bad("no bulk IN/OUT pair"))?;
-        (self.ep_in, self.ep_out) = (pair.ep_in, pair.ep_out);
+        if !(1..=512).contains(&pair.mps_in) || !(1..=512).contains(&pair.mps_out) {
+            return Err(Error::Bad("bulk wMaxPacketSize 0 or over the 512 B SIE FIFO"));
+        }
+        (self.ep_in, self.mps_in, self.ep_out, self.mps_out) =
+            (pair.ep_in, pair.mps_in, pair.ep_out, pair.mps_out);
         Ok(())
     }
 

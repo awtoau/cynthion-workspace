@@ -16,11 +16,13 @@ pub fn total_length(h: &[u8]) -> Option<u16> {
     Some(u16::from_le_bytes([h[2], h[3]]))
 }
 
-/// First bulk IN and first bulk OUT endpoint numbers.
+/// First bulk IN and first bulk OUT endpoint: numbers and wMaxPacketSize (bits 10:0).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BulkPair {
     pub ep_in: u8,
+    pub mps_in: u16,
     pub ep_out: u8,
+    pub mps_out: u16,
 }
 
 /// Walk `c` (a configuration descriptor and what follows it) for the first bulk pair.
@@ -28,16 +30,17 @@ pub fn bulk_pair(c: &[u8]) -> Option<BulkPair> {
     let (mut at, mut ep_in, mut ep_out) = (0, None, None);
     while at + 7 <= c.len() && c[at] >= 2 {
         if c[at + 1] == 5 && c[at + 3] & 3 == 2 {
-            let number = c[at + 2] & 15;
+            let found = Some((c[at + 2] & 15, u16::from_le_bytes([c[at + 4], c[at + 5]]) & 0x7ff));
             if c[at + 2] & 0x80 != 0 {
-                ep_in = ep_in.or(Some(number));
+                ep_in = ep_in.or(found);
             } else {
-                ep_out = ep_out.or(Some(number));
+                ep_out = ep_out.or(found);
             }
         }
         at += c[at] as usize;
     }
-    Some(BulkPair { ep_in: ep_in?, ep_out: ep_out? })
+    let ((ep_in, mps_in), (ep_out, mps_out)) = (ep_in?, ep_out?);
+    Some(BulkPair { ep_in, mps_in, ep_out, mps_out })
 }
 
 #[cfg(test)]
@@ -65,7 +68,7 @@ mod tests {
     #[test]
     fn finds_the_first_bulk_pair() {
         let c = config(&[&[endpoint(0x81, 2, 512), endpoint(0x01, 2, 512), endpoint(0x82, 3, 8)]]);
-        assert_eq!(bulk_pair(&c), Some(BulkPair { ep_in: 1, ep_out: 1 }));
+        assert_eq!(bulk_pair(&c), Some(BulkPair { ep_in: 1, mps_in: 512, ep_out: 1, mps_out: 512 }));
     }
 
     /// Composite gadget: the bulk pair sits past byte 64 (as on the S20, #627).
@@ -75,7 +78,7 @@ mod tests {
         let c = config(&[&int3, &int3, &[endpoint(0x84, 2, 512), endpoint(0x04, 2, 512)]]);
         assert!(c.len() > 64);
         let read = &c[..c.len().min(CONFIG_MAX)];
-        assert_eq!(bulk_pair(read), Some(BulkPair { ep_in: 4, ep_out: 4 }));
+        assert_eq!(bulk_pair(read), Some(BulkPair { ep_in: 4, mps_in: 512, ep_out: 4, mps_out: 512 }));
     }
 
     /// FS bulk below 64 (USB 2.0 5.8.3 allows 8/16/32/64): the packet size is the descriptor's.
