@@ -57,6 +57,16 @@ mod tests {
         assert_eq!(bulk_pair(&c), Some(BulkPair { ep_in: 1, ep_out: 1 }));
     }
 
+    /// Composite gadget: the bulk pair sits past byte 64 (as on the S20, #627).
+    #[test]
+    fn bulk_pair_past_byte_64_is_read() {
+        let int3 = [endpoint(0x81, 3, 8), endpoint(0x82, 3, 8), endpoint(0x83, 3, 8)];
+        let c = config(&[&int3, &int3, &[endpoint(0x84, 2, 512), endpoint(0x04, 2, 512)]]);
+        assert!(c.len() > 64);
+        let read = &c[..c.len().min(CONFIG_MAX)];
+        assert_eq!(bulk_pair(read), Some(BulkPair { ep_in: 4, ep_out: 4 }));
+    }
+
     #[test]
     fn interrupt_only_is_no_pair() {
         let c = config(&[&[endpoint(0x81, 3, 8), endpoint(0x01, 3, 8)]]);
