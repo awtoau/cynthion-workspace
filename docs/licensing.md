@@ -8,6 +8,7 @@
   - `gateware/board/{core,cynthion_r1_4,resources}.py`, `gateware/usb_ids.py`, parts of `soc/top.py`: Great Scott Gadgets, BSD-3-Clause.
   - `patches/luna-*.patch`: apply to luna (BSD-3-Clause); the added `record.py` / `coding.py` are Amaranth's BSD-2-Clause code.
 - **Submodules** (`repos/*`) keep their own licences.
+- **Linux kernel modules** (`linux/`): `GPL-2.0`, the kernel's licence; GPL-3 code cannot be linked into the kernel.
 - **What we may take in:** GPL-3, LGPL-2.1 / 3, Apache-2.0, MPL-2.0, MIT, BSD, ISC.
 - **What stays out:** code with no licence, GPL-2.0-only, CERN-OHL-S (GUH's early files carried it by mistake, `apfaudio/guh#1`), proprietary / vendor IP, no-commercial or no-derivatives terms.
 - Distributing a bitstream built from GPL source means offering that source. This repo is public, which does it.
