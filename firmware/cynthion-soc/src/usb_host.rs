@@ -97,6 +97,9 @@ pub const PUMP_MAX: u32 = 1 << 20;
 const ECHO_CHUNK: u32 = 16384;
 /// RX FIFO refill is ~0.1 us per byte (4 usb cycles of CDC); 2 us covers one read.
 const FIFO_US: u32 = 2;
+/// Most bytes one transaction can leave: SIE FIFO 512 + shim RX FIFO 128.
+/// Reached: stop draining (a FIFO that never empties is not ours to wait on).
+const RX_DRAIN_MAX: u16 = 640;
 /// Error retries per transaction: xHCI endpoint context CERR = 3.
 const TRIES: u8 = 3;
 /// Phone re-enumerating after START: 4.0 s and over 5 s on the Pixel 3 XL
@@ -257,6 +260,18 @@ fn wait_until(op: &'static str, limit_us: u32, mut done: impl FnMut() -> bool) -
     }
 }
 
+/// Empty the RX FIFO of a response whose payload is not read, so the next IN starts clean.
+/// `settle`: bytes may still be crossing from the SIE; each straggler gets `FIFO_US`.
+fn discard_rx(r: Regs, settle: bool) {
+    for _ in 0..RX_DRAIN_MAX {
+        let empty = r.rd(RX_TAG) & 2 == 0;
+        if empty && (!settle || wait_until("rx drain", FIFO_US, || r.rd(RX_TAG) & 2 != 0).is_err()) {
+            return;
+        }
+        r.rd(RX_DATA);
+    }
+}
+
 fn setup_packet(bm: u8, request: u8, value: u16, index: u16, length: u16) -> [u8; 8] {
     [bm, request, value as u8, (value >> 8) as u8, index as u8, (index >> 8) as u8,
      length as u8, (length >> 8) as u8]
@@ -396,10 +411,22 @@ impl Host {
         let mut errors = 0;
         loop {
             let t0 = clock::now();
-            let (resp, len) = self.transact(r, ty, ep, pid, out)?;
+            let (resp, len) = match self.transact(r, ty, ep, pid, out) {
+                Ok(v) => v,
+                Err(e) => {
+                    if ty == TY_IN {
+                        discard_rx(r, true);
+                    }
+                    return Err(e);
+                }
+            };
             let t1 = clock::now();
             let (x, f) = self.prof.get();
             self.prof.set((x.wrapping_add(t0.elapsed(t1)), f));
+            if ty == TY_IN && resp != RESP_ACK {
+                // NAK/STALL carry no payload; CRC, overflow and timeout may leave some.
+                discard_rx(r, !matches!(resp, RESP_NAK | RESP_STALL));
+            }
             match resp {
                 // Wrong DATA PID: a resend after our ACK was lost. The SIE ACKed it; drop it,
                 // keep the toggle, ask again (USB 2.0 8.6.4).

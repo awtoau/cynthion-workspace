@@ -42,6 +42,7 @@
 - OUT payload over 512 B ([#572](https://github.com/awtoau/cynthion-workspace/issues/572)): the shim's DRAIN waited for its TX FIFO to empty into a full SIE FIFO, forever; nothing but leaving host ended it. Fixed: refused at `start` (`tx_overflow` + `done`, both FIFOs emptied); a bus reset ends any transfer and empties TX. Cases `bulk_out_mps_plus_1`, `bulk_out_oversize_then_bus_reset`.
 - OUT payloads up to 512 B pass (the 128-entry TX FIFO is not the limit in host role).
 - IN toggle ([#627](https://github.com/awtoau/cynthion-workspace/issues/627)): the driver delivered a DATA PID it did not expect (a resend after a lost ACK). Fixed: `stage` checks `RXPID`, drops the packet (the SIE has ACKed it), keeps the toggle, asks again. Case `toggle_in_mismatch_discarded`.
+- Stale RX ([#627](https://github.com/awtoau/cynthion-workspace/issues/627)): the driver popped RX only on ACK, so CRC-bad IN bytes were read by the next IN (and survive a bus reset). The sim model popped on every response and hid it. Fixed: `discard_rx` empties RX after every IN response it does not read; the model matches. Case `handshake_crc_then_clean_in`.
 - Pixel EP0 wedge after NAKed requests ([#572](https://github.com/awtoau/cynthion-workspace/issues/572)): device-side. `ctrl_nak_forever_then_good` abandons four NAK-forever requests on the model (vendor 0x5A) and the next SETUPs are ACKed.
 
 ## Waits

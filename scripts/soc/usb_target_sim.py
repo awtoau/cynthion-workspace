@@ -57,6 +57,7 @@ DATA_PID = (0xC3, 0x4B)     # DATA0, DATA1 as RXPID reads them
 DONE_POLLS = 800            # one transaction < 12k usb cycles (shim_sim: DONE_POLLS)
 CASE_STALL_CYCLES = 250_000   # longest case measured 182_419 usb cycles (reset_x3, #592); x1.37; sim time, not wall, so load cannot trip it
 RX_SPINS_PER_BYTE = 8       # RX_TAG polls per byte while the 128-entry FIFO refills from the SIE
+RX_DRAIN_MAX = 640          # firmware RX_DRAIN_MAX: SIE FIFO 512 + shim RX 128
 NAK_TRIES = 40              # stands for the driver's 100 ms NAK window; a NAK is ~ a transaction
 ERROR_TRIES = 3             # firmware TRIES: timeouts / CRC errors per stage
 LINE_POLLS = 400            # LINK.connected follows a detach/attach within the PHY debounce
@@ -106,19 +107,33 @@ class SimBackend(Backend):
         if events is None:
             return "hang", 0, b""
         if events & (EV_BUSY_DROP | EV_TIMEOUT | EV_TX_OVERFLOW):
+            if ty == TY_IN:
+                await self.discard_rx(True)
             return "dropped", 0, b""
         resp = await pc.read(REG_RESP) & 7
         if resp == RESP_ACK and ty == TY_IN and await pc.read(REG_RXPID) != DATA_PID[pid]:
             resp = "resend"
         length = await pc.read(REG_RXLEN_LO) | (await pc.read(REG_RXLEN_HI) << 8)
         data, spins = [], 0
-        if resp not in (RESP_ACK, "resend"):    # as the firmware: RX is popped only on ACK
+        if resp not in (RESP_ACK, "resend"):
+            if ty == TY_IN:                     # usb_host.rs discard_rx
+                await self.discard_rx(resp not in (RESP_NAK, RESP_STALL))
             return resp, length, b""
         while len(data) < length and spins < length * RX_SPINS_PER_BYTE + 64:
             spins += 1
             if await pc.read(REG_RX_TAG) & 2:
                 data.append(await pc.read(REG_RX_DATA))
         return resp, length, bytes(data)
+
+    async def discard_rx(self, settle):
+        """Pop until empty; `settle` gives each straggler RX_SPINS_PER_BYTE polls (firmware FIFO_US)."""
+        for _ in range(RX_DRAIN_MAX):
+            spins = RX_SPINS_PER_BYTE if settle else 1
+            while spins and not await self.pc.read(REG_RX_TAG) & 2:
+                spins -= 1
+            if not spins:
+                return
+            await self.pc.read(REG_RX_DATA)
 
     async def stage(self, ty, ep, pid, out=b"", want=None):
         """Returns (kind, data). `want` caps returned bytes like the firmware's buffer slice."""

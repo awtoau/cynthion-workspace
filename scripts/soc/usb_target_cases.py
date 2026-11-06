@@ -458,7 +458,9 @@ def table():
         profiles=("model", "model_fs"), board=inject, after=NONE,
         about="one data byte of the device packet flipped: CRC_ERROR after 3 tries; bus recovers")
     add("handshake_crc_then_clean_in", "handshake",
-        [S("bulk_out", E(), ep=1, data=bytes(range(16))),
+        # Two INs first: earlier cases leave packets in the echo (a dropped-ACK OUT is delivered).
+        [S("bulk_in", Exp(kinds=ANY), ep=1, n=64), S("bulk_in", Exp(kinds=ANY), ep=1, n=64),
+         S("bulk_out", E(), ep=1, data=bytes(range(16))),
          S("fault", None, mode="crc"),
          S("bulk_in", E("crc"), ep=1, n=64),
          S("fault", None, mode="none"),
