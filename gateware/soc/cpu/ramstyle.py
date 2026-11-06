@@ -8,13 +8,14 @@ the block cost (128 per DP16KD): anything of 32 DPR16X4 or fewer. A `ram_style` 
 overrides that, which the Scala generator only emits for a few memories. Mapping change only:
 widths, depths and the RTL read/write behaviour are untouched.
 
-`BLOCK` rows: (name, declaration regex, flag that legitimately removes the memory).
+`BLOCK` rows: (name, declaration regex, flag that legitimately removes the memory, or None).
 """
 
 import re
 
 BLOCK = [
     ("regfile", r"asMem_ram", "--regfile-reg-based"),
+    ("fetch_tags", r"FetchL1Plugin_logic_ways_\d+_mem", None),
 ]
 
 
