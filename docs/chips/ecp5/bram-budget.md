@@ -16,10 +16,10 @@ All built for r1.4, same device, package and speed grade.
 
 ## Current SoC count
 
-- Counts recorded before #441 came from non-reproducible builds; see [`lfe5u-12f.md`](lfe5u-12f.md#block-ram).
+- Counts recorded before [#441](https://github.com/awtoau/cynthion-workspace/issues/441) came from non-reproducible builds; see [`lfe5u-12f.md`](lfe5u-12f.md#block-ram).
 - Count by mode, not one mode: `grep -cE "^enum: EBR[0-9]+\.MODE " top.config` (all modes) agrees with nextpnr's `N/56` line; a `DP16KD`-only grep undercounts `PDPW16KD` cells (details: [`lfe5u-12f.md`](lfe5u-12f.md#block-ram)).
 - Recorded counts: 44 of 56 (42 `DP16KD` + 2 `PDPW16KD`; [`lfe5u-12f.md`](lfe5u-12f.md)); 48 of 56 with 8 KiB caches, 49 for the shipping geometry in the 2026-08-12 sweep below (those builds differ).
-- USB host SIE tx/rx FIFOs (512x8 each) in block RAM, 2 blocks ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)): `SyncFIFOBuffered` with the engine reading `r_level` (`docs/upstream-boundary.md`, GUH). Whole SoC with the earlier drop-in FIFO (`6465c5f`): build #445, 2026-11-06, 33/56 BRAM, 19555 COMB (main before: 31, 20809). Whole SoC on `SyncFIFOBuffered`: not built yet.
+- USB host SIE tx/rx FIFOs (512x8 each) in block RAM, 2 blocks ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)): `SyncFIFOBuffered` with the engine reading `r_level` (`docs/upstream-boundary.md`, GUH). Whole SoC with the earlier drop-in FIFO (`6465c5f`): metrics build 445, 2026-11-06, 33/56 BRAM, 19555 COMB (main before: 31, 20809).
 - UNVERIFIED: the current count. No build report exists under `tmp/` in this worktree; run `./dev.py metrics report`.
 - Consumers: main block RAM 64 KiB at address 0 in the recorded builds (32 blocks); `top.py` now has `RAM_SIZE = 32 * 1024`. USB buffers 3, BTB 2, ILA 1; I-cache and D-cache 5 blocks each at 8 KiB. Doubling both caches from 4 to 8 KiB cost 4 blocks, not 6 (tag and status RAM did not double).
 - Spare went to the caches rather than RAM: `.bss` was 9,728 bytes and `.data` zero, so the rest of the RAM region was stack slack. Doubling the caches addresses the frontend-stall number [`../../rtic.md`](../../rtic.md) measured.
@@ -27,13 +27,13 @@ All built for r1.4, same device, package and speed grade.
 ## Capture work barely touches block RAM
 
 - Analyzer buffers into HyperRAM via `HyperRAMPacketFIFO`; block RAM holds only small FIFOs: `out_fifo_depth=128` out, a 4-deep async FIFO into the `usb` domain.
-- USB caps at 48.5 MB/s, far below the HyperRAM bus ([`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md), #581): no block RAM needed for bulk buffering.
+- USB caps at 48.5 MB/s, far below the HyperRAM bus ([`../hyperram/sequential-baseline.md`](../hyperram/sequential-baseline.md), [#581](https://github.com/awtoau/cynthion-workspace/issues/581)): no block RAM needed for bulk buffering.
 
 ## Firmware, not buffers, consumes it
 
 - Both heavy designs are soft-CPU systems with block-RAM program memory: 64 KiB is 32 blocks before anything else.
 - A 16 KiB-cache configuration reached 32/56 in the RISC-V sweep ("nearly full" only because 64 KiB of firmware is assumed alongside).
-- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through `SPIFlashMemoryMap`, freeing block RAM.
+- The ceiling constrains CPU designs with block-RAM firmware, not the device. `.text` and `.rodata` now execute in place from flash through the XIP window (`peripherals/flash.py`), freeing block RAM.
 - Cost of flash execution: flash fetch costs many cycles against block RAM's one, which the I-cache hides; with a too-small cache the stall is measurable: [`../../rtic.md`](../../rtic.md) ([#245](https://github.com/awtoau/cynthion-workspace/issues/245)): RTIC's extra 1,700 bytes of `.text` moved frontend stalls from 44 to **452 per 1,000 cycles** through a 4 KiB direct-mapped I-cache.
 
 ## Cache geometry

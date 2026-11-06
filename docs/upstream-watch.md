@@ -58,7 +58,7 @@ Bugs we found ourselves in upstream code: [`upstream-bugs.md`](upstream-bugs.md)
 | cynthion [#239](https://github.com/greatscottgadgets/cynthion/issues/239) FUSB302B support | closed | only a factory selftest, no driver | CONTRIBUTE (human) |
 | cynthion [PR#265](https://github.com/greatscottgadgets/cynthion/pull/265) `cynthion reset` | closed, not merged | closed over LLM authorship | |
 | hardware [#18](https://github.com/greatscottgadgets/cynthion-hardware/pull/18) r1.4.0 changes | merged 2024-08 | R110 5.1k pull-up, TARGET_C_VBUS default, second common-mode choke | diff our r1.4 against it |
-| hardware [#15/#13/#12/#14](https://github.com/greatscottgadgets/cynthion-hardware/issues) r1.3 errata (1.1 V leak to TARGET A VBUS, PAC zone overlap ~25% error, INITN series R) | closed | PAC1954 and VBUS checklist; UNSURE r1.4 fixed #13 | USE as checklist |
+| hardware [#15/#13/#12/#14](https://github.com/greatscottgadgets/cynthion-hardware/issues) r1.3 errata (1.1 V leak to TARGET A VBUS, PAC zone overlap ~25% error, INITN series R) | closed | PAC1954 and VBUS checklist; UNSURE r1.4 fixed [#13](https://github.com/awtoau/cynthion-workspace/issues/13) | USE as checklist |
 | packetry [#250](https://github.com/greatscottgadgets/packetry/pull/250) device data intermingled on address reuse | merged 2025-08 | affects Android/DJI captures | USE (v0.5.0 has it) |
 | packetry [#284](https://github.com/greatscottgadgets/packetry/issues/284) queue worker ENOMEM (usbfs 16 MB) | open | long captures | WATCH |
 | packetry [#233](https://github.com/greatscottgadgets/packetry/issues/233) logging stops at saturated HS | closed | HyperRAM fills | AVOID saturated HS capture |
@@ -73,10 +73,10 @@ First sweep covered May 2025 on. This one read every open issue/PR of any age an
 ### luna: device-stack items that matter for the AOA test rig (ZLPs, stalls, descriptors)
 | item | state | why it matters to us | verdict |
 |---|---|---|---|
-| [#127](https://github.com/greatscottgadgets/luna/issues/127) `USBInTransferManager` does not toggle DATA on a ZLP | closed 2021-08 (fix PR #128 closed unmerged) | ZLP DATA-toggle bug in the bulk IN path; mainline status UNSURE | USE: verify the toggle in our fork |
+| [#127](https://github.com/greatscottgadgets/luna/issues/127) `USBInTransferManager` does not toggle DATA on a ZLP | closed 2021-08 (fix PR [#128](https://github.com/awtoau/cynthion-workspace/issues/128) closed unmerged) | ZLP DATA-toggle bug in the bulk IN path; mainline status UNSURE | USE: verify the toggle in our fork |
 | [#137](https://github.com/greatscottgadgets/luna/issues/137) descriptor request of exactly N*MPS stalls instead of a ZLP | closed 2021-11 | direct ZLP test case; final fix UNSURE ([#264](https://github.com/greatscottgadgets/luna/pull/264) merged 2024-06 passes MPS to GetDescriptor) | USE: ZLP test |
-| [#143](https://github.com/greatscottgadgets/luna/issues/143) `usb_device_connect=0` does not disconnect | closed 2024-06 (fixed by [#212](https://github.com/greatscottgadgets/luna/pull/212)) | soft-disconnect for re-enumeration | USE: confirm #212 in fork |
-| [#166](https://github.com/greatscottgadgets/luna/issues/166) `CLEAR_FEATURE(ENDPOINT_HALT)` not implemented | closed 2024-07 ([#266](https://github.com/greatscottgadgets/luna/pull/266)) | stall recovery, toggle reset | USE: confirm #266 in fork |
+| [#143](https://github.com/greatscottgadgets/luna/issues/143) `usb_device_connect=0` does not disconnect | closed 2024-06 (fixed by [#212](https://github.com/greatscottgadgets/luna/pull/212)) | soft-disconnect for re-enumeration | USE: confirm [#212](https://github.com/awtoau/cynthion-workspace/issues/212) in fork |
+| [#166](https://github.com/greatscottgadgets/luna/issues/166) `CLEAR_FEATURE(ENDPOINT_HALT)` not implemented | closed 2024-07 ([#266](https://github.com/greatscottgadgets/luna/pull/266)) | stall recovery, toggle reset | USE: confirm [#266](https://github.com/awtoau/cynthion-workspace/issues/266) in fork |
 | [#163](https://github.com/greatscottgadgets/luna/issues/163) ECP5 descriptors > 128 B truncated | closed 2024-11 | our composite descriptor may exceed 128 B; gateware fix UNSURE | WATCH |
 | [#32](https://github.com/greatscottgadgets/luna/issues/32) wrong `bInterfaceProtocol` for ACM | closed 2020-07 | CDC descriptor pitfall; check our protocol byte | reference |
 | [#125](https://github.com/greatscottgadgets/luna/issues/125) internal speed signal never updated in `USBDevice` | open 2021-07 | speed/chirp logic; check our fork | WATCH |
@@ -123,4 +123,4 @@ First sweep covered May 2025 on. This one read every open issue/PR of any age an
 
 - **Compression: none anywhere between the analyzer and the file.** Analyzer to host: raw 16 KiB reads (`src/backend/cynthion.rs`, `READ_LEN=0x4000`, 4 transfers in flight); no compression in the host reader (gateware side not read: UNSURE, but `repos/cynthion` analyzer sources contain no compression or filtering code).
 - Database: `src/database/compact_index.rs` delta-encodes the index with checkpoints; packet bytes are stored raw. pcap/pcapng export is uncompressed (`src/file.rs`).
-- Limits in practice: usbfs memory (#284) and the analyzer buffer filling at a saturated bus ([#233](https://github.com/greatscottgadgets/packetry/issues/233)), plus disk space. No hard size cap seen in source (UNSURE).
+- Limits in practice: usbfs memory ([#284](https://github.com/awtoau/cynthion-workspace/issues/284)) and the analyzer buffer filling at a saturated bus ([#233](https://github.com/greatscottgadgets/packetry/issues/233)), plus disk space. No hard size cap seen in source (UNSURE).

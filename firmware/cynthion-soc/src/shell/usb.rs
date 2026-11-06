@@ -188,7 +188,7 @@ fn status(uart: &mut Uart, index: usize, devices: &mut Devices) {
             }
         }
         None => {
-            let _ = writeln!(uart, "none -- TARGET_A cannot source, it is the far end");
+            let _ = writeln!(uart, "none -- TARGET_A cannot source; `vbus control` feeds it");
         }
     }
 

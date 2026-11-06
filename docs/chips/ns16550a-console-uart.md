@@ -235,7 +235,7 @@ identifying the part. The single gap is interrupt-line discovery.
 |---|---|---|---|
 | FIFO | none | **16 bytes, fixed** | 32 / 64, discoverable |
 | driver assumption | — | every driver assumes 16 on seeing 16550A in IIR | needs a depth register, and nothing agrees about them |
-| ECP5 mapping | — | 16 × 8 bits → distributed LUT RAM (`TRELLIS_DPR16X4`) | 1024 × 8 → a whole `DP16KD` |
+| ECP5 mapping | — | 16 × 8 bits → one `DP16KD` per FIFO, pinned by [`bram_fifo.py`](../../gateware/soc/peripherals/bram_fifo.py) (unpinned, yosys picks `TRELLIS_DPR16X4`) | 1024 × 8 → a whole `DP16KD` |
 
 **Depth is a constant, not a parameter.** Making it adjustable means firmware has
 to discover it, and the deeper parts buy that discovery with a block RAM on a die

@@ -23,7 +23,7 @@ Status: **default is yosys main `8f3cc3d0c` plus our abc9 fix, nextpnr 0.11.1, n
 - yosys step with `autoname`: 104.5 s -> 37 s. `autoname` itself 53.3 s -> 0.12 s (rewritten in 0.70), so the `autoname` skip in [`fast_build_env.py`](../scripts/fast_build_env.py) is not needed there.
 
 ## Blocker: abc9 ties unlisted inputs of async flip-flops to 0 (`M`, `CE`)
-- Cause: yosys `ae085b637` "abc_ops: use all ports, including ports the instance doesn't list" (2026-11-02, PR #6437, fixes #6427), in 0.70+329 and main `8f3cc3d0c`. `abc9_ops prep_bypass` now wires every module port of an `abc9_bypass` cell; a port the instance does not list comes back from ABC as constant 0. Reverting that commit makes the test below pass.
+- Cause: yosys `ae085b637` "abc_ops: use all ports, including ports the instance doesn't list" (2026-11-02, PR [#6437](https://github.com/awtoau/cynthion-workspace/issues/6437), fixes [#6427](https://github.com/awtoau/cynthion-workspace/issues/6427)), in 0.70+329 and main `8f3cc3d0c`. `abc9_ops prep_bypass` now wires every module port of an `abc9_bypass` cell; a port the instance does not list comes back from ABC as constant 0. Reverting that commit makes the test below pass.
 - Not specific to `M` or to `TRELLIS_FF`: any input the instance leaves unconnected. On `TRELLIS_FF` that is `M` (unused unless `LSRMODE=="PRLD"`) and `CE` when `CEMUX=="1"` (the flop has no enable).
 - Effects: `M` connected to `1'b0` on every async FF (576 here; 0 in 0.65+57), and nextpnr 0.10-74 / 0.11.1 fail in the packer: `net '$PACKER_GND_NET' user port '<ff>.M' connected to incorrect net` (nextpnr `ecp5/pack.cc` drops a floating `M` but not a constant one). `CE` tied to 0 froze flip-flops: the silent CPU on the board.
 - The async flop is not an ABC box here: `abc9_ops` strips `abc9_box` from a derived box containing a builtin FF and marks it `abc9_bypass` (`abc9_ops.cc:241-246`); an earlier draft of this report said otherwise.
@@ -60,9 +60,9 @@ Status: **default is yosys main `8f3cc3d0c` plus our abc9 fix, nextpnr 0.11.1, n
 
 ## Upstream report (draft, not posted: needs Dan's go)
 
-**Title:** `abc9`: input ports an `abc9_bypass` cell instance leaves unconnected come back tied to 0 (regression from #6437; breaks `synth_ecp5` -> nextpnr)
+**Title:** `abc9`: input ports an `abc9_bypass` cell instance leaves unconnected come back tied to 0 (regression from [#6437](https://github.com/awtoau/cynthion-workspace/issues/6437); breaks `synth_ecp5` -> nextpnr)
 
-**Versions:** Yosys 0.70+329 (`b8d84f823`) and main `8f3cc3d0c`; regression from `ae085b637` (#6437). Yosys 0.65+57 is not affected. nextpnr-ecp5 0.11.1-86 and 0.10-74.
+**Versions:** Yosys 0.70+329 (`b8d84f823`) and main `8f3cc3d0c`; regression from `ae085b637` ([#6437](https://github.com/awtoau/cynthion-workspace/issues/6437)). Yosys 0.65+57 is not affected. nextpnr-ecp5 0.11.1-86 and 0.10-74.
 
 **Repro** (`t.v`):
 ```verilog
@@ -82,6 +82,6 @@ yosys -p "read_verilog t.v; synth_ecp5 -top t; dump t:TRELLIS_FF"
 
 **Impact:** nextpnr-ecp5 stops in packing with `user port '<ff>.M' connected to incorrect net '$PACKER_GND_NET'`; a constant-0 `CE` on a flop that has no enable freezes it (found as a silent CPU on hardware).
 
-**Fix proposed:** mark the template module's input ports `techmap_autopurge` (one `set_bool_attribute` in `prep_bypass`), plus the test `tests/arch/ecp5/trellis_ff_unused_ports.ys`. It keeps the behaviour #6437 wanted for ports an instance does connect.
+**Fix proposed:** mark the template module's input ports `techmap_autopurge` (one `set_bool_attribute` in `prep_bypass`), plus the test `tests/arch/ecp5/trellis_ff_unused_ports.ys`. It keeps the behaviour [#6437](https://github.com/awtoau/cynthion-workspace/issues/6437) wanted for ports an instance does connect.
 
 **Also:** nextpnr `ecp5/pack.cc` drops a floating `M` but not one tied to a constant; accepting a constant `M` would be a cheap independent robustness fix.

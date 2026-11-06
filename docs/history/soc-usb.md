@@ -276,7 +276,7 @@ is the difference between a number they must trust and one they can run.
 
 ---
 
-## apollo configure speed: full investigation record (issues #100, #108, #199)
+## apollo configure speed: full investigation record (issues [#100](https://github.com/awtoau/cynthion-workspace/issues/100), [#108](https://github.com/awtoau/cynthion-workspace/issues/108), [#199](https://github.com/awtoau/cynthion-workspace/issues/199))
 
 ### Source: docs/apollo_samd11_mcu/apollo-configure-speed-investigation.md
 
@@ -1505,7 +1505,7 @@ oversight.
 
 ---
 
-## usb-host-options.md: Parts I-III as first written (issues #101, #105)
+## usb-host-options.md: Parts I-III as first written (issues [#101](https://github.com/awtoau/cynthion-workspace/issues/101), [#105](https://github.com/awtoau/cynthion-workspace/issues/105))
 
 ### Source: docs/usb-host-options.md
 
@@ -2623,7 +2623,7 @@ firmware enumeration.
 
 ---
 
-## soc-clocking.md: withdrawn CPU-ceiling ladder and divider table (issue #110)
+## soc-clocking.md: withdrawn CPU-ceiling ladder and divider table (issue [#110](https://github.com/awtoau/cynthion-workspace/issues/110))
 
 ### Source: docs/soc-clocking.md
 
@@ -3148,7 +3148,7 @@ argument either.
 
 ---
 
-## gateware-architecture-plan.md: original plan text incl. 'silent SoC' blocker (issue #209, closed) and 6342 LUT CPU figure
+## gateware-architecture-plan.md: original plan text incl. 'silent SoC' blocker (issue [#209](https://github.com/awtoau/cynthion-workspace/issues/209), closed) and 6342 LUT CPU figure
 
 ### Source: docs/gateware-architecture-plan.md
 
@@ -4627,7 +4627,7 @@ upstream does, so we have to simulate what they instrument.
 
 ---
 
-## docs/apollo_samd11_mcu/: retired UART-watchdog / SPI-on-PA08-PA09 plans, and the first drafts of the kept docs (issues #15, #33, #53, #55, #56, #61, #65)
+## docs/apollo_samd11_mcu/: retired UART-watchdog / SPI-on-PA08-PA09 plans, and the first drafts of the kept docs (issues [#15](https://github.com/awtoau/cynthion-workspace/issues/15), [#33](https://github.com/awtoau/cynthion-workspace/issues/33), [#53](https://github.com/awtoau/cynthion-workspace/issues/53), [#55](https://github.com/awtoau/cynthion-workspace/issues/55), [#56](https://github.com/awtoau/cynthion-workspace/issues/56), [#61](https://github.com/awtoau/cynthion-workspace/issues/61), [#65](https://github.com/awtoau/cynthion-workspace/issues/65))
 
 ### Source: docs/apollo_samd11_mcu/apollo_serial_architecture_redesign_plan.md
 

@@ -64,8 +64,8 @@ behind it — RTIC's `binds =` names a SLIC source, not a hardware interrupt.
 | buffering | `StreamBuffer` at the transport, not in the UART | written | sized per transport; overflow dropped at the producer |
 | I2C | one controller plus a mux, OpenCores rev 0.9 map | written | forced — the parts share one bus |
 | device protocols | one owner, cached reads | written | [`chips/pac1954-power-monitor.md`](chips/pac1954-power-monitor.md), [#123](https://github.com/awtoau/cynthion-workspace/issues/123) |
-| SPI flash | crossbar, chip-select hold, quad `0xEB`; mmap, PHY base, controller core and port signatures are luna_soc's (`spiflash`), wrapped by ours | written over luna_soc | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), [#89](https://github.com/awtoau/cynthion-workspace/issues/89) |
-| HyperRAM | register interface on the #581 core at CK 180, `0xf0000800` window 0x80, IRQ 18 (#588) | written | [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md), [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
+| SPI flash | XIP + command port + calibration on the clean-room [#590](https://github.com/awtoau/cynthion-workspace/issues/590) core, SCK 180 MHz ([`chips/flash-soc-peripheral.md`](chips/flash-soc-peripheral.md), [#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | ours | [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md), [#89](https://github.com/awtoau/cynthion-workspace/issues/89) |
+| HyperRAM | register interface on the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core at CK 180, `0xf0000800` window 0x80, IRQ 18 ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)) | written | [`chips/hyperram/soc-peripheral.md`](chips/hyperram/soc-peripheral.md), [`chips/hyperram/w956a8.md`](chips/hyperram/w956a8.md) |
 | sideband | FPGA_ADV, one wire, three commands | written | [`chips/cynone-sideband.md`](chips/cynone-sideband.md), [#137](https://github.com/awtoau/cynthion-workspace/issues/137) |
 | ULPI window | register access on both PHYs (luna's `ULPIRegisterWindow`) | luna | [`chips/usb3343-ulpi-phy.md`](chips/usb3343-ulpi-phy.md) |
 | USB CDC console | `USBSerialDevice` on `aux_phy`, one byte per packet | luna | [`usb-performance.md`](usb-performance.md) |
@@ -82,7 +82,7 @@ one shape — a hold expressed as a ready. Each is named with its reproducer in
 |---|---|---|---|
 | at `0x0` | **the bootloader** — `firmware/cynthion-boot`, 492 bytes | written | [`hardware.md`](hardware.md), [#138](https://github.com/awtoau/cynthion-workspace/issues/138) |
 | the firmware | `firmware/cynthion-soc` — an **image** the bootloader loads | written | too large to be resident |
-| firmware load | JTAG stream, and USB bulk. Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path. | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
+| firmware load | JTAG stream, and USB bulk. Transport re-based onto the [#588](https://github.com/awtoau/cynthion-workspace/issues/588) byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path. | written | [#132](https://github.com/awtoau/cynthion-workspace/issues/132), [#114](https://github.com/awtoau/cynthion-workspace/issues/114) |
 | memory map and PAC | generated from the design; **addresses only** | generated | `scripts/soc/soc_generate_pac.py`, [`hardware.md`](hardware.md#register-reference) |
 
 ## Dependencies and verification

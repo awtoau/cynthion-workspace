@@ -73,8 +73,8 @@ from amaranth_soc.memory   import MemoryMap                    # noqa: E402
 from amaranth_soc.wishbone import Decoder                      # noqa: E402
 
 from bus.wishbone_pipe import RegisteredResponse                # noqa: E402
-from bus.fault import BusFault, worst_ack_cycles                # noqa: E402
-from peripherals.flash import READ_MODES                        # noqa: E402
+from bus.fault import BusFault                                  # noqa: E402
+from peripherals.flash import SCK_MHZ, xip_worst_sync_cycles    # noqa: E402
 
 # A small memory with distinct, non-zero words.
 #
@@ -534,19 +534,19 @@ def fault_checks(checks, verbose):
 
     # --- the bound this SoC actually builds with ---------------------------
     #
-    # Asserted rather than noted: it is derived from FLASH_MODE and
-    # FLASH_DIVISOR, and a change to either that made it tight would otherwise
-    # only show up as a board that faults at random.
-    worst = worst_ack_cycles(mode=READ_MODES["quad"], divisor=0)
+    # Asserted rather than noted: derived from the flash peripheral's own
+    # transaction bounds, so a change that made it tight shows here, not as a
+    # board that faults at random. The XIP fill watchdog must fire first.
+    xip = xip_worst_sync_cycles(sync_mhz=60.0)
+    worst = xip + 4
+    bound, fill = -(-5 * worst // 4), -(-5 * xip // 4)
     checks.check(
-        "the shipping bound is 1.25x the slowest legitimate answer",
-        worst == 585 and -(-5 * worst // 4) == 732,
-        f"worst legitimate answer {worst} cycles, bound {-(-5 * worst // 4)}. "
-        f"The worst is a cold quad-mode flash read (69 cycles) with one maximal "
-        f"SPI-controller transfer stealing the crossbar before each of its four "
-        f"phases (4 x 129).")
-    checks.note(f"bus timeout {-(-5 * worst // 4)} cycles "
-                f"= 1.25 x {worst} (quad, divisor 0)")
+        "the shipping bound is 1.25x the slowest legitimate answer, above the XIP watchdog",
+        fill < bound,
+        f"worst legitimate answer {worst} cycles, bound {bound}, XIP fill watchdog {fill}. "
+        f"The worst is an XIP line fill queued behind one maximal (256 B x1) command "
+        f"transaction at SCK {SCK_MHZ:g}, sync 60.")
+    checks.note(f"bus timeout {bound} cycles = 1.25 x {worst} (XIP behind one command)")
 
 
 def main():

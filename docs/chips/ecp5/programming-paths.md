@@ -124,7 +124,7 @@ Three front ends, one destination: the HyperRAM staging area, and a header of
 magic + length + CRC32 written last so a partial run leaves a header the
 bootloader ignores.
 
-Transport re-based onto the #588 byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path.
+Transport re-based onto the [#588](https://github.com/awtoau/cynthion-workspace/issues/588) byte port (ADDR + DATA32 auto-increment); JTAG stager is a second requester on its write path.
 
 | front end | needs | transport |
 |---|---|---|
@@ -166,7 +166,7 @@ firmware over the TARGET USB interface while the design keeps running.
 
 | half | state |
 |---|---|
-| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) `HoldableSPIController` gives the CPU arbitrary SPI transactions with a chip select that latches across CSR writes. Exposed as `SPI0` at `0xf0000100`. (Upstream's CS is a write-strobe pulse and collapses between transfers, which is a separate all-zeros JEDEC result from the one below — the file's own header has the capture.) |
+| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) command port ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)): any opcode as one /CS-low transaction, WREN and a bounded BUSY poll in gateware, 256 B buffer. `SPI0` at `0xf0000100`, `SPI0_BUF` at `0xf0000200` ([flash-soc-peripheral.md](../flash-soc-peripheral.md)). |
 | firmware | **absent.** [`firmware/cynthion-soc/src/memory.rs`](../../../firmware/cynthion-soc/src/memory.rs) says so in its own header: reading all three regions is safe, writing is not, and no `write` verb exists. |
 
 What the shell can do today is `flash read <hex>` and `flash id` — and `flash

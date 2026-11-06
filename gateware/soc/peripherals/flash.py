@@ -1,866 +1,735 @@
 #!/usr/bin/env python3
 #
-# Memory-mapped configuration SPI flash for the VexiiRiscv SoC.
+# Config flash: the #590 clean-room core behind XIP, a command port and CSRs (#593).
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""
-The configuration flash on the Wishbone bus, as read-only memory the CPU can
-address directly.
+"""SoC config-flash peripheral. Map, codes and errors: docs/chips/flash-soc-peripheral.md.
 
-The bus side, the shift registers and the ECP5 `USRMCLK` special case are all
-luna_soc's (`SPIFlashMemoryMap`, `SPIPHYController`,
-`ECP5ConfigurationFlashInterface`). What this file adds:
-
-  * a selectable read mode (`ModalSPIFlashMemoryMap`) -- upstream hardcodes
-    quad in the body of `elaborate`
-  * an arbiter that cannot starve a port (`FairSPIControlPortCrossbar`)
-  * a chip select that holds across CPU register writes (see `HoldSPIController`)
-  * a pin probe on the SPI wires (`FlashPinProbe`)
-
-`../../docs/architecture.md` records why each is ours rather than upstream's.
-
-## Read modes
-
-    SINGLE  0x03 Read Data       cmd/addr/data 1-lane, 0 dummy bits
-    QUAD    0xeb Quad I/O Read   cmd 1-lane, addr/dummy/data 4-lane, 24 dummy
-
-  * **Bring up in SINGLE.** Quad puts address, dummy cycles and data on four
-    lanes at once, so a wiring fault, a sample-timing fault and a mode fault
-    are indistinguishable -- every one returns wrong bytes. Single uses one
-    output and one input pin with no dummy cycles.
-  * **The quad dummy value `0xff0000` is not arbitrary.** `0xeb` sends mode
-    bits M7-M0 straight after the address; `0xff` is not `0xax`, so the flash
-    does not enter Continuous Read and the next transaction still needs its
-    opcode. `0xa0` would leave the chip expecting an address where the
-    controller sends a command -- every read after the first is garbage, while
-    the first looks perfect.
-  * Quad needs the Quad Enable bit in status register 2. It is already set on
-    this board (SR2 = 0x02, `docs/luna_ecp5_fpga/flash-detailed.md`). Nothing
-    here ever writes to the flash; the bitstream lives at offset 0.
-
-## PHY divisor
-
-`SPIPHYController(divisor=d)` clocks SCK at `sync / (2 * (1 + d))`. At 80 MHz:
-
-    d=0   40.0 MHz
-    d=1   20.0 MHz
-    d=2   13.3 MHz
-
-40 MHz is the fast end of what Lattice specifies: `MCLK` is a configuration
-pin, tristated into user mode and reachable only through `USRMCLK`, and
-FPGA-TN-02039 characterises it to 62 MHz. Faster has been measured to work on
-this board, which is not what a default should assume.
+- Core: `gateware/flash_baseline/spiflash.py` (TxEngine, FlashPHY, FlashPins, desc): one
+  transaction per descriptor, /CS held for the whole of it, gated MCLK.
+- Domains: `sync` (CSRs, XIP line buffer, bus), `fsck` (engine, core, pin registers),
+  `fcap`/`fcapn` (read capture, runtime PHASESTEP). Clocks from `clocks.SocClocks`.
+- XIP: a miss fetches the aligned 64 B line with one EBh 1-4-4 transaction; words are
+  acked as they land. Stores, and loads while a write-class command or calibration
+  runs (the part answers nothing but SR1 then), are answered ERR, never held.
+- Command port: optional WREN, one transaction (descriptor, address, <= 256 B through
+  `buf`), optional BUSY poll bounded by `wait_us`. Every wait is bounded; expiry is a
+  code, a sticky error and an IRQ.
+- Calibration after lock and on command: phase x lat x xfer scan on the JEDEC ID (IO1),
+  then on EBh against a 0Bh reference read (all four lines); centre of the widest run.
 """
 
-from amaranth               import Cat, C, Module, Signal, DomainRenamer, unsigned
-from amaranth.lib.cdc       import FFSynchronizer
-from amaranth.lib           import wiring
+import importlib.util
+from pathlib import Path
 
-# `amaranth_soc` is the installed package (luna_soc only falls back to a
-# vendored copy when it is missing); import it by the bare name, never the
-# vendored path, which gives a different wishbone.Interface class.
-from luna_soc.gateware.core.spiflash.mmap  import SPIFlashMemoryMap
+from amaranth             import (Cat, Const, Elaboratable, Instance, Module, Mux,
+                                  ResetInserter, Signal, DomainRenamer)
+from amaranth.lib         import io, memory, wiring
+from amaranth.lib.cdc     import FFSynchronizer
+from amaranth.lib.wiring  import In, Out
+from amaranth_soc         import wishbone
+from amaranth_soc.memory  import MemoryMap
 
-from amaranth_soc           import csr
-from luna_soc.gateware.core.spiflash.phy   import (SPIPHYController,
-                                                   SPIClockGenerator)
-from luna_soc.gateware.core.spiflash.controller import SPIController
-from luna_soc.gateware.core.spiflash.port  import (SPIControlPort,
-                                                   StreamCore2PHY,
-                                                   StreamPHY2Core)
-from luna_soc.gateware.core.spiflash.utils import WaitTimer
+from peripherals.bram_fifo import BramAsyncFIFO
+
+_spec = importlib.util.spec_from_file_location(
+    "flash_baseline_spiflash",
+    Path(__file__).resolve().parents[2] / "flash_baseline" / "spiflash.py")
+core = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(core)
+desc, W1, W4, LAT_MAX, MBYTE = core.desc, core.W1, core.W4, core.LAT_MAX, core.MBYTE
+
+__all__ = ["Flash", "SCK_MHZ", "FLASH_BYTES", "xip_worst_sync_cycles"]
+
+# Flash SCK, MHz: 120 = 2 x sync, in spec (part rated 133); 180 fails on the board (#593).
+SCK_MHZ = 120.0
+FLASH_BYTES = 4 << 20
+LINE_BYTES = 64
+BUF_BYTES = 256
+JEDEC_ID = 0xEF4016             # W25Q32JV-IQ (docs/chips/w25q32-config-flash.md)
+# Calibration reference: the firmware image (`.text` LMA), which every SoC boot needs.
+CAL_REF_ADDR = 0x0B0000
+CAL_REF_BYTES = 64
+CAL_LATS = 8                    # lat 0..7 for the x1 scan (#590 harness range)
+CAL_MIN_WIDTH = 2               # clean points; fewer is no eye
+
+OP_RUN, OP_CALIBRATE = 1, 2
+(CODE_OK, CODE_BUSY, CODE_ARG, CODE_NOT_READY, CODE_WDOG, CODE_ABORT,
+ CODE_CAL_NONE) = 0, 1, 2, 3, 7, 11, 13
+(ERR_OP, ERR_WDOG, ERR_CAL, ERR_XIP_BLOCKED, ERR_XIP_WRITE, ERR_XIP_FILL,
+ ERR_PLL_LOST) = range(7)
+N_ERR = 7
+# Register words (`bus`, byte offset = 4 x word); fields in docs/chips/flash-soc-peripheral.md.
+(REG_STATUS, REG_CMD, REG_CTRL, REG_IRQ_EN, REG_DESC, REG_ADDR, REG_LEN, REG_WAIT_US,
+ REG_POLL_US, REG_CAL, REG_CAL_US) = range(11)
+REG_BYTES = 64
+# Command-port descriptors carry no QPI opcode (bit 9), no dual address (bit 16) and no
+# dual/DTR data (bit 23): x1 and x4 only, so the core's other width paths fold away.
+DESC_MASK = 0xFFFFFFFF & ~(1 << 9 | 1 << 16 | 1 << 23)
+
+XIP_DESC = desc(0xEB, abits=32, aw=W4, dummy=4, dw=W4, read=True, tail=1)
+JEDEC_DESC = desc(0x9F, dw=W1, read=True)
+REF_DESC = desc(0x0B, abits=24, aw=W1, dummy=8, dw=W1, read=True, tail=1)
+WREN_DESC = desc(0x06)
+POLL_DESC = desc(0x05, dw=W1, read=True, poll=True)
+
+# The longest non-poll transaction, sck cycles: IDLE/LOAD/SETUP 3, cmd 8, address 32,
+# dummy 31, BUF_BYTES x1, tail 15, HOLD 1, GAP max(csh, lat+2) <= LAT_MAX + 2.
+TX_MAX_CYCLES = 3 + 8 + 32 + 31 + 8 * BUF_BYTES + 15 + 1 + LAT_MAX + 2
+TX_LIMIT = -(-5 * TX_MAX_CYCLES // 4)
+# One XIP line: 3 + cmd 8 + address/mode 8 + dummy 4 + 2 per byte + tail 1 + 1 + gap.
+XIP_TX_CYCLES = 3 + 8 + 8 + 4 + 2 * LINE_BYTES + 1 + 1 + LAT_MAX + 2
+# sync-side crossing allowance: 2-FF toggle each way + FIFO pointer sync, sync cycles.
+CDC_SYNC = 12
+# One JEDEC probe (3 bytes x1) and one PHASESTEP pulse (8) plus the FSM's 2.
+JEDEC_TX_CYCLES = 3 + 8 + 24 + 1 + LAT_MAX + 2
+PS_CYCLES = 8 + 2
 
 
-# Read modes, as (opcode, addr_width, bus_width, dummy_bits, dummy_value).
-#
-# `addr_width` and `bus_width` are lane counts, not bit counts: 1 for ordinary
-# SPI, 4 for quad. The command phase is always one lane -- the flash has to be
-# able to understand it before it knows what mode to switch to.
-READ_MODES = {
-    # 0x03 Read Data. One lane throughout, no dummy cycles. The flash is
-    # specified for this at up to 50 MHz, which is above the 40 MHz this SoC
-    # produces at divisor 0.
-    "single": dict(opcode=0x03, addr_width=1, bus_width=1,
-                   dummy_bits=0, dummy_value=0x000000),
-
-    # 0xeb Fast Read Quad I/O. Address and data on four lanes, 24 dummy bits
-    # (six clocks of mode byte plus four dummy clocks, expressed as 4-lane
-    # transfers). See the note on 0xff above.
-    "quad":   dict(opcode=0xeb, addr_width=4, bus_width=4,
-                   dummy_bits=24, dummy_value=0xff0000),
-}
+def cal_cycles(n_steps):
+    """Longest calibration, sck cycles: x1 scan, x4 scan (3 lats), reference, two
+    placements of up to a turn each, two verify probes."""
+    x1 = 2 * CAL_LATS * n_steps * (JEDEC_TX_CYCLES + PS_CYCLES)
+    x4 = 2 * 3 * n_steps * (XIP_TX_CYCLES + PS_CYCLES)
+    ref = 3 + 8 + 24 + 8 + 8 * CAL_REF_BYTES + 1 + 1 + LAT_MAX + 2
+    return x1 + x4 + ref + 2 * n_steps * PS_CYCLES + JEDEC_TX_CYCLES + XIP_TX_CYCLES + 64
 
 
-class ModalSPIFlashMemoryMap(SPIFlashMemoryMap):
-    """luna_soc's memory-mapped flash controller with a selectable read mode.
+def cal_us(n_steps, sck_mhz):
+    return -(-cal_cycles(n_steps) // int(sck_mhz))
 
-    Identical FSM; the four flash-protocol constants come from `READ_MODES`
-    instead of being written into `elaborate`. Everything else -- burst
-    continuation, the chip-select hold timer, the byte-order swap -- is
-    upstream's and unmodified.
-    """
 
-    def __init__(self, *, size, mode="single", data_width=32, granularity=8,
-                 name=None, domain="sync", byteorder="little"):
-        if mode not in READ_MODES:
-            raise ValueError(f"read mode {mode!r} is not one of "
-                             f"{sorted(READ_MODES)}")
-        self.mode = mode
-        super().__init__(size=size, data_width=data_width,
-                         granularity=granularity, name=name, domain=domain,
-                         byteorder=byteorder)
+def csh_cycles(sck_mhz, ns):
+    """/CS high after a transaction: tSHSL1 10 ns (reads), tSHSL2 50 ns (writes), rev G 9.6."""
+    return -(-int(ns * sck_mhz) // 1000)
+
+
+def xip_worst_sync_cycles(*, sync_mhz, sck_mhz=SCK_MHZ):
+    """Longest a legitimate XIP load waits, sync cycles: behind one maximal command
+    transaction, then its own line (write-class commands answer ERR instead)."""
+    sck = TX_MAX_CYCLES + XIP_TX_CYCLES
+    return -(-int(sck * sync_mhz) // int(sck_mhz)) + CDC_SYNC
+
+
+class _Engine(Elaboratable):
+    """Everything on the flash side. Written in `sync`; renamed to `fsck` by `Flash`."""
+
+    def __init__(self, *, n_steps, sck_mhz, jedec_id=JEDEC_ID, cal_ref_addr=CAL_REF_ADDR):
+        self.n_steps, self.sck_mhz = n_steps, sck_mhz
+        self.jedec_id, self.cal_ref_addr = jedec_id, cal_ref_addr
+        self.pins = core.FlashPins()
+        self.tx = core.TxEngine(self.pins)
+        self.xfer = Signal()
+        self.phasestep = Signal(init=1)
+        # command, static while `start` is pending
+        self.start, self.abort = Signal(), Signal()
+        self.op, self.desc, self.addr = Signal(4), Signal(32), Signal(24)
+        self.len, self.wren, self.wait, self.wait_us = Signal(9), Signal(), Signal(), Signal(24)
+        # results, static once `done` pulses
+        self.done = Signal()
+        self.r_code, self.r_poll_us, self.r_saw_busy = Signal(4), Signal(24), Signal()
+        # XIP: request (payload static until the next), words out to the sync FIFO
+        self.xip_start, self.xip_line, self.xip_id = Signal(), Signal(16), Signal(2)
+        self.xip_we, self.xip_word, self.xip_idx = Signal(), Signal(32), Signal(4)
+        self.xip_wid = Signal(2)
+        # command buffers: TX read port (1-cycle), RX write port
+        self.tx_addr, self.tx_data = Signal(6), Signal(32)
+        self.rx_addr, self.rx_data, self.rx_we = Signal(6), Signal(32), Signal()
+        # status
+        self.ready, self.cal_valid, self.cal_x4, self.busy = Signal(), Signal(), Signal(), Signal()
+        self.cal_step, self.cal_lat, self.cal_xfer = Signal(8), Signal(4), Signal()
+        self.width_x1, self.width_x4 = Signal(8), Signal(8)
 
     def elaborate(self, platform):
         m = Module()
+        s = m.d.sync
+        tx, n = self.tx, self.n_steps
+        tx_rst = Signal()
+        m.submodules.tx = ResetInserter(tx_rst)(tx)
+        lat = Signal(4)
+        m.d.comb += [tx.lat.eq(lat), tx.half.eq(0)]
+        csh_r, csh_w = csh_cycles(self.sck_mhz, 10), csh_cycles(self.sck_mhz, 50)
+        us_cycles = int(round(self.sck_mhz))
 
-        params = READ_MODES[self.mode]
-        flash_read_opcode = params["opcode"]
-        flash_cmd_bits    = 8
-        flash_addr_bits   = 24
-        flash_data_bits   = 32
-        flash_cmd_width   = 1
-        flash_addr_width  = params["addr_width"]
-        flash_bus_width   = params["bus_width"]
-        flash_dummy_bits  = params["dummy_bits"]
-        flash_dummy_value = params["dummy_value"]
+        # ---- requests
+        cmd_pending, xip_pending, cal_pending, prefer_cmd = Signal(), Signal(), Signal(init=1), Signal()
+        with m.If(self.start):
+            s += cmd_pending.eq(1)
+        with m.If(self.xip_start):
+            s += xip_pending.eq(1)
 
-        source = self.source
-        sink   = self.sink
-        cs     = self.cs
-        bus    = self.bus
+        # ---- transaction issue, watchdog, received bytes
+        RX_NONE, RX_BUF, RX_XIP, RX_JEDEC, RX_REF, RX_X4, RX_POLL = range(7)
+        rx_mode = Signal(3)
+        wd = Signal(range(TX_LIMIT + 1))
+        nbytes, acc, wcnt = Signal(9), Signal(32), Signal(9)
+        res24, mismatch, saw_busy = Signal(24), Signal(), Signal()
+        ref_and, ref_or = Signal(8), Signal(8)
+        ref = memory.Memory(shape=8, depth=CAL_REF_BYTES, init=[], attrs={"ram_style": "block"})
+        m.submodules.ref = ref
+        ref_wp, ref_rp = ref.write_port(), ref.read_port()
+        cur_id = Signal(2)
 
-        # Burst control. A sequential read that continues where the last one
-        # ended skips the command, address and dummy phases entirely -- which is
-        # the whole reason a memory map is faster than a register-poked
-        # controller for the access pattern a CPU generates.
-        burst_cs      = Signal()
-        burst_adr     = Signal(len(self.bus.adr), reset_less=True)
-        burst_timeout = WaitTimer(self.MMAP_DEFAULT_TIMEOUT, domain=self._domain)
-        m.submodules.burst_timeout = burst_timeout
+        def issue(dsc, addr, length, csh, mode):
+            dsc = Const(dsc, 32) if isinstance(dsc, int) else dsc
+            a24 = Const(addr, 24) if isinstance(addr, int) else addr
+            m.d.comb += [tx.start.eq(1), tx.desc.eq(dsc), tx.length.eq(length),
+                         tx.csh.eq(csh),
+                         tx.addr.eq(Mux(dsc[10:16] == 32, Cat(Const(MBYTE, 8), a24), a24))]
+            s.__iadd__([rx_mode.eq(mode), wd.eq(0), nbytes.eq(0), wcnt.eq(0),
+                        mismatch.eq(0), acc.eq(0)])
 
-        with m.FSM(domain=self._domain):
-            with m.State("IDLE"):
-                m.d.comb += [
-                    burst_timeout.wait.eq(1),
-                    cs.eq(burst_cs),
-                ]
-                m.d.sync += burst_cs.eq(burst_cs & ~burst_timeout.done)
-                with m.If(bus.cyc & bus.stb & ~bus.we):
-                    with m.If(burst_cs & (bus.adr == burst_adr)):
-                        m.next = "BURST-REQ"
+        m.d.comb += [self.tx_addr.eq(wcnt[2:8]), tx.wbyte.eq(self.tx_data.word_select(wcnt[0:2], 8))]
+        with m.If(tx.wnext):
+            s += wcnt.eq(wcnt + 1)
+        with m.If(~tx.idle & (wd != TX_LIMIT)):
+            s += wd.eq(wd + 1)
+        wd_expired = (wd == TX_LIMIT) & (rx_mode != RX_POLL)
+
+        b = tx.rx_byte
+        k = nbytes[0:2]
+        new_word = Signal(32)
+        # byte k lands in lane k; lane 0 zero-extends, so lanes above k read 0
+        m.d.comb += new_word.eq(Mux(k == 0, b, acc))
+        with m.Switch(k):
+            for lane in range(1, 4):
+                with m.Case(lane):
+                    m.d.comb += new_word.word_select(lane, 8).eq(b)
+        # Registered read: the address leads by a cycle, so byte n compares against ref[n].
+        m.d.comb += ref_rp.addr.eq((nbytes + tx.rx_valid)[0:6])
+        with m.If(tx.rx_valid):
+            s += [nbytes.eq(nbytes + 1), acc.eq(new_word)]
+            with m.Switch(rx_mode):
+                with m.Case(RX_BUF):
+                    with m.If(k == 3):
+                        m.d.comb += [self.rx_we.eq(1), self.rx_addr.eq(nbytes[2:8]),
+                                     self.rx_data.eq(new_word)]
+                with m.Case(RX_XIP):
+                    with m.If(k == 3):
+                        m.d.comb += [self.xip_we.eq(1), self.xip_word.eq(new_word),
+                                     self.xip_idx.eq(nbytes[2:6]), self.xip_wid.eq(cur_id)]
+                with m.Case(RX_JEDEC):
+                    s += res24.eq(Cat(b, res24[0:16]))
+                with m.Case(RX_REF):
+                    m.d.comb += [ref_wp.en.eq(nbytes < CAL_REF_BYTES), ref_wp.addr.eq(nbytes[0:6]),
+                                 ref_wp.data.eq(b)]
+                    s += [ref_and.eq(ref_and & b), ref_or.eq(ref_or | b)]
+                with m.Case(RX_X4):
+                    with m.If((nbytes >= CAL_REF_BYTES) | (b != ref_rp.data)):
+                        s += mismatch.eq(1)
+                with m.Case(RX_POLL):
+                    with m.If(b[0]):
+                        s += saw_busy.eq(1)
+
+        # ---- PHASESTEP: low 4 / high 4 cycles (>= 4 VCO cycles each, TN-02200 18.4.1)
+        ps_go, ps_busy, ps_cnt = Signal(), Signal(), Signal(3)
+        pos = Signal(range(n))
+        s += self.phasestep.eq(1)
+        with m.If(ps_busy):
+            s += [self.phasestep.eq(ps_cnt[2]), ps_cnt.eq(ps_cnt + 1)]
+            with m.If(ps_cnt == 7):
+                s += ps_busy.eq(0)
+        with m.Elif(ps_go):
+            s += [ps_busy.eq(1), ps_cnt.eq(0), pos.eq(Mux(pos == n - 1, 0, pos + 1))]
+
+        # ---- calibration scan state
+        X1, X4 = 0, 1
+        stage, from_cmd = Signal(), Signal()
+        lat_lo, lat_hi, step_i = Signal(4), Signal(4), Signal(range(n + 1))
+        key, run_s, run_l, best_s, best_l = (Signal(range(CAL_LATS * n + 1)) for _ in range(5))
+        best_x, target, lat_off = Signal(), Signal(range(n)), Signal(4)
+
+        def scan_init(lo, hi):
+            s.__iadd__([lat_lo.eq(lo), lat_hi.eq(hi), lat.eq(lo), self.xfer.eq(0),
+                        step_i.eq(0), key.eq(0), run_l.eq(0), best_l.eq(0), best_s.eq(0),
+                        best_x.eq(0)])
+
+        def probe():
+            with m.If(stage == X1):
+                issue(JEDEC_DESC, 0, 3, csh_r, RX_JEDEC)
+            with m.Else():
+                issue(XIP_DESC, self.cal_ref_addr, CAL_REF_BYTES, csh_r, RX_X4)
+
+        probe_ok = Mux(stage == X1, res24 == self.jedec_id,
+                       ~mismatch & (nbytes == CAL_REF_BYTES))
+
+        # ---- command results
+        poll_us, us_div = Signal(24), Signal(range(us_cycles))
+        res_out = Signal()
+
+        def complete(code):
+            s.__iadd__([self.r_code.eq(code), self.r_poll_us.eq(poll_us),
+                        self.r_saw_busy.eq(saw_busy), res_out.eq(1), cmd_pending.eq(0)])
+
+        with m.If(res_out):
+            s += res_out.eq(0)
+            m.d.comb += self.done.eq(1)
+
+        def cal_finish(valid, x4):
+            s.__iadd__([self.cal_valid.eq(valid), self.cal_x4.eq(x4), self.ready.eq(1),
+                        self.cal_step.eq(pos), self.cal_lat.eq(lat),
+                        self.cal_xfer.eq(self.xfer)])
+            with m.If(from_cmd):
+                complete(Mux(valid, CODE_OK, CODE_CAL_NONE))
+
+        def end(code):
+            """End the command now: core reset, result, back to PICK."""
+            m.d.comb += tx_rst.eq(1)
+            complete(code)
+            m.next = "PICK"
+
+        with m.FSM() as fsm:
+            with m.State("PICK"):
+                with m.If(self.abort & cmd_pending):
+                    complete(CODE_ABORT)
+                with m.Elif(cal_pending):
+                    s += [cal_pending.eq(0), from_cmd.eq(0), stage.eq(X1)]
+                    scan_init(0, CAL_LATS - 1)
+                    m.next = "CAL_PROBE"
+                with m.Elif(cmd_pending & (prefer_cmd | ~xip_pending)):
+                    s += [prefer_cmd.eq(0), saw_busy.eq(0), poll_us.eq(0)]
+                    with m.If(self.op == OP_CALIBRATE):
+                        s += [from_cmd.eq(1), stage.eq(X1), self.cal_valid.eq(0)]
+                        scan_init(0, CAL_LATS - 1)
+                        m.next = "CAL_PROBE"
+                    with m.Elif(self.wren):
+                        m.next = "CMD_WREN"
                     with m.Else():
-                        m.d.comb += cs.eq(0)
-                        m.next = "BURST-CMD"
+                        m.next = "CMD_OP"
+                with m.Elif(xip_pending):
+                    s += [prefer_cmd.eq(1), xip_pending.eq(0), cur_id.eq(self.xip_id)]
+                    m.next = "XIP"
 
-            with m.State("BURST-CMD"):
-                m.d.comb += [
-                    cs           .eq(1),
-                    source.valid .eq(1),
-                    source.data  .eq(flash_read_opcode),
-                    source.len   .eq(flash_cmd_bits),
-                    source.width .eq(flash_cmd_width),
-                    source.mask  .eq(self.OE_MASK[flash_cmd_width]),
-                ]
-                with m.If(source.ready):
-                    m.next = "CMD-RET"
+            with m.State("XIP"):
+                with m.If(tx.idle):
+                    issue(XIP_DESC, Cat(Const(0, 6), self.xip_line, Const(0, 2)), LINE_BYTES,
+                          csh_r, RX_XIP)
+                    m.next = "XIP_WAIT"
+            with m.State("XIP_WAIT"):
+                with m.If(tx.done | wd_expired):
+                    m.d.comb += tx_rst.eq(wd_expired)
+                    m.next = "PICK"
 
-            with m.State("CMD-RET"):
-                m.d.comb += [cs.eq(1), sink.ready.eq(1)]
-                with m.If(sink.valid):
-                    m.next = "BURST-ADDR"
+            # ---- command; every state ends on abort
+            with m.State("CMD_WREN"):
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.idle):
+                    issue(WREN_DESC, 0, 0, csh_w, RX_NONE)
+                    m.next = "CMD_WREN_WAIT"
+            with m.State("CMD_WREN_WAIT"):
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.done):
+                    m.next = "CMD_OP"
+                with m.Elif(wd_expired):
+                    end(CODE_WDOG)
+            with m.State("CMD_OP"):
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.idle):
+                    issue(self.desc, self.addr, self.len,
+                          Mux(self.wren | self.wait, csh_w, csh_r), RX_BUF)
+                    m.next = "CMD_OP_WAIT"
+            with m.State("CMD_OP_WAIT"):
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.done):
+                    with m.If(k != 0):
+                        m.d.comb += [self.rx_we.eq(1), self.rx_addr.eq(nbytes[2:8]),
+                                     self.rx_data.eq(acc)]
+                    with m.If(self.wait):
+                        m.next = "CMD_POLL"
+                    with m.Else():
+                        complete(CODE_OK)
+                        m.next = "PICK"
+                with m.Elif(wd_expired):
+                    end(CODE_WDOG)
+            with m.State("CMD_POLL"):
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.idle):
+                    issue(POLL_DESC, 0, 0xFFFFFFFF, csh_w, RX_POLL)
+                    s += us_div.eq(0)
+                    m.next = "CMD_POLL_WAIT"
+            with m.State("CMD_POLL_WAIT"):
+                s += us_div.eq(Mux(us_div == us_cycles - 1, 0, us_div + 1))
+                with m.If(us_div == us_cycles - 1):
+                    s += poll_us.eq(poll_us + 1)
+                with m.If(self.abort):
+                    end(CODE_ABORT)
+                with m.Elif(tx.done):
+                    complete(CODE_OK)
+                    m.next = "PICK"
+                with m.Elif(poll_us >= self.wait_us):
+                    end(CODE_WDOG)
 
-            with m.State("BURST-ADDR"):
-                # `bus.adr` is a word address; the flash wants bytes, so two
-                # zero bits are appended below it.
-                m.d.comb += [
-                    cs           .eq(1),
-                    source.valid .eq(1),
-                    source.width .eq(flash_addr_width),
-                    source.mask  .eq(self.OE_MASK[flash_addr_width]),
-                    source.data  .eq(Cat(C(0, 2), bus.adr)),
-                    source.len   .eq(flash_addr_bits),
-                ]
-                m.d.sync += [
-                    burst_cs  .eq(1),
-                    burst_adr .eq(bus.adr),
-                ]
-                with m.If(source.ready):
-                    m.next = "ADDR-RET"
+            # ---- calibration
+            with m.State("CAL_PROBE"):
+                with m.If(tx.idle):
+                    probe()
+                    m.next = "CAL_WAIT"
+            with m.State("CAL_WAIT"):
+                with m.If(tx.done | wd_expired):
+                    m.d.comb += tx_rst.eq(wd_expired)
+                    with m.If(probe_ok & ~wd_expired):
+                        s += run_l.eq(run_l + 1)
+                        with m.If(run_l == 0):
+                            s += run_s.eq(key)
+                        with m.If(run_l + 1 > best_l):
+                            s += [best_l.eq(run_l + 1), best_x.eq(self.xfer),
+                                  best_s.eq(Mux(run_l == 0, key, run_s))]
+                    with m.Else():
+                        s += run_l.eq(0)
+                    m.d.comb += ps_go.eq(1)
+                    s += [key.eq(key + 1), step_i.eq(step_i + 1)]
+                    m.next = "CAL_STEP"
+            with m.State("CAL_STEP"):
+                # ps_busy rose on the edge that left CAL_WAIT
+                with m.If(~ps_busy):
+                    with m.If(step_i == n):
+                        s += step_i.eq(0)
+                        with m.If(lat == lat_hi):
+                            s += [lat.eq(lat_lo), run_l.eq(0), key.eq(0)]
+                            with m.If(self.xfer):
+                                m.next = "CAL_PICK"
+                            with m.Else():
+                                s += self.xfer.eq(1)
+                                m.next = "CAL_PROBE"
+                        with m.Else():
+                            s += lat.eq(lat + 1)
+                            m.next = "CAL_PROBE"
+                    with m.Else():
+                        m.next = "CAL_PROBE"
+            with m.State("CAL_PICK"):
+                with m.If(best_l < CAL_MIN_WIDTH):
+                    with m.If(stage == X1):
+                        s += self.width_x1.eq(best_l)
+                    with m.Else():
+                        s += self.width_x4.eq(best_l)
+                    cal_finish(0, 0)
+                    m.next = "PICK"
+                with m.Else():
+                    s += [key.eq(best_s + (best_l >> 1)), lat_off.eq(0), self.xfer.eq(best_x)]
+                    m.next = "CAL_SPLIT"
+            with m.State("CAL_SPLIT"):
+                with m.If(key >= n):
+                    s += [key.eq(key - n), lat_off.eq(lat_off + 1)]
+                with m.Else():
+                    s += [target.eq(key), lat.eq(lat_lo + lat_off)]
+                    m.next = "CAL_PLACE"
+            with m.State("CAL_PLACE"):
+                with m.If(~ps_busy):
+                    with m.If(pos != target):
+                        m.d.comb += ps_go.eq(1)
+                    with m.Elif(tx.idle):
+                        probe()
+                        m.next = "CAL_VERIFY"
+            with m.State("CAL_VERIFY"):
+                with m.If(tx.done | wd_expired):
+                    m.d.comb += tx_rst.eq(wd_expired)
+                    with m.If(~probe_ok | wd_expired):
+                        cal_finish(0, 0)
+                        m.next = "PICK"
+                    with m.Elif(stage == X1):
+                        s += [self.width_x1.eq(best_l), ref_and.eq(0xFF), ref_or.eq(0)]
+                        m.next = "CAL_REF"
+                    with m.Else():
+                        s += self.width_x4.eq(best_l)
+                        cal_finish(1, 1)
+                        m.next = "PICK"
+            with m.State("CAL_REF"):
+                with m.If(tx.idle):
+                    issue(REF_DESC, self.cal_ref_addr, CAL_REF_BYTES, csh_r, RX_REF)
+                    m.next = "CAL_REF_WAIT"
+            with m.State("CAL_REF_WAIT"):
+                with m.If(tx.done | wd_expired):
+                    m.d.comb += tx_rst.eq(wd_expired)
+                    # A blank or constant reference cannot tell lanes apart: keep x1.
+                    with m.If(wd_expired | (ref_and != 0) | (ref_or != 0xFF)):
+                        s += self.width_x4.eq(0)
+                        cal_finish(1, 0)
+                        m.next = "PICK"
+                    with m.Else():
+                        s += stage.eq(X4)
+                        scan_init(Mux(lat == 0, 0, lat - 1),
+                                  Mux(lat == LAT_MAX, LAT_MAX, lat + 1))
+                        m.next = "CAL_PROBE"
 
-            with m.State("ADDR-RET"):
-                m.d.comb += [cs.eq(1), sink.ready.eq(1)]
-                with m.If(sink.valid):
-                    if flash_dummy_bits == 0:
-                        m.next = "BURST-REQ"
-                    else:
-                        m.next = "DUMMY"
-
-            # Skipped entirely in single-lane mode: 0x03 has no dummy cycles,
-            # and issuing one would offset every byte read by a clock.
-            #
-            # NOTE the `if` above is Python, not `m.If`. Upstream writes
-            # `with m.If(flash_dummy_bits == 0)`, which compares two Python ints
-            # and yields a Python bool that Amaranth then treats as a constant
-            # condition -- it works, but it emits both branches. This decides at
-            # elaboration.
-            if flash_dummy_bits:
-                with m.State("DUMMY"):
-                    m.d.comb += [
-                        cs           .eq(1),
-                        source.valid .eq(1),
-                        source.width .eq(flash_addr_width),
-                        source.mask  .eq(self.OE_MASK[flash_addr_width]),
-                        source.data  .eq(flash_dummy_value),
-                        source.len   .eq(flash_dummy_bits),
-                    ]
-                    with m.If(source.ready):
-                        m.next = "DUMMY-RET"
-
-                with m.State("DUMMY-RET"):
-                    m.d.comb += [cs.eq(1), sink.ready.eq(1)]
-                    with m.If(sink.valid):
-                        m.next = "BURST-REQ"
-
-            with m.State("BURST-REQ"):
-                # mask=0 means every DQ pin is an input for this phase: the
-                # flash is driving now, and holding an output enable on would
-                # fight it. In single-lane mode DQ0 is still the controller's
-                # output pin electrically, but nothing is being sent, so
-                # releasing it is harmless and keeps one code path.
-                m.d.comb += [
-                    cs           .eq(1),
-                    source.valid .eq(1),
-                    source.width .eq(flash_bus_width),
-                    source.mask  .eq(0),
-                    source.len   .eq(flash_data_bits),
-                ]
-                with m.If(source.ready):
-                    m.next = "BURST-DAT"
-
-            with m.State("BURST-DAT"):
-                word = (self.reverse_bytes(sink.data)
-                        if self.byteorder == "little" else sink.data)
-                m.d.comb += [
-                    cs         .eq(1),
-                    sink.ready .eq(1),
-                    bus.dat_r  .eq(word),
-                ]
-                with m.If(sink.valid):
-                    m.d.comb += bus.ack.eq(1)
-                    m.d.sync += burst_adr.eq(burst_adr + 1)
-                    m.next = "IDLE"
-
-        if self._domain != "sync":
-            m = DomainRenamer({"sync": self._domain})(m)
-
+        m.d.comb += [self.busy.eq(~fsm.ongoing("PICK") | cmd_pending | cal_pending)]
         return m
 
 
-class FairSPIControlPortCrossbar(wiring.Component):
-    """Share one SPI PHY between two cores, without either starving the other.
+class Flash(wiring.Component):
+    """Registers `bus`, XIP `xip` (read-only), command data `buf` (all Wishbone), `irq`,
+    `boot_ready`.
 
-    Re-arbitrates whenever the PHY is between transfers, so a port holding `cs`
-    keeps its burst but cannot monopolise the PHY. Chip select follows the
-    grant, so no burst is interrupted mid-transfer.
-
-    **The starvation this avoids.** luna_soc's `SPIControlPortCrossbar` gates
-    its round-robin on `grant_update.eq(~rr.valid | ~rr.requests[i])` -- it
-    re-evaluates only when the incumbent stops asking, so a port holding `cs`
-    indefinitely owns the PHY indefinitely. `SPIFlashMemoryMap` holds `cs` for
-    `MMAP_DEFAULT_TIMEOUT` (256 cycles) after every burst, which is what lets a
-    sequential read skip the command, address and dummy phases -- so on a SoC
-    whose firmware reads flash regularly, the controller sharing the crossbar
-    is never granted.
-
-    The symptom is misleading: memory-mapped reads work perfectly while every
-    controller command returns zeros, which reads as a broken controller.
-    Measured in `scripts/riscv_flash_crossbar_sim.py` -- with the memory map
-    holding `cs`, the controller is not granted in 600 cycles; with it idle the
-    grant arrives. See `../../docs/architecture.md`.
+    - `bus`: 32-bit word registers, `REGS`; plain Wishbone, not amaranth-soc CSRs (a
+      byte-wide CSR multiplexer cost more cells than the registers, #593).
+    - `boot_ready` (sync) holds the CPU until the first calibration has finished.
+    - `sim=True` drops pins, DCCA and USRMCLK: the bench drives `fsck`/`fcap`/`fcapn`
+      and models the part on the `pad_*` signals.
     """
 
-    def __init__(self, *, data_width=32, num_ports=2, domain="sync"):
-        self._domain = domain
-        self._num_ports = num_ports
-        super().__init__(dict(
-            controller=wiring.Out(SPIControlPort(data_width)),
-            **{f"slave{i}": wiring.In(SPIControlPort(data_width))
-               for i in range(num_ports)}))
+    def __init__(self, *, sck_mhz=SCK_MHZ, sync_mhz=60.0, n_steps=32, sim=False,
+                 jedec_id=JEDEC_ID, cal_ref_addr=CAL_REF_ADDR):
+        self.sck_mhz, self.sync_mhz, self.n_steps, self.sim = sck_mhz, sync_mhz, n_steps, sim
+        self.jedec_id, self.cal_ref_addr = jedec_id, cal_ref_addr
+        self.fill_limit = -(-5 * xip_worst_sync_cycles(sync_mhz=sync_mhz, sck_mhz=sck_mhz) // 4)
+        # clocks.SocClocks: lock, PHASESTEP out, MCLK in
+        self.locked = Signal()
+        self.phasestep = Signal(init=1)
+        self.mclk = Signal()
+        # pads, registered in fsck by the core PHY
+        self.pad_o, self.pad_oe, self.pad_i = Signal(4), Signal(4), Signal(4)
+        self.pad_cs, self.pad_ck_en = Signal(), Signal()
 
-        # Which port holds the grant, brought out so instrumentation can confirm
-        # on HARDWARE that the controller is being served. The starvation fix is
-        # proven in simulation only, and "fixed in simulation" is exactly the
-        # claim this investigation has repeatedly found wanting.
-        self.grant = Signal(range(num_ports))
-
-    def get_port(self, index):
-        return getattr(self, f"slave{index}")
-
-    def elaborate(self, platform):
-        m = Module()
-
-        ports = [self.get_port(i) for i in range(self._num_ports)]
-
-        grant = self.grant
-        # `locked` marks a transfer in flight. Re-arbitrating in the middle of
-        # one would swap the PHY's data source between the request and its
-        # response, so the grant only moves while nothing is outstanding.
-        locked = Signal()
-
-        # Arbitrate on `source.valid` -- a port with a transfer actually ready
-        # to send -- NOT on `cs`.
-        #
-        # This is the correction that matters, and getting it wrong is what
-        # makes upstream starve. `cs` is a HOLD signal: the memory map keeps it
-        # asserted for 256 cycles after a burst so a following sequential read
-        # can skip the command and address phases. It says "do not deselect the
-        # chip yet", not "I have work". Treating it as a request hands the PHY
-        # to a port that is idle but unwilling to let go.
-        #
-        # `source.valid` is the real request. A port between bursts holds `cs`
-        # with `valid` low, so the grant can move to the other port, and the
-        # only cost is that the next burst re-sends its command -- a few
-        # microseconds, against a controller path that otherwise never runs at
-        # all.
-        requests = Cat(port.source.valid for port in ports)
-
-        with m.If(~locked):
-            # Round-robin from the port after the current holder, so a
-            # continuously requesting port cannot starve the others. Searching
-            # upward first and wrapping gives each port its turn.
-            for offset in reversed(range(1, self._num_ports + 1)):
-                candidate = (grant + offset) % self._num_ports
-                with m.If(requests.bit_select(candidate, 1)):
-                    m.d.sync += grant.eq(candidate)
-
-        # A transfer is outstanding from the cycle the PHY accepts a command
-        # until it returns the corresponding data.
-        with m.If(self.controller.source.valid & self.controller.source.ready):
-            m.d.sync += locked.eq(1)
-        with m.Elif(self.controller.sink.valid & self.controller.sink.ready):
-            m.d.sync += locked.eq(0)
-
-        with m.Switch(grant):
-            for index, port in enumerate(ports):
-                with m.Case(index):
-                    m.d.comb += [
-                        self.controller.source.data  .eq(port.source.data),
-                        self.controller.source.len   .eq(port.source.len),
-                        self.controller.source.width .eq(port.source.width),
-                        self.controller.source.mask  .eq(port.source.mask),
-                        self.controller.source.valid .eq(port.source.valid),
-                        port.source.ready            .eq(self.controller.source.ready),
-
-                        port.sink.data               .eq(self.controller.sink.data),
-                        port.sink.valid              .eq(self.controller.sink.valid),
-                        self.controller.sink.ready   .eq(port.sink.ready),
-
-                        self.controller.cs           .eq(port.cs),
-                    ]
-
-        if self._domain != "sync":
-            m = DomainRenamer({"sync": self._domain})(m)
-
-        return m
-
-
-class ObservablePHY(SPIPHYController):
-    """luna_soc's SPI PHY with its internal capture strobes brought out.
-
-    The pin probe cornered the JEDEC fault at the input sampling path: the
-    controller asserts chip select, clocks out a valid 0x9f, releases DQ for
-    exactly the right 24 response edges, and reads back zeros. What counters
-    cannot show is PHASE -- whether the input bit is latched on the wrong edge,
-    a cycle early or late, or not at all on the second through fourth transfers.
-    That is a waveform question, and answering it needs the signal that decides
-    WHEN an input bit is captured.
-
-    In `SPIPHYController.elaborate` that signal is `sr_in_shift`, a local. This
-    subclass re-implements the same elaborate body verbatim and assigns the
-    interesting signals to attributes so the pin probe can reach them.
-
-    RE-IMPLEMENTED RATHER THAN PATCHED, and the copy is deliberate: the point of
-    this class is to observe what the real PHY does, so any behavioural
-    difference between this and upstream would invalidate the measurement. The
-    body below is upstream's, unchanged except for the assignments that expose
-    signals. If upstream changes, this must be re-synced or it is measuring a
-    different circuit than the one that ships.
-    """
-
-    def __init__(self, pads, data_width=32, divisor=0, domain="sync",
-                 full_sck=False):
-        super().__init__(pads, data_width=data_width, divisor=divisor,
-                         domain=domain)
-        self.full_sck = full_sck
-        # Exposed for instrumentation. Driven in elaborate().
-        self.o_sr_in_shift = Signal()
-        self.o_sr_out_load = Signal()
-        self.o_sample      = Signal()
-        self.o_update      = Signal()
-        self.o_clk         = Signal()
-        self.o_dq_i1       = Signal()
-        # What the PHY DRIVES on DQ0. The input side alone shows the flash
-        # staying silent but not whether the command it was sent was correct,
-        # and "the flash ignored a valid 0x9f" and "the flash was sent
-        # something that is not 0x9f" are different faults.
-        self.o_dq_o0       = Signal()
-        self.o_in_xfer     = Signal()
-        self.o_in_xfer_end = Signal()
-
-    def elaborate(self, platform):
-        m = Module()
-
-        pads   = self.pads
-        sink   = self.sink
-        source = self.source
-
-        # Full-rate SCK: one bit time per domain cycle instead of two, and the
-        # pad driven as a gated clock rather than a registered level (#100).
-        if self.full_sck:
-            from soc.peripherals.flash_sck_full import FullRateClockGenerator
-            clkgen = FullRateClockGenerator(self.divisor, domain=self._domain)
-        else:
-            clkgen = SPIClockGenerator(self.divisor, domain=self._domain)
-        m.submodules.clkgen = clkgen
-        spi_clk_divisor = self.divisor
-
-        cs_delay = 0
-        cs_enable = Signal()
-        if cs_delay > 0:
-            m.submodules.cs_timer = cs_timer = WaitTimer(cs_delay + 1,
-                                                         domain=self._domain)
-            m.d.comb += [
-                cs_timer.wait.eq(self.cs),
-                cs_enable.eq(cs_timer.done),
-            ]
-        else:
-            m.d.comb += cs_enable.eq(self.cs)
-
-        dq_o  = Signal.like(pads.dq.o)
-        dq_i  = Signal.like(pads.dq.i)
-        dq_oe = Signal.like(pads.dq.oe)
-        if self.full_sck:
-            from soc.peripherals.flash_sck_full import gated_sck
-            gated_sck(m, pads, clkgen, domain=self._domain)
-        m.d.sync += [
-            *([] if self.full_sck else [pads.sck.eq(clkgen.clk)]),
-            pads.cs.o  .eq(cs_enable),
-            pads.dq.o  .eq(dq_o),
-            pads.dq.oe .eq(dq_oe),
-            dq_i       .eq(pads.dq.i),
-        ]
-        if hasattr(pads.cs, "oe"):
-            m.d.comb += pads.cs.oe.eq(1)
-
-        sr_cnt       = Signal(8, reset_less=True)
-        sr_out_load  = Signal()
-        sr_out_shift = Signal()
-        sr_out       = Signal(len(source.data), reset_less=True)
-        sr_in_shift  = Signal()
-        sr_in        = Signal(len(source.data), reset_less=True)
-
-        m.d.comb += dq_oe.eq(source.mask)
-        with m.Switch(source.width):
-            with m.Case(1):
-                m.d.comb += dq_o.eq(sr_out[-1:])
-            with m.Case(2):
-                m.d.comb += dq_o.eq(sr_out[-2:])
-            with m.Case(4):
-                m.d.comb += dq_o.eq(sr_out[-4:])
-            with m.Case(8):
-                m.d.comb += dq_o.eq(sr_out[-8:])
-
-        with m.If(sr_out_load):
-            m.d.sync += sr_out.eq(
-                source.data << (len(source.data) - source.len).as_unsigned())
-
-        with m.If(sr_out_shift):
-            with m.Switch(source.width):
-                with m.Case(1):
-                    m.d.sync += sr_out.eq(Cat(C(0, 1), sr_out))
-                with m.Case(2):
-                    m.d.sync += sr_out.eq(Cat(C(0, 2), sr_out))
-                with m.Case(4):
-                    m.d.sync += sr_out.eq(Cat(C(0, 4), sr_out))
-                with m.Case(8):
-                    m.d.sync += sr_out.eq(Cat(C(0, 8), sr_out))
-
-        with m.If(sr_in_shift):
-            with m.Switch(source.width):
-                with m.Case(1):
-                    m.d.sync += sr_in.eq(Cat(dq_i[1], sr_in))
-                with m.Case(2):
-                    m.d.sync += sr_in.eq(Cat(dq_i[:2], sr_in))
-                with m.Case(4):
-                    m.d.sync += sr_in.eq(Cat(dq_i[:4], sr_in))
-                with m.Case(8):
-                    m.d.sync += sr_in.eq(Cat(dq_i[:8], sr_in))
-
-        m.d.comb += sink.data.eq(sr_in)
-
-        with m.FSM(domain=self._domain) as fsm:
-            with m.State("WAIT-CMD-DATA"):
-                with m.If(cs_enable & source.valid):
-                    m.d.sync += sr_cnt.eq(source.len - source.width)
-                    m.d.comb += sr_out_load.eq(1)
-                    m.next = "XFER"
-
-            with m.State("XFER"):
-                m.d.comb += [
-                    clkgen.en   .eq(1),
-                    sr_in_shift .eq(clkgen.sample),
-                    sr_out_shift.eq(clkgen.update),
-                ]
-                with m.If(clkgen.update):
-                    m.d.sync += sr_cnt.eq(sr_cnt - source.width)
-                    with m.If(sr_cnt == 0):
-                        m.next = "XFER-END"
-
-            with m.State("XFER-END"):
-                with m.If((spi_clk_divisor > 0) | clkgen.sample):
-                    m.d.comb += source.ready.eq(1)
-                    m.d.comb += sr_in_shift.eq(spi_clk_divisor == 0)
-                    m.next = "SEND-STATUS-DATA"
-
-            with m.State("SEND-STATUS-DATA"):
-                m.d.comb += sink.valid.eq(1)
-                with m.If(sink.ready):
-                    m.next = "WAIT-CMD-DATA"
-
-            m.d.comb += [
-                self.o_in_xfer     .eq(fsm.ongoing("XFER")),
-                self.o_in_xfer_end .eq(fsm.ongoing("XFER-END")),
-            ]
-
-        m.d.comb += [
-            self.o_sr_in_shift .eq(sr_in_shift),
-            self.o_sr_out_load .eq(sr_out_load),
-            self.o_sample      .eq(clkgen.sample),
-            self.o_update      .eq(clkgen.update),
-            self.o_clk         .eq(clkgen.clk),
-            self.o_dq_i1       .eq(dq_i[1]),
-            self.o_dq_o0       .eq(dq_o[0]),
-        ]
-
-        if self._domain != "sync":
-            m = DomainRenamer({"sync": self._domain})(m)
-
-        return m
-
-
-class HoldableSPIController(wiring.Component):
-    """luna_soc's SPIController with a chip select that software can hold down.
-
-    The ILA capture (scripts/riscv_flash_ila_decode.py) shows upstream's chip
-    select dropping between every transfer of a multi-part command: four
-    separate 8-bit windows for a JEDEC read, with CS deasserted for 81, 36 and
-    36 samples in between. The flash resets its command state on every rising
-    edge of CS, so the 24 clocks after the command byte are shifted in with no
-    command pending and the chip drives nothing -- dq_i[1] reads zero for all
-    32 bits, which is exactly what the ID register reported.
-
-    The cause is in upstream's chip select generation:
-
-        with m.State("RISE"):  m.d.comb += cs.eq(tx_fifo.r_rdy)
-        with m.State("FALL"):  m.d.comb += cs.eq(self._cs.f.select.w_data
-                                                 | tx_fifo.r_rdy)
-
-    `self._cs.f.select` is a csr.action.W field, so `w_data` is valid only
-    during the cycle of the write strobe. It is a pulse, not a latch, so the
-    `cs` register cannot hold chip select down across transfers and CS collapses
-    to `tx_fifo.r_rdy` alone.
-
-    Software cannot work around that. Queueing every transfer before draining
-    any was tried and does not help: the CPU issues CSR writes far more slowly
-    than the PHY drains the FIFO, so the FIFO empties mid-command regardless of
-    the order of operations. The 81-sample gap in the capture is precisely the
-    CPU writing registers while the FIFO sits empty.
-
-    So the hold has to be in gateware. This wraps the upstream controller and
-    replaces its chip select with `held | upstream_cs`, where `held` is a proper
-    latching register: write 1 to assert, write 0 to release. A command becomes
-
-        hold(1); push...; pop...; hold(0);
-
-    and CS stays low throughout regardless of how slowly the CPU feeds the FIFO.
-
-    Everything else -- the FIFOs, the PHY stream handshake, the register map --
-    is upstream's, untouched. The `cs` register keeps its original pulse
-    behaviour so existing firmware is unaffected; `hold` is a new register at
-    its own offset.
-    """
-
-    def __init__(self, *, data_width=32, name=None, domain="sync"):
-        self._domain = domain
-        self._inner = SPIController(data_width=data_width, name=name,
-                                    domain=domain)
-
-        self._hold = csr.Register({"select": csr.Field(csr.action.RW, 1)},
-                                  access="rw")
-        builder = csr.Builder(addr_width=2, data_width=8)
-        builder.add("hold", self._hold)
-        self._hold_bridge = csr.Bridge(builder.as_memory_map())
-
-        # Two CSR windows behind one decoder: upstream's registers where
-        # firmware already expects them, and `hold` after them.
-        self._decoder = csr.Decoder(addr_width=6, data_width=8)
-        self._decoder.add(self._inner.bus, addr=0x00)
-        self._decoder.add(self._hold_bridge.bus, addr=0x20)
+        # Block RAM, not LUT RAM: logic cells are the scarce resource (#593).
+        ebr = {"ram_style": "block"}
+        self._line = memory.Memory(shape=32, depth=LINE_BYTES // 4, init=[], attrs=ebr)
+        self._txbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[], attrs=ebr)
+        self._rxbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[], attrs=ebr)
 
         super().__init__({
-            "bus":    wiring.In(self._decoder.bus.signature),
-            "source": wiring.Out(StreamCore2PHY(data_width)),
-            "sink":   wiring.In(StreamPHY2Core(data_width)),
-            "cs":     wiring.Out(unsigned(1)),
+            "bus":  In(wishbone.Signature(addr_width=4, data_width=32, granularity=8)),
+            "xip":  In(wishbone.Signature(addr_width=20, data_width=32, granularity=8,
+                                          features={"err"})),
+            "buf":  In(wishbone.Signature(addr_width=6, data_width=32, granularity=8)),
+            "irq":  Out(1),
+            "boot_ready": Out(1),
         })
-        self.bus.memory_map = self._decoder.bus.memory_map
+        rmap = MemoryMap(addr_width=6, data_width=8)
+        rmap.add_resource(name=("regs",), size=REG_BYTES, resource=self._line)
+        self.bus.memory_map = rmap
+        xmap = MemoryMap(addr_width=22, data_width=8)
+        xmap.add_resource(name=("flash",), size=FLASH_BYTES, resource=self._line)
+        self.xip.memory_map = xmap
+        bmap = MemoryMap(addr_width=8, data_width=8)
+        bmap.add_resource(name=("buf",), size=BUF_BYTES, resource=self._txbuf)
+        self.buf.memory_map = bmap
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules.inner       = self._inner
-        m.submodules.hold_bridge = self._hold_bridge
-        m.submodules.decoder     = self._decoder
 
-        # Wired by hand. Both `self.bus` and the decoder's bus are CSR targets,
-        # so wiring.connect() sees two drivers on r_data and refuses, while
-        # flipping either side puts two drivers on addr instead. Explicit
-        # assignment is unambiguous: the external bridge drives address and
-        # write data in, the decoder drives read data back out.
-        m.d.comb += [
-            self._decoder.bus.addr   .eq(self.bus.addr),
-            self._decoder.bus.r_stb  .eq(self.bus.r_stb),
-            self._decoder.bus.w_stb  .eq(self.bus.w_stb),
-            self._decoder.bus.w_data .eq(self.bus.w_data),
-            self.bus.r_data          .eq(self._decoder.bus.r_data),
-        ]
+        eng = _Engine(n_steps=self.n_steps, sck_mhz=self.sck_mhz, jedec_id=self.jedec_id,
+                      cal_ref_addr=self.cal_ref_addr)
+        m.submodules.engine = DomainRenamer("fsck")(eng)
+        phy = core.FlashPHY(eng.pins, pad_o=self.pad_o, pad_oe=self.pad_oe, pad_i=self.pad_i,
+                            pad_cs=self.pad_cs, pad_ck_en=self.pad_ck_en)
+        m.submodules.phy = DomainRenamer({"sync": "fsck", "cap": "fcap", "capn": "fcapn"})(phy)
+        m.d.comb += [phy.xfer.eq(eng.xfer), self.phasestep.eq(eng.phasestep)]
 
-        # Wired by hand rather than with wiring.connect. The component's own
-        # `source`/`sink` face outward while the inner controller's face inward,
-        # so a connect() of the two sees two drivers on the same members and
-        # refuses. Explicit assignment states the direction of each signal.
-        m.d.comb += [
-            self.source.data    .eq(self._inner.source.data),
-            self.source.len     .eq(self._inner.source.len),
-            self.source.width   .eq(self._inner.source.width),
-            self.source.mask    .eq(self._inner.source.mask),
-            self.source.valid   .eq(self._inner.source.valid),
-            self._inner.source.ready .eq(self.source.ready),
+        if not self.sim:
+            pads = platform.request("qspi_flash", 0, dir="-")
+            for i in range(4):
+                buf = m.submodules[f"dq{i}"] = io.Buffer("io", pads.dq[i])
+                m.d.comb += [buf.o.eq(self.pad_o[i]), buf.oe.eq(self.pad_oe[i]),
+                             self.pad_i[i].eq(buf.i)]
+            m.submodules.cs = cs = io.Buffer("o", pads.cs)
+            m.d.comb += cs.o.eq(self.pad_cs)
+            # CE changes on fsck edges = MCLK falling, so the gated clock has no runt.
+            gated = Signal()
+            m.submodules.mclk_gate = Instance("DCCA", i_CLKI=self.mclk, i_CE=self.pad_ck_en,
+                                              o_CLKO=gated)
+            m.submodules.usrmclk = Instance("USRMCLK", i_USRMCLKI=gated, i_USRMCLKTS=0)
 
-            self._inner.sink.data  .eq(self.sink.data),
-            self._inner.sink.valid .eq(self.sink.valid),
-            self.sink.ready        .eq(self._inner.sink.ready),
-        ]
+        # ---- command buffers: CPU side sync, engine side fsck
+        for mem, name in ((self._line, "line"), (self._txbuf, "txbuf"), (self._rxbuf, "rxbuf")):
+            m.submodules[name] = mem
+        tx_wp = self._txbuf.write_port(domain="sync", granularity=8)
+        tx_rp = self._txbuf.read_port(domain="fsck")
+        rx_wp = self._rxbuf.write_port(domain="fsck")
+        rx_rp = self._rxbuf.read_port(domain="sync")
+        bw = self.buf
+        m.d.comb += [tx_wp.addr.eq(bw.adr), tx_wp.data.eq(bw.dat_w),
+                     tx_wp.en.eq(Mux(bw.cyc & bw.stb & bw.we & ~bw.ack, bw.sel, 0)),
+                     rx_rp.addr.eq(bw.adr), bw.dat_r.eq(rx_rp.data),
+                     tx_rp.addr.eq(eng.tx_addr), eng.tx_data.eq(tx_rp.data),
+                     rx_wp.addr.eq(eng.rx_addr), rx_wp.data.eq(eng.rx_data),
+                     rx_wp.en.eq(eng.rx_we)]
+        m.d.sync += bw.ack.eq(bw.cyc & bw.stb & ~bw.ack)
 
-        # The whole point: CS is asserted while software holds it OR while the
-        # upstream controller wants it. The OR rather than a replacement means
-        # a command that does not bother to hold still works exactly as before.
-        #
-        # ---- and the crossing, when there is one -------------------------
-        #
-        # `_hold` is an `amaranth_soc.csr` register, so its flip-flop is in
-        # `sync` -- it is on the CPU's bus and it cannot be anywhere else. The
-        # inner controller and the pad are in `self._domain`. When those differ,
-        # `hold.data` changes on a `sync` edge and is ORed straight onto a chip
-        # select that the SPI clock is timed against.
-        #
-        # Nothing in the FPGA samples it, which is why it builds and simulates
-        # clean: the thing that samples CS is the flash, and what it sees is an
-        # edge with no defined relationship to SCK. The W25Q32's tCSS/tCSH are
-        # setup and hold against the clock, so the failure is a command byte
-        # accepted or dropped depending on where the two clocks happen to sit --
-        # which is the class of fault this file already exists to fix once.
-        #
-        # `#241` was the same shape: a parameter that looked applied and was not.
-        # The difference here is that the parameter CANNOT simply be applied --
-        # renaming the register into `self._domain` would put the CPU's own bus
-        # there and move the crossing somewhere worse. So the register stays in
-        # `sync` and the LEVEL crosses, which is what `FFSynchronizer` is for.
-        held = self._hold.f.select.data
-        if self._domain != "sync":
-            crossed = Signal()
-            m.submodules.hold_cdc = FFSynchronizer(held, crossed,
-                                                  o_domain=self._domain)
-            held = crossed
-        m.d.comb += self.cs.eq(held | self._inner.cs)
+        # ---- crossings
+        def to_sync(name, sig):
+            out = Signal.like(sig, name=f"{name}_s")
+            m.submodules[f"{name}_ff"] = FFSynchronizer(sig, out)
+            return out
 
-        return m
+        def toggle_in(name, pulse_sync):
+            """sync pulse -> fsck pulse, via a toggle (pulses >= 4 sync cycles apart)."""
+            t, h, p = Signal(name=f"{name}_t"), Signal(name=f"{name}_h"), Signal(name=f"{name}_p")
+            with m.If(pulse_sync):
+                m.d.sync += t.eq(~t)
+            m.submodules[f"{name}_ff"] = FFSynchronizer(t, h, o_domain="fsck")
+            m.d.fsck += p.eq(h)
+            return h ^ p
 
+        def toggle_out(name, pulse_fsck):
+            t, h, p = Signal(name=f"{name}_t"), Signal(name=f"{name}_h"), Signal(name=f"{name}_p")
+            with m.If(pulse_fsck):
+                m.d.fsck += t.eq(~t)
+            m.submodules[f"{name}_ff"] = FFSynchronizer(t, h)
+            m.d.sync += p.eq(h)
+            return h ^ p
 
-class FlashPinProbe(wiring.Component):
-    """Counts what actually happens on the SPI flash pins, readable as CSRs.
+        ready_s, cal_valid_s, cal_x4_s = (to_sync("ready", eng.ready),
+                                          to_sync("calv", eng.cal_valid),
+                                          to_sync("calx4", eng.cal_x4))
+        locked_s = to_sync("locked", self.locked)
+        cal_s = to_sync("cal", Cat(eng.cal_step, eng.cal_lat, eng.cal_xfer, Const(0, 3),
+                                   eng.width_x1, eng.width_x4))
+        done_s = toggle_out("done", eng.done)
+        m.d.comb += self.boot_ready.eq(ready_s)
 
-    This exists because simulation and hardware flatly contradict each other.
-    Every stage of the controller path passes in simulation -- the controller
-    alone, the PHY alone, controller through crossbar to PHY, and the full
-    wishbone/CSR/controller/crossbar/PHY chain, all producing the expected eight
-    SCK edges for an eight-bit transfer. On hardware the same path reads the
-    JEDEC ID as zeros and an erase completes 14,000 times too fast to be real.
-    Something between the CPU and the pads is not doing what the model says, and
-    no amount of further simulation can say what.
+        # ---- registers
+        rb = self.bus
+        desc_r, addr_r, wait_r = Signal(32), Signal(24), Signal(24)
+        len_r, wren_r, waitf_r = Signal(9), Signal(), Signal()
+        irq_en, events, errors = Signal(2), Signal(2), Signal(N_ERR)
+        pending, w_class = Signal(), Signal()
+        code_r, op_r = Signal(4), Signal(4)
+        saw_busy_r, poll_us_r = Signal(), Signal(24)
+        ev_set, err_set = Signal(2), Signal(N_ERR)
+        m.d.comb += [ev_set[1].eq(err_set.any()), self.irq.eq((events & irq_en).any())]
 
-    An ILA would answer it. So does this, with far less machinery: the questions
-    are countable rather than waveform-shaped. Does chip select ever assert? Does
-    the clock ever toggle? Is the data pin ever driven? Does the crossbar ever
-    grant the controller? Four counters and a sticky bit each, read over a
-    console that has been reliable all session and shares nothing with the SPI
-    path.
+        wr = rb.cyc & rb.stb & rb.we & ~rb.ack
+        m.d.sync += rb.ack.eq(rb.cyc & rb.stb & ~rb.ack)
+        status = Cat(pending, ready_s & locked_s, locked_s, cal_valid_s, cal_x4_s, saw_busy_r,
+                     Const(0, 2), code_r, op_r, events, Const(0, 6), errors)
+        with m.Switch(rb.adr):
+            for word, value in ((REG_STATUS, status), (REG_IRQ_EN, irq_en), (REG_DESC, desc_r),
+                                (REG_ADDR, addr_r), (REG_LEN, Cat(len_r, Const(0, 7), wren_r,
+                                                                  waitf_r)),
+                                (REG_WAIT_US, wait_r), (REG_POLL_US, poll_us_r),
+                                (REG_CAL, cal_s),
+                                (REG_CAL_US, cal_us(self.n_steps, self.sck_mhz))):
+                with m.Case(word):
+                    m.d.sync += rb.dat_r.eq(value)
+            with m.Default():
+                m.d.sync += rb.dat_r.eq(0)
+        d = rb.dat_w
+        with m.If(wr):
+            with m.Switch(rb.adr):
+                with m.Case(REG_IRQ_EN):
+                    m.d.sync += irq_en.eq(d[0:2])
+                with m.Case(REG_DESC):
+                    m.d.sync += desc_r.eq(d)
+                with m.Case(REG_ADDR):
+                    m.d.sync += addr_r.eq(d[0:24])
+                with m.Case(REG_LEN):
+                    m.d.sync += [len_r.eq(d[0:9]), wren_r.eq(d[16]), waitf_r.eq(d[17])]
+                with m.Case(REG_WAIT_US):
+                    m.d.sync += wait_r.eq(d[0:24])
+        clear = wr & (rb.adr == REG_CTRL)
+        m.d.sync += [events.eq((events & ~Mux(clear, d[16:18], 0)) | ev_set),
+                     errors.eq((errors & ~Mux(clear, d[24:24 + N_ERR], 0)) | err_set)]
 
-    STICKY, NOT LIVE, and that distinction has already cost this project a wrong
-    conclusion once. The sideband debug bits were raw Wishbone `cyc` strobes
-    sampled whenever the host happened to ask; `cyc` is high for a few cycles per
-    transaction, so reading zero was near-certain even on a perfectly busy CPU,
-    and the core was nearly reported dead on that basis. An SCK edge is one cycle
-    wide and the CPU reads these registers thousands of cycles later. Latching
-    turns "is this happening at the instant I looked" -- which is always no --
-    into "has this ever happened", which is the actual question.
+        # ---- commands
+        start = Signal()
+        m.d.comb += [eng.start.eq(toggle_in("start", start)),
+                     eng.abort.eq(toggle_in("abort", clear & d[0]))]
 
-    The counters are saturating rather than wrapping. A count that rolls over to
-    a small number is indistinguishable from one that barely moved, and the
-    difference between "eight edges" and "eight edges plus a multiple of 65536"
-    is not worth the ambiguity when the thing being tested is whether anything
-    happens at all.
-    """
+        def finish(code, op):
+            m.d.sync += [code_r.eq(code), op_r.eq(op), pending.eq(0)]
+            m.d.comb += ev_set[0].eq(1)
+            with m.If(code != CODE_OK):
+                m.d.comb += err_set[ERR_OP].eq(1)
 
-    def __init__(self):
-        # 16-bit counters: an 8-bit JEDEC sequence is 32 edges, a 1 KiB
-        # memory-mapped read is a few thousand. 16 bits holds a whole
-        # positive-control read without saturating, which matters because the
-        # control has to produce an obviously large number.
-        self._cs_fell    = csr.Register({"seen": csr.Field(csr.action.R, 1)},
-                                        access="r")
-        self._sck_edges  = csr.Register({"count": csr.Field(csr.action.R, 16)},
-                                        access="r")
-        self._dq_driven  = csr.Register({"seen": csr.Field(csr.action.R, 1)},
-                                        access="r")
-        self._grants     = csr.Register({"count": csr.Field(csr.action.R, 16)},
-                                        access="r")
-        self._oe_edges   = csr.Register({"count": csr.Field(csr.action.R, 16)},
-                                        access="r")
-        # Written to clear every counter, so the firmware can measure the
-        # DIFFERENCE across one operation rather than a total since reset. A
-        # total cannot separate "this transaction did nothing" from "this
-        # transaction did nothing but an earlier one did".
-        self._clear      = csr.Register({"strobe": csr.Field(csr.action.W, 1)},
-                                        access="w")
+        def refuse(code, op):
+            m.d.sync += [code_r.eq(code), op_r.eq(op)]
+            m.d.comb += err_set[ERR_OP].eq(1)
+            with m.If(~pending):
+                m.d.comb += ev_set[0].eq(1)
 
-        builder = csr.Builder(addr_width=5, data_width=8)
-        builder.add("cs_fell",   self._cs_fell)
-        builder.add("sck_edges", self._sck_edges)
-        builder.add("dq_driven", self._dq_driven)
-        builder.add("grants",    self._grants)
-        builder.add("oe_edges", self._oe_edges)
-        builder.add("clear",     self._clear)
-        self._bridge = csr.Bridge(builder.as_memory_map())
+        w = d[0:4]
+        arg_bad = (((w != OP_RUN) & (w != OP_CALIBRATE)) | (len_r > BUF_BYTES)
+                   | ((w == OP_RUN) & waitf_r & (wait_r == 0)))
+        with m.If(wr & (rb.adr == REG_CMD)):
+            with m.If(pending):
+                refuse(CODE_BUSY, w)
+            with m.Elif(~(ready_s & locked_s)):
+                refuse(CODE_NOT_READY, w)
+            with m.Elif(arg_bad):
+                refuse(CODE_ARG, w)
+            with m.Else():
+                m.d.sync += [eng.op.eq(w), eng.desc.eq(desc_r & DESC_MASK), eng.addr.eq(addr_r),
+                             eng.len.eq(len_r), eng.wren.eq(wren_r), eng.wait.eq(waitf_r),
+                             eng.wait_us.eq(wait_r), pending.eq(1), op_r.eq(w),
+                             code_r.eq(CODE_OK),
+                             w_class.eq((w == OP_CALIBRATE) | wren_r | waitf_r)]
+                m.d.comb += start.eq(1)
 
-        super().__init__({
-            "bus":       wiring.In(csr.Signature(addr_width=5, data_width=8)),
-            # Sampled from the pins and the crossbar. All inputs; this module
-            # drives nothing into the flash path and cannot perturb what it is
-            # measuring.
-            "cs":        wiring.In(unsigned(1)),
-            "sck":       wiring.In(unsigned(1)),
-            "dq_oe":     wiring.In(unsigned(1)),
-            "grant_ctrl": wiring.In(unsigned(1)),
-        })
-        self.bus.memory_map = self._bridge.bus.memory_map
+        # The engine bounds every wait it has, so a done always comes; the CPU's own
+        # bound (flash.rs) covers an fsck clock that stops.
+        with m.If(done_s):
+            m.d.sync += [saw_busy_r.eq(eng.r_saw_busy), poll_us_r.eq(eng.r_poll_us)]
+            with m.If(pending):
+                finish(eng.r_code, op_r)
+            for code, bit in ((CODE_WDOG, ERR_WDOG), (CODE_CAL_NONE, ERR_CAL)):
+                with m.If(eng.r_code == code):
+                    m.d.comb += err_set[bit].eq(1)
 
-    def elaborate(self, platform):
-        m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+        # ---- calibration result and lock loss as errors
+        ready_prev, locked_prev = Signal(), Signal()
+        m.d.sync += [ready_prev.eq(ready_s), locked_prev.eq(locked_s)]
+        with m.If(ready_s & ~ready_prev & ~cal_valid_s):
+            m.d.comb += err_set[ERR_CAL].eq(1)
+        with m.If(locked_prev & ~locked_s):
+            m.d.comb += err_set[ERR_PLL_LOST].eq(1)
 
-        cs_fell   = Signal()
-        dq_driven = Signal()
-        sck_count = Signal(16)
-        grant_count = Signal(16)
-        # SCK edges that occurred while the DQ output driver was enabled.
-        oe_edges = Signal(16)
+        # ---- XIP: line buffer, fill from the engine, ack per word
+        fifo = m.submodules.xip_fifo = BramAsyncFIFO(width=38, depth=LINE_BYTES // 4,
+                                                     w_domain="fsck", r_domain="sync")
+        m.d.comb += [fifo.w_en.eq(eng.xip_we),
+                     fifo.w_data.eq(Cat(eng.xip_word, eng.xip_idx, eng.xip_wid))]
+        line_wp = self._line.write_port(domain="sync")
+        line_rp = self._line.read_port(domain="sync")
+        xb = self.xip
+        tag, valid, filling, fill_id = Signal(16), Signal(16), Signal(), Signal(2)
+        inv_pending, fill_age = Signal(), Signal(range(self.fill_limit + 1))
+        xip_go = Signal()
+        req_line, req_word = xb.adr[4:20], xb.adr[0:4]
+        f_word, f_idx, f_id = fifo.r_data[0:32], fifo.r_data[32:36], fifo.r_data[36:38]
+        m.d.comb += [fifo.r_en.eq(1), line_rp.addr.eq(req_word),
+                     eng.xip_line.eq(tag), eng.xip_id.eq(fill_id),
+                     eng.xip_start.eq(toggle_in("xip", xip_go))]
+        landed = Signal(16)
+        m.d.comb += landed.eq(valid | (Const(1, 16) << f_idx))
+        with m.If(fifo.r_rdy & filling & (f_id == fill_id)):
+            m.d.comb += [line_wp.en.eq(1), line_wp.addr.eq(f_idx), line_wp.data.eq(f_word)]
+            m.d.sync += valid.eq(landed)
+            with m.If(landed == 0xFFFF):
+                m.d.sync += filling.eq(0)
+        with m.If(filling & (fill_age != self.fill_limit)):
+            m.d.sync += fill_age.eq(fill_age + 1)
 
-        # Edge detection needs the previous value of each signal.
-        cs_prev    = Signal(reset=1)
-        sck_prev   = Signal()
-        grant_prev = Signal()
-        m.d.sync += [
-            cs_prev.eq(self.cs),
-            sck_prev.eq(self.sck),
-            grant_prev.eq(self.grant_ctrl),
-        ]
+        # A command's done invalidates the line (erase/program); deferred past a fill.
+        with m.If(done_s):
+            m.d.sync += inv_pending.eq(1)
+        with m.If(inv_pending & ~filling & ~done_s):
+            m.d.sync += [valid.eq(0), inv_pending.eq(0)]
 
-        clear = self._clear.f.strobe.w_stb
+        blocked = ~cal_valid_s | (pending & w_class)
+        asking = xb.cyc & xb.stb & ~xb.ack & ~xb.err
+        hit = (tag == req_line) & valid.bit_select(req_word, 1) & ~inv_pending
+        # the read port answers the cycle after the address, with the registered ack
+        m.d.sync += [xb.ack.eq(0), xb.err.eq(0)]
+        m.d.comb += xb.dat_r.eq(line_rp.data)
+        with m.If(asking):
+            with m.If(xb.we):
+                m.d.sync += xb.err.eq(1)
+                m.d.comb += err_set[ERR_XIP_WRITE].eq(1)
+            with m.Elif(blocked):
+                m.d.sync += xb.err.eq(1)
+                m.d.comb += err_set[ERR_XIP_BLOCKED].eq(1)
+            with m.Elif(hit):
+                m.d.sync += xb.ack.eq(1)
+            with m.Elif(filling & (fill_age == self.fill_limit)):
+                m.d.sync += [xb.err.eq(1), filling.eq(0), valid.eq(0)]
+                m.d.comb += err_set[ERR_XIP_FILL].eq(1)
+            with m.Elif(~filling & ~inv_pending):
+                m.d.sync += [tag.eq(req_line), valid.eq(0), filling.eq(1), fill_age.eq(0),
+                             fill_id.eq(fill_id + 1)]
+                m.d.comb += xip_go.eq(1)
 
-        with m.If(clear):
-            m.d.sync += [
-                cs_fell.eq(0),
-                dq_driven.eq(0),
-                sck_count.eq(0),
-                grant_count.eq(0),
-                oe_edges.eq(0),
-            ]
-        with m.Else():
-            # CS is active low at the pad. The platform declares it PinsN, so
-            # the signal here is already the logical "selected" sense -- high
-            # means selected. A falling edge of the PAD is a rising edge here.
-            with m.If(self.cs & ~cs_prev):
-                m.d.sync += cs_fell.eq(1)
-
-            with m.If(self.dq_oe):
-                m.d.sync += dq_driven.eq(1)
-
-            # Output enable asserted while the clock is running is the
-            # interesting case, not merely asserted at some point. During the
-            # RECEIVE phase of a read the controller must release DQ so the
-            # flash can drive it; if the output driver is still on while SCK
-            # toggles, the FPGA and the flash are fighting over the same wire
-            # and the sampled data is whatever the FPGA is driving -- which
-            # would read back as the controller's own idle level rather than
-            # the flash's answer.
-            with m.If(self.dq_oe & self.sck & ~sck_prev):
-                with m.If(oe_edges != 0xFFFF):
-                    m.d.sync += oe_edges.eq(oe_edges + 1)
-
-            # Rising edges only, and saturating.
-            with m.If(self.sck & ~sck_prev):
-                with m.If(sck_count != 0xFFFF):
-                    m.d.sync += sck_count.eq(sck_count + 1)
-
-            with m.If(self.grant_ctrl & ~grant_prev):
-                with m.If(grant_count != 0xFFFF):
-                    m.d.sync += grant_count.eq(grant_count + 1)
-
-        m.d.comb += [
-            self._cs_fell.f.seen.r_data.eq(cs_fell),
-            self._sck_edges.f.count.r_data.eq(sck_count),
-            self._dq_driven.f.seen.r_data.eq(dq_driven),
-            self._grants.f.count.r_data.eq(grant_count),
-            self._oe_edges.f.count.r_data.eq(oe_edges),
-        ]
-        return m
-
-
-class QSPIFlashPins(wiring.Component):
-    """Requests `qspi_flash` and wires it to a `PinSignature`.
-
-    luna_soc has `provider.QSPIFlashProvider` for this, and it is not used here
-    for one reason: it wraps `platform.request` in a bare `except:` that logs a
-    warning and returns an empty module. A platform typo, a renamed resource or
-    a resource already claimed elsewhere then produces a design that builds
-    cleanly, passes timing, and reads zeros forever -- and the only trace is one
-    log line among thousands. This lets the exception out.
-    """
-
-    def __init__(self, name="qspi_flash", index=0):
-        from luna_soc.gateware.core import spiflash
-        self._name  = name
-        self._index = index
-        super().__init__({"pins": wiring.In(spiflash.PinSignature())})
-
-    def elaborate(self, platform):
-        m = Module()
-        qspi = platform.request(self._name, self._index)
-        m.d.comb += [
-            self.pins.dq.i .eq(qspi.dq.i),
-            qspi.dq.oe     .eq(self.pins.dq.oe),
-            qspi.dq.o      .eq(self.pins.dq.o),
-            qspi.cs.o      .eq(self.pins.cs.o),
-        ]
         return m

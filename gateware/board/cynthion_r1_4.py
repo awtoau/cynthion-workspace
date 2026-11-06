@@ -53,16 +53,15 @@ LEDS = (
 # Derived, so the resource and the table cannot disagree about a ball.
 LED_PINS = " ".join(ball for _index, ball, _sch, _colour in LEDS)
 
-# Config-flash pin electricals, stated not inherited. Values are what nextpnr
-# applied when they were omitted (read from top.config), so behaviour is
-# unchanged. Sweep axes: CYNTHION_FLASH_DRIVE/_SLEWRATE. #459.
-FLASH_DRIVE    = "8"      # unset in .config; the pad bits decode as 8 mA
-FLASH_SLEWRATE = "SLOW"   # unset = SLOW
+# Config-flash pin electricals, stated not inherited (#459): the #590 baseline's
+# 16 mA FAST, which its 100-190 MHz climb ran on (docs/chips/flash-baseline.md).
+FLASH_DRIVE    = "16"
+FLASH_SLEWRATE = "FAST"
 FLASH_PULLMODE = "NONE"
 
 
-def flash_attrs(drive=FLASH_DRIVE, slewrate=FLASH_SLEWRATE):
-    return Attrs(IO_TYPE="LVCMOS33", DRIVE=drive, SLEWRATE=slewrate,
+def flash_attrs():
+    return Attrs(IO_TYPE="LVCMOS33", DRIVE=FLASH_DRIVE, SLEWRATE=FLASH_SLEWRATE,
                  PULLMODE=FLASH_PULLMODE)
 
 
@@ -261,9 +260,3 @@ class CynthionPlatformRev1D4(CynthionPlatform):
 
     apollo_port_sharing = {'control_phy': 'advertising'}
 
-    def __init__(self, *, flash_drive=FLASH_DRIVE, flash_slewrate=FLASH_SLEWRATE):
-        attrs = flash_attrs(flash_drive, flash_slewrate)
-        self.resources = [
-            Resource(r.name, r.number, *r.ios, attrs) if r.name in ("spi_flash", "qspi_flash") else r
-            for r in type(self).resources]
-        super().__init__()

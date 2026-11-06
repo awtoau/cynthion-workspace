@@ -126,9 +126,9 @@ Each figure is a difference of two separately measured rows, not an isolated A/B
 - FPGA-side transfer is not the cost: a bulk-OUT sink bitstream (TARGET-C, 110 MHz vs 60 MHz constraint, `1209:000e`) took 304726 B in 7.89 ms (38.6 MB/s) vs 2746 ms over the JTAG path.
 
 ### Early decomposition (304726 B image, stock-era firmware)
-- Apollo enumerates 12 Mbps full-speed, EP0 64 B (`CFG_TUD_ENDPOINT0_SIZE 64`); raw ceiling 1.5 MB/s. The 388 Mbps in #100 is the FPGA PHY on another port.
+- Apollo enumerates 12 Mbps full-speed, EP0 64 B (`CFG_TUD_ENDPOINT0_SIZE 64`); raw ceiling 1.5 MB/s. The 388 Mbps in [#100](https://github.com/awtoau/cynthion-workspace/issues/100) is the FPGA PHY on another port.
 - `SET_OUT_BUFFER`: 204 us + 2.53 us/B; `SCAN`: 1.40 us/B marginal. Getting a byte into the SAMD11 costs ~2x clocking it.
-- Floors: 100% of full-speed wire 203 ms (floor for any SAMD11 path); #100's 6 ms target is not reachable through this MCU.
+- Floors: 100% of full-speed wire 203 ms (floor for any SAMD11 path); [#100](https://github.com/awtoau/cynthion-workspace/issues/100)'s 6 ms target is not reachable through this MCU.
 
 ## Clean state between runs
 

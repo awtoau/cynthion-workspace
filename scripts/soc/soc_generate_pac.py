@@ -493,7 +493,7 @@ def cross_check(peripherals, emit):
         "HYPERRAM": soc_module.HYPERRAM_BASE,
         "HYPERRAM_WINDOW": soc_module.HYPERRAM_WINDOW_BASE,
         "SPI0": soc_module.FLASH_CSR_BASE,
-        "FLASH_PROBE": soc_module.FLASH_PROBE_BASE,
+        "SPI0_BUF": soc_module.FLASH_BUF_BASE,
     }
 
     ok = True

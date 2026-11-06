@@ -4,7 +4,7 @@ Reference test gateware, not product gateware: `gateware/flash_baseline/`, `scri
 
 **Operating point: 190 MHz SCK** (harness default; Dan, 2026-11-03): EBh 1-4-4 95.00 MB/s, 0 errors.
 
-Issue: [#590](https://github.com/awtoau/cynthion-workspace/issues/590). Fixed reference for [#589](https://github.com/awtoau/cynthion-workspace/issues/589) (flash XIP).
+Issue: [#590](https://github.com/awtoau/cynthion-workspace/issues/590). Fixed reference for [#589](https://github.com/awtoau/cynthion-workspace/issues/589) (flash XIP). The SoC peripheral built on this core (SCK 180): [flash-soc-peripheral.md](flash-soc-peripheral.md) ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)).
 
 **Rule (Dan, 2026-11-03):** clean room. Designed from the flash datasheets and Lattice ECP5 docs only. From the repo: pinout, the 60 MHz oscillator pin, bank voltage. No repo or upstream SPI/QSPI code was read.
 
@@ -101,7 +101,7 @@ Climb (runs 20261103-172252, -175223; `climb-table`). Every row: SEQ fresh, ever
 
 - Run 20261103-170624 at 100 MHz; earlier runs at 20-160 MHz agree within a few %. tBE1/tBE2 are 1.3x/1.6x datasheet typical; tSE 1.2x; tPP 0.9x. All far under max.
 
-### PHASESTEP bug and other fixes (details on #590)
+### PHASESTEP bug and other fixes (details on [#590](https://github.com/awtoau/cynthion-workspace/issues/590))
 
 - GO used a rising-edge detector while the harness toggled it: every other op never ran.
 - Capture phase was counted, not measured; PHASESTEP was combinational and glitched, so the count drifted ~6-8 steps per 64-step turn at div 8. Placement after a wrap was a cycle off (the 100/132 MHz "failures"). Fixed: registered PHASESTEP (drift 0 at div 5/6/10), probed placement and XFER.
@@ -128,4 +128,4 @@ Climb (runs 20261103-172252, -175223; `climb-table`). Every row: SEQ fresh, ever
 ## Notes
 
 - Not measured: repeats beyond 2, temperature, other boards, MCLK phase other than 180 degrees, continuous read mode, DTR above 80 MHz with a finer eye.
-- The JTAG register path is our TCK-clocked `JTAGRegisterInterface` (`gateware/probes/jtag_registers.py`, #204), no longer luna's oversampler. 2026-11-06 `scan --sck 20`: applet id, JEDEC `0xef4016` and the SFDP header read back intact.
+- The JTAG register path is our TCK-clocked `JTAGRegisterInterface` (`gateware/probes/jtag_registers.py`, [#204](https://github.com/awtoau/cynthion-workspace/issues/204)), no longer luna's oversampler. 2026-11-06 `scan --sck 20`: applet id, JEDEC `0xef4016` and the SFDP header read back intact.

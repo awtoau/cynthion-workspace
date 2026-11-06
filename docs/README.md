@@ -90,7 +90,7 @@ in its §13 got there in the first place.
 * [`upstream-boundary.md`](upstream-boundary.md) — What we take from upstream and what we replaced; no-upstreaming policy; luna-soc fork pin; carried commits; upstream CI and clean-build traps
 * [`capture-compression.md`](capture-compression.md) — FPGA capture-path compression (switchable, RV tap before it, gateware decompressor): requirement, path, codec options, verification
 * [`upstream-bugs.md`](upstream-bugs.md) — Every bug we found in upstream code or tools (cynthion, moondancer, facedancer, luna, luna-soc, apollo, yosys, nextpnr, GUH, ...), each with our issue, state and whether reported
-* [`yosys-opt-clean-race.md`](yosys-opt-clean-race.md) — yosys `opt_clean` memory data race (upstream #6418): the patch, stress/TSAN/netlist tests, risks
+* [`yosys-opt-clean-race.md`](yosys-opt-clean-race.md) — yosys `opt_clean` memory data race (upstream [#6418](https://github.com/awtoau/cynthion-workspace/issues/6418)): the patch, stress/TSAN/netlist tests, risks
 * [`board-usb-recovery.md`](board-usb-recovery.md) — Reviving a silent Apollo without touching cables: the `usb_recover.py` ladder (port power cycle, hub reset), its safety rules, and what actually worked on this host
 * [`yosys-070-upgrade.md`](yosys-070-upgrade.md) — yosys 0.70 / nextpnr 0.11: speed gain, the abc9 `M`-tie blocker and its workaround, size by option, upstream report draft
 * [`upstream-watch.md`](upstream-watch.md) — Upstream issues and PRs that matter to us (luna, apollo, cynthion, hardware, packetry), with USE/AVOID/WATCH verdicts; the no-LLM-contributions policy
@@ -110,8 +110,8 @@ in its §13 got there in the first place.
 * **[`chips/bus-speed-audit.md`](chips/bus-speed-audit.md) — every interface: what the part supports, what this board allows, what we configure**
 * [`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md) — VexiiRiscv — the SoC's CPU
 * [`chips/w25q32-config-flash.md`](chips/w25q32-config-flash.md) — Winbond W25Q32JVSSIQ — the configuration flash; lessons from the old flash work: [`chips/flash-lessons.md`](chips/flash-lessons.md)
-* [`chips/flash-baseline.md`](chips/flash-baseline.md) — config flash clean-room baseline (#590): every read mode, 20-260 MHz climb, 190 MHz operating point, program/erase times
-* [`chips/hyperram/`](chips/hyperram/README.md) — Winbond W956A8MBYA — the HyperRAM: part facts, #581 baseline, SoC peripheral (#588), lessons from the old stack
+* [`chips/flash-baseline.md`](chips/flash-baseline.md) — config flash clean-room baseline ([#590](https://github.com/awtoau/cynthion-workspace/issues/590)): every read mode, 20-260 MHz climb, 190 MHz operating point, program/erase times
+* [`chips/hyperram/`](chips/hyperram/README.md) — Winbond W956A8MBYA — the HyperRAM: part facts, [#581](https://github.com/awtoau/cynthion-workspace/issues/581) baseline, SoC peripheral ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)), lessons from the old stack
 
 ### The ECP5, beyond the part itself
 

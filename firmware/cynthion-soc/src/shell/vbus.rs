@@ -25,7 +25,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     // `crate::trim` is 88 bytes and is what every other command already uses.
     let argument = trim(rest);
 
-    if argument.is_empty() {
+    if argument.is_empty() || argument == b"status" {
         let _ = writeln!(
             uart,
             "vbus {:02x}  c{} a{} t{}",

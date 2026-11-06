@@ -86,8 +86,8 @@ move, presented as a measurement.
 | …crossbar `locked` `:314` | — | **yes, read-only** | genuinely unobservable. `grant` **does** reach a CSR (`top.py:1243`), into the dead readout at rank 4 |
 | …`HoldableSPIController` CS hold | already a CSR at `:614` | — | **R4 for the residue** — the CPU issues CSR writes far slower than the PHY drains the TX FIFO, so software cannot keep `tx_fifo.r_rdy` asserted; only the `held | inner.cs` OR is gateware |
 | …the inner controller's `cs` CSR at `0x04` | — | delete | written by nothing. [`flash.rs:17`](../firmware/cynthion-soc/src/flash.rs) says so: "a write PULSE; cannot hold chip select. Unused here" |
-| [`flash_cdc.py`](../gateware/soc/peripherals/flash_cdc.py) | `depth=4`, `phy_domain` | no | **R6.** Zero CSRs, and now zero instances: `FLASH_PHY_FAST = False`. `depth` is a sizing bet, not a timing case |
-| [`flash_sck_full.py`](../gateware/soc/peripherals/flash_sck_full.py) | `gated_sck` | no | **R1** — one SCK period per domain cycle, through the single LUT that is the only legal path to `USRMCLKI`. Not built (`FLASH_FULL_SCK = False`). `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
+| `flash_cdc.py` (removed, [#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | `depth=4`, `phy_domain` | no | **R6.** Zero CSRs, and now zero instances: `FLASH_PHY_FAST = False`. `depth` is a sizing bet, not a timing case |
+| `flash_sck_full.py` (removed, [#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | `gated_sck` | no | **R1** — one SCK period per domain cycle, through the single LUT that is the only legal path to `USRMCLKI`. Not built (`FLASH_FULL_SCK = False`). `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
 | [`block_ram.py`](../gateware/soc/peripherals/block_ram.py) | `size` → EBR count | no | **R5** — `:125` acks a cycle the CPU is stalled in, for the memory holding its own stack. `init` is the one input that needs no resynthesis ([`bram_patch.py`](../scripts/bram_patch.py)) |
 | …`inside` `:102-103` | bounds mask | note | constant 1 at `RAM_SIZE = 32 KiB`. The module exists to allow a non-power-of-two size and the shipping size is a power of two; `top.py:150-151` still states the retired constraint |
 
@@ -111,7 +111,7 @@ move, presented as a measurement.
 | …`divisor` port | reset value only | **yes — already a port** | rank 1 |
 | …`armed`, `frame_errors` `:183-184` | — | **yes, read-only** | both documented "Diagnostic:", both driven, and the only reader in the repository is [`soc_serial_sim.py`](../scripts/soc/soc_serial_sim.py). So the failure the module documents as its known trade — the receiver disarms and a back-to-back sender never gives it 12 idle bits — is not observable by any means the product has |
 | [`stream_buffer.py`](../gateware/soc/peripherals/stream_buffer.py) flush `:148-158` | — | no | **R2** — the host types during PLL lock and the flush must fire while `sync` is still in reset. Note `ResetSignal(..., allow_reset_less=True)` at `:150` returns `Const(0)` if the write domain is ever declared `reset_less`, which deletes the fix with no error and no test |
-| …`depth` 16/16/64/16 | LUT RAM vs BRAM | **param** | `top.py:322-336`. Zero CSRs: no occupancy, no high-water mark, no evidence of a drop — on the one path where loss is possible, because [`ns16550a-console-uart.md:198`](chips/ns16550a-console-uart.md) records that `SerialLine` does not honour `ready` |
+| …`depth` 16/16/64/16 | one `DP16KD` each (pinned) | **param** | `top.py:322-336`. Zero CSRs: no occupancy, no high-water mark, no evidence of a drop — on the one path where loss is possible, because [`ns16550a-console-uart.md:198`](chips/ns16550a-console-uart.md) records that `SerialLine` does not honour `ready` |
 | [`clock_monitor.py`](../gateware/soc/peripherals/clock_monitor.py) | `WINDOW_CYCLES = 60_000` = 1 ms | no | **R7.** The gate is correctly baked: the latched count *is* kHz only because the window is exactly 1 ms, so a register here would redefine what the other register means. Three limits below |
 | [`i2c_master.py`](../gateware/soc/peripherals/i2c_master.py) `sda_o` | constant 0 | no | correct for open-drain: the pad is driven low or released, never high |
 
@@ -201,8 +201,8 @@ other row above.
 
 | module | why | where the reason is |
 |---|---|---|
-| [`flash_cdc.py`](../gateware/soc/peripherals/flash_cdc.py) | `FLASH_PHY_FAST = False`, not env-overridable | `top.py:676-703`: at `sync` 60 the only integer ratios are 60 (no change) and 120 (does not close at 111.26 MHz). ODDR first, then this |
-| [`flash_sck_full.py`](../gateware/soc/peripherals/flash_sck_full.py) | `FLASH_FULL_SCK = False` | `top.py:705-710`. Also `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
+| `flash_cdc.py` (removed, [#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | `FLASH_PHY_FAST = False`, not env-overridable | `top.py:676-703`: at `sync` 60 the only integer ratios are 60 (no change) and 120 (does not close at 111.26 MHz). ODDR first, then this |
+| `flash_sck_full.py` (removed, [#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | `FLASH_FULL_SCK = False` | `top.py:705-710`. Also `:46-48` makes `FLASH_FULL_SCK=1` **plus** `FLASH_DIVISOR>0` a build-time crash, which `top.py` does not mention |
 
 ## Merged, in no layer yet
 

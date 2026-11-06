@@ -21,10 +21,12 @@ from amaranth             import (Cat, ClockDomain, ClockSignal, Const, DomainRe
                                   Module, Mux, ResetInserter, Signal)
 from amaranth.lib         import memory, wiring
 from amaranth.lib.cdc     import FFSynchronizer, ResetSynchronizer
-from amaranth.lib.fifo    import AsyncFIFO, SyncFIFOBuffered
+from amaranth.lib.fifo    import AsyncFIFO
 from amaranth.lib.wiring  import In, Out
 from amaranth_soc         import csr, wishbone
 from amaranth_soc.memory  import MemoryMap
+
+from peripherals.bram_fifo import BramSyncFIFOBuffered
 
 _BASELINE = Path(__file__).resolve().parents[2] / "hyperram_baseline"
 if str(_BASELINE) not in sys.path:
@@ -154,7 +156,7 @@ class _Engine(Elaboratable):
         m.submodules.core = ResetInserter(core_rst)(core)
         pf_clear = Signal()
         m.submodules.prefetch = pf = ResetInserter(pf_clear)(
-            SyncFIFOBuffered(width=18, depth=8))
+            BramSyncFIFOBuffered(width=18, depth=8))
 
         # ---- op descriptor and progress
         op_live, op_cmd = Signal(), Signal()

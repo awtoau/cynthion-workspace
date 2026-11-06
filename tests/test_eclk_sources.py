@@ -11,13 +11,10 @@ the fabric tap instead, and says so as `log_info` -- not a warning, not an error
 Nothing in the build output, the metrics row or the timing report names it, and
 the design still runs, on a clock whose skew nobody bounded.
 
-The one generator that can produce an edge clock is checked:
-
-    gateware/soc/clocks.py                       `fast`      (shipping SoC)
-
-The legal source list is READ FROM prjtrellis, not written down here, so the
-assertion tracks the silicon rather than a comment. `test_trellis_agrees_with_the
-_literal` is what makes the fallback constant trustworthy when the DB is absent.
+- No generator in the tree builds an edge clock since #593 removed `fast`; the
+  source list and the artifact audit (`soc_eclk_check.py`) stay for the next one.
+- The legal source list is READ FROM prjtrellis; `test_trellis_agrees_with_the
+  _literal` keeps the fallback constant honest when the DB is absent.
 """
 
 from __future__ import annotations
@@ -25,21 +22,15 @@ from __future__ import annotations
 import re
 import shutil
 import sys
-import warnings
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# EHXPLLL outputs the bank ECLK input mux accepts. Derived from prjtrellis by
-# `test_trellis_agrees_with_the_literal`; written out only so the generator check
-# still runs on a checkout without the DB.
+# EHXPLLL outputs the bank ECLK input mux accepts, as prjtrellis says
+# (`test_trellis_agrees_with_the_literal`).
 ECLK_REACHABLE_OUTPUTS = {"CLKOP", "CLKOS"}
-
-# The one left-hand PLL bel on the 25F die. Bank 7 holds every HyperRAM DQ/RWDS
-# pad, and its ECLK mux takes PLL sources from the left PLLs only.
-LEFT_PLL_BEL = "X2/Y49/EHXPLL_LL"
 
 
 def _trellis_eclk_db() -> Path | None:
@@ -88,73 +79,6 @@ def test_trellis_agrees_with_the_literal():
         assert pll == ECLK_REACHABLE_OUTPUTS, (
             f"{mux}: prjtrellis says the PLL sources are {sorted(pll)}, this file "
             f"says {sorted(ECLK_REACHABLE_OUTPUTS)}")
-
-
-def _pll_of(design, platform):
-    """The one EHXPLLL in an elaborated design."""
-    from amaranth.hdl import Fragment
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        fragment = Fragment.get(design, platform)
-
-    found = []
-
-    def walk(node):
-        for sub, _name, _src in node.subfragments:
-            if getattr(sub, "type", None) == "EHXPLLL":
-                found.append(sub)
-            walk(sub)
-
-    walk(fragment)
-    assert len(found) == 1, f"expected one EHXPLLL, found {len(found)}"
-    return found[0]
-
-
-def _outputs(pll) -> set[str]:
-    """Which EHXPLLL clock outputs this instance actually drives."""
-    return {name for name, (_value, direction) in pll.ports.items()
-            if direction == "o" and name.startswith("CLKO")}
-
-
-def _platform():
-    sys.path[:0] = [str(ROOT / "gateware"), str(ROOT / "gateware" / "probes"),
-                    str(ROOT / "gateware" / "soc"), str(ROOT / "repos" / "apollo")]
-    from board import CynthionPlatformRev1D4
-    return CynthionPlatformRev1D4()
-
-
-def _generators():
-    """Every generator that can produce an edge clock, with one configured."""
-    _platform()                                    # puts `gateware/**` on the path
-    from clocks import SocClocks
-
-    return [
-        ("soc/clocks.py `fast`", SocClocks(sync_mhz=60.0, with_fast=True)),
-    ]
-
-
-@pytest.mark.parametrize("name,design", _generators(), ids=lambda arg: arg
-                         if isinstance(arg, str) else "")
-def test_edge_clock_comes_from_a_reachable_output(name, design):
-    """No CLKOS2/CLKOS3 on a design whose second output IS an edge clock."""
-    pll = _pll_of(design, _platform())
-    outputs = _outputs(pll)
-    assert outputs <= ECLK_REACHABLE_OUTPUTS, (
-        f"{name}: drives {sorted(outputs - ECLK_REACHABLE_OUTPUTS)}, which the bank "
-        f"ECLK input mux does not accept -- nextpnr will route the edge clock "
-        f"through the fabric tap and report it as log_info only (#314)")
-
-
-@pytest.mark.parametrize("name,design", _generators(), ids=lambda arg: arg
-                         if isinstance(arg, str) else "")
-def test_edge_clock_pll_is_pinned_to_the_left(name, design):
-    """Only PLL0_LL reaches bank 7, and an unpinned placer swap is silent."""
-    pll = _pll_of(design, _platform())
-    assert pll.attrs.get("BEL") == LEFT_PLL_BEL, (
-        f"{name}: BEL is {pll.attrs.get('BEL')!r}, not {LEFT_PLL_BEL!r}. The "
-        f"HyperRAM pads are bank 7 and the 25F die has no upper-left PLL, so a "
-        f"placer that moves this PLL right drops the edge clock onto fabric (#314)")
 
 
 # ---------------------------------------------------------------------------

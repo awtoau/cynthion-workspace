@@ -157,7 +157,7 @@ Part detail: [`../pac1954-power-monitor.md`](../pac1954-power-monitor.md).
 
 | resource | subsignal | balls | state | where / why |
 |---|---|---|---|---|
-| `ram` 0 | `clk` | C3 D3 | used | the HyperRAM peripheral (#588), PHY from the #581 core [`gateware/hyperram_baseline/hyperbus.py`](../../../gateware/hyperram_baseline/hyperbus.py) |
+| `ram` 0 | `clk` | C3 D3 | used | the HyperRAM peripheral ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)), PHY from the [#581](https://github.com/awtoau/cynthion-workspace/issues/581) core [`gateware/hyperram_baseline/hyperbus.py`](../../../gateware/hyperram_baseline/hyperbus.py) |
 | | `dq` | F2 B1 C2 E1 E3 E2 F3 G4 | used | same |
 | | `rwds` | D1 | used | same |
 | | `cs` | B2 | used | same |

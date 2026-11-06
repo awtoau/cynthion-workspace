@@ -32,7 +32,7 @@ OUTPUTS, so it sits downstream of the mux that rejects the source.
      so the edge clock is timed rather than merely routed.
 
 A design with no edge clock passes vacuously and says so -- the shipping SoC
-builds `fast` only when `FLASH_PHY_FAST` is on.
+builds no edge clock since #593.
 
 **nextpnr reports no Fmax for an ECLK domain.** Its consumers are hard IOLOGIC
 bels with no timed arcs, so the derived constraint above is the whole of the
