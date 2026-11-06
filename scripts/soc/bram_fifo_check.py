@@ -267,8 +267,8 @@ def section_pinned(checks):
 
 def section_peripherals(checks):
     for label, thunk in modules():
-        if label == "hyperram":
-            continue            # its sim build does not convert standalone (hr_rst driver conflict)
+        if label in ("hyperram", "jtag_stage"):
+            continue            # no standalone conversion: hr_rst driver conflict / needs ports
         name = re.sub(r"\W+", "_", label)
         try:
             cells = cells_of(name, verilog.convert(thunk(), name=name))
