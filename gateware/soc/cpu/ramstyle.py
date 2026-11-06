@@ -13,7 +13,9 @@ widths, depths and the RTL read/write behaviour are untouched.
 
 import re
 
-BLOCK = []
+BLOCK = [
+    ("regfile", r"asMem_ram", "--regfile-reg-based"),
+]
 
 
 class MissingMemory(Exception):
