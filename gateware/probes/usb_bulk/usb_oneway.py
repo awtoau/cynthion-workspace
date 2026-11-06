@@ -40,14 +40,16 @@ REGISTER_ERRORS = 4            # [15:0] OUT bytes out of sequence (saturating)
 
 
 class USBOneWay(Elaboratable):
-    def __init__(self, phy="aux_phy"):
+    def __init__(self, phy="aux_phy", vid_pid=None):
         self.phy = phy
+        # Override for a host whose udev grants no access to the allocated ID (#612 S0).
+        self.vid, self.pid = vid_pid or (USB_VENDOR_ID, USB_PRODUCT_ID)
 
     def create_descriptors(self):
         descriptors = DeviceDescriptorCollection()
         with descriptors.DeviceDescriptor() as d:
-            d.idVendor = USB_VENDOR_ID
-            d.idProduct = USB_PRODUCT_ID
+            d.idVendor = self.vid
+            d.idProduct = self.pid
             d.iManufacturer = "Great Scott Gadgets"
             d.iProduct = usb_ids.product_string("usb_oneway")
             d.iSerialNumber = self.phy

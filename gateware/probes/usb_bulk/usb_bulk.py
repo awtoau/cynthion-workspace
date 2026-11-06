@@ -40,16 +40,18 @@ REGISTER_MODE = 3              # 1 = FIFO, 0 = combinational
 
 
 class USBBulkLoopback(Elaboratable):
-    def __init__(self, buffered=True, fifo_depth=None):
+    def __init__(self, buffered=True, fifo_depth=None, vid_pid=None):
         self.buffered = buffered
+        # Override for a host whose udev grants no access to the allocated ID (#612 S0).
+        self.vid, self.pid = vid_pid or (USB_VENDOR_ID, USB_PRODUCT_ID)
         # Two packets: one received while the previous awaits its ACK.
         self.fifo_depth = fifo_depth or (MAX_PACKET_SIZE * 2)
 
     def create_descriptors(self):
         descriptors = DeviceDescriptorCollection()
         with descriptors.DeviceDescriptor() as d:
-            d.idVendor = USB_VENDOR_ID
-            d.idProduct = USB_PRODUCT_ID
+            d.idVendor = self.vid
+            d.idProduct = self.pid
             d.iManufacturer = "Great Scott Gadgets"
             d.iProduct = usb_ids.product_string("usb_bulk")
             d.iSerialNumber = "bulk-fifo" if self.buffered else "bulk-comb"

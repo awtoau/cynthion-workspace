@@ -80,6 +80,22 @@ PROBES = {
                "CDC-ACM loopback, combinational"),
 }
 
+# `--pidcodes`: the bulk probes as 1209:000a, which 54-cynthion.rules grants uaccess, for a host
+# whose 55-cynthion-test.rules is the pre-ede08a0 file udev ignores. CDC needs none (tty, dialout).
+PIDCODES = (0x1209, 0x000A)
+PIDCODES_PROBES = ("oneway", "bulk_fifo")
+USE_PIDCODES = False
+
+
+def device_id(name):
+    if USE_PIDCODES and name in PIDCODES_PROBES:
+        return PIDCODES
+    return usb_ids.VENDOR_ID, usb_ids.product_id(PROBES[name][3])
+
+
+def bdir(name):
+    return OUT / (name + ("-pidcodes" if USE_PIDCODES and name in PIDCODES_PROBES else ""))
+
 
 def now():
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -140,7 +156,9 @@ def comb_count(build_dir):
 
 def build_one(name):
     module, cls, kwargs, _, _ = PROBES[name]
-    out = OUT / name
+    if USE_PIDCODES and name in PIDCODES_PROBES:
+        kwargs = dict(kwargs, vid_pid=PIDCODES)
+    out = bdir(name)
     out.mkdir(parents=True, exist_ok=True)
     blog = out / "build.log"
     env = dict(os.environ)
@@ -179,8 +197,8 @@ def build_one(name):
 
 
 def cached(name):
-    stamp = OUT / name / "gateware_rev"
-    return ((OUT / name / "top.bit").exists() and stamp.exists()
+    stamp = bdir(name) / "gateware_rev"
+    return ((bdir(name) / "top.bit").exists() and stamp.exists()
             and stamp.read_text().strip() == gateware_rev())
 
 
@@ -195,16 +213,16 @@ def build(names):
 
 def configure(name):
     from soc_confirm import configure_and_confirm
-    rc = configure_and_confirm(OUT / name / "top.bit", expect="design")
+    rc = configure_and_confirm(bdir(name) / "top.bit", expect="design")
     say(f"configure {name}: rc {rc}")
     return rc == 0
 
 
-def sysfs_device(pid):
-    """(devpath, speed Mbps, product) of 1d50:<pid> from sysfs, or None."""
+def sysfs_device(vid, pid):
+    """(devpath, speed Mbps, product) of <vid>:<pid> from sysfs, or None."""
     for dev in Path("/sys/bus/usb/devices").iterdir():
         try:
-            if (int((dev / "idVendor").read_text(), 16) == usb_ids.VENDOR_ID
+            if (int((dev / "idVendor").read_text(), 16) == vid
                     and int((dev / "idProduct").read_text(), 16) == pid):
                 product = (dev / "product").read_text().strip() if (dev / "product").exists() else ""
                 return dev.name, float((dev / "speed").read_text()), product
@@ -213,14 +231,15 @@ def sysfs_device(pid):
     return None
 
 
-def wait_enumerated(pid):
+def wait_enumerated(vid, pid):
     start = time.monotonic()
     while time.monotonic() - start < ENUMERATE_S:
-        found = sysfs_device(pid)
+        found = sysfs_device(vid, pid)
         if found:
+            subprocess.run(["udevadm", "settle"], capture_output=True)   # ACLs applied
             return found
         subprocess.run(["udevadm", "settle"], capture_output=True)
-    say(f"1d50:{pid:04x} did not enumerate within {ENUMERATE_S} s "
+    say(f"{vid:04x}:{pid:04x} did not enumerate within {ENUMERATE_S} s "
         f"(elapsed {time.monotonic() - start:.2f} s)")
     return None
 
@@ -247,16 +266,16 @@ def read_regs(addrs):
 _OPEN = {}
 
 
-def pyusb_device(pid):
+def pyusb_device(ident):
     """Configured once per enumeration: a repeat SET_CONFIGURATION resets data toggles."""
     import usb.core
-    if pid not in _OPEN:
-        dev = usb.core.find(idVendor=usb_ids.VENDOR_ID, idProduct=pid)
+    if ident not in _OPEN:
+        dev = usb.core.find(idVendor=ident[0], idProduct=ident[1])
         if dev is None:
-            raise RuntimeError(f"no 1d50:{pid:04x} on the bus")
+            raise RuntimeError(f"no {ident[0]:04x}:{ident[1]:04x} on the bus")
         dev.set_configuration()
-        _OPEN[pid] = dev
-    return _OPEN[pid]
+        _OPEN[ident] = dev
+    return _OPEN[ident]
 
 
 class Expired(Exception):
@@ -305,9 +324,9 @@ def mbps(nbytes, seconds):
 
 # ---- tests -------------------------------------------------------------------
 
-def bulk_in(pid, run):
+def bulk_in(ident, run):
     from usb_bulk.usb_oneway import BULK_IN_ENDPOINT
-    dev = pyusb_device(pid)
+    dev = pyusb_device(ident)
     chunks = []
     start = time.perf_counter()
     while time.perf_counter() - start < RUN_S:
@@ -326,9 +345,9 @@ def bulk_in(pid, run):
                        ok=bad == 0 and ctl == 1))
 
 
-def bulk_out(pid, run):
+def bulk_out(ident, run):
     from usb_bulk.usb_oneway import BULK_OUT_ENDPOINT, REGISTER_ERRORS, REGISTER_OUT_COUNT
-    dev = pyusb_device(pid)
+    dev = pyusb_device(ident)
     before = read_regs([REGISTER_OUT_COUNT, REGISTER_ERRORS])
     payload = counting(CHUNK)
     sent = 0
@@ -403,8 +422,8 @@ def report_loop(test, run, got, want, elapsed, error, extra=None):
                        ok=error is None and bad == 0 and ctl == 1))
 
 
-def bulk_loop(pid, run):
-    dev = pyusb_device(pid)
+def bulk_loop(ident, run):
+    dev = pyusb_device(ident)
     got, want, elapsed, error = loop(
         lambda b: bounded("loopback OUT write", dev.write, 0x01, b),
         lambda n: bounded("loopback IN read", dev.read, 0x81, n),
@@ -412,7 +431,7 @@ def bulk_loop(pid, run):
     return report_loop("bulk_loop_fifo", run, got, want, elapsed, error)
 
 
-def cdc_loop(pid, run):
+def cdc_loop(ident, run):
     import serial
     node = usb_ids.find_tty("usb_serial")
     if node is None:
@@ -444,16 +463,17 @@ def run(args):
     rc = 0
     host = dict(kernel=os.uname().release, host=os.uname().nodename)
     for name in args.probe:
-        pid = usb_ids.product_id(PROBES[name][3])
+        ident = device_id(name)
+        _OPEN.pop(ident, None)
         if not args.no_configure and not configure(name):
             rc = 1
             continue
-        found = wait_enumerated(pid)
+        found = wait_enumerated(*ident)
         if not found:
             rc = 1
             continue
         devpath, speed, product = found
-        say(f"{name}: 1d50:{pid:04x} '{product}' at {devpath}, {speed:g} Mbps, "
+        say(f"{name}: {ident[0]:04x}:{ident[1]:04x} '{product}' at {devpath}, {speed:g} Mbps, "
             f"{hubs_between(devpath)} hub level(s) from the root port")
         record(dict(kind="device", probe=name, devpath=devpath, speed=speed, product=product,
                     hubs=hubs_between(devpath), **host))
@@ -464,7 +484,7 @@ def run(args):
         for test in TESTS[name]:
             for i in range(1, args.runs + 1):
                 try:
-                    row = test(pid, i)
+                    row = test(ident, i)
                 except Exception as exc:
                     say(f"  {test.__name__} run {i}: FAILED {type(exc).__name__}: {exc}")
                     rc = 1
@@ -498,8 +518,13 @@ def main():
     pr.add_argument("--probe", nargs="+", choices=PROBES, default=list(PROBES))
     pr.add_argument("--runs", type=int, default=3)
     pr.add_argument("--no-configure", action="store_true")
+    for p in (pb, pr):
+        p.add_argument("--pidcodes", action="store_true",
+                       help=f"bulk probes as {PIDCODES[0]:04x}:{PIDCODES[1]:04x} (see PIDCODES)")
     sub.add_parser("topology")
     args = ap.parse_args()
+    global USE_PIDCODES
+    USE_PIDCODES = getattr(args, "pidcodes", False)
     say(f"usb_baseline {args.cmd} {RUN_ID}; per-transfer limit {XFER_MS} ms")
     if args.cmd == "build":
         return 0 if build(args.probe) else 1
