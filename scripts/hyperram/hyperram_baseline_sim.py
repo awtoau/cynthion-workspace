@@ -120,7 +120,11 @@ def simulate(cases, r_halves):
         cs_q = collections.deque([(0, 0, 0)] * LCS)
         ret_q = collections.deque([(0, 0)] * r_halves)
         in_q = collections.deque([((0, 0), (0, 0))] * LI)
+        ck_next = 0
         while True:
+            # The PHY builds CK from ck_en_next; it must be ck_en one cycle early (#628).
+            assert ctx.get(p.ck_en) == ck_next, "ck_en_next does not lead ck_en by one cycle"
+            ck_next = ctx.get(p.ck_en_next)
             out_q.append((ctx.get(p.ck_en), ctx.get(p.dq_o), ctx.get(p.rwds_o)))
             cs_q.append((ctx.get(p.cs), ctx.get(p.dq_oe), ctx.get(p.rwds_oe)))
             ck_en, dq_o, rwds_o = out_q.popleft()

@@ -18,7 +18,7 @@ Shape:
   with CS# Low and CK stopped either side of the clocked phase absorb that.
 """
 
-from amaranth import (Cat, ClockSignal, Const, Elaboratable, Instance, Module, Mux,
+from amaranth import (Cat, ClockDomain, ClockSignal, Const, Elaboratable, Instance, Module, Mux,
                       ResetSignal, Signal)
 
 # Table 24 (CR1[1:0]=01b default): CS# Low at most 4 us below 85 C.
@@ -52,6 +52,7 @@ class PinIntent:
     def __init__(self):
         self.cs = Signal()            # 1 = selected (CS# Low)
         self.ck_en = Signal()
+        self.ck_en_next = Signal()    # comb: `ck_en` one cycle early (the PHY's hr90 crossing)
         self.dq_o = Signal(16)        # [15:8] byte A (first half), [7:0] byte B
         self.dq_oe = Signal()
         self.rwds_o = Signal(2)       # [1] first half
@@ -208,7 +209,7 @@ class HyperBusCore(Elaboratable):
                          self.rdata.eq(Mux(aligned, Cat(p.dq_q1, p.dq_q0),
                                            Cat(p.dq_q0, prev_d1)))]
             m.d.sync += [received.eq(received + 1), self.straddled.eq(straddle)]
-        m.d.comb += self.fsm_state.eq(fsm.state)
+        m.d.comb += [self.fsm_state.eq(fsm.state), p.ck_en_next.eq(fsm.ongoing("CLOCK"))]
         return m
 
 
@@ -234,9 +235,13 @@ class ECP5HyperBusPHY(Elaboratable):
             m.submodules += Instance("ODDRX1F", i_D0=d0, i_D1=d1, i_SCLK=ClockSignal(domain),
                                      i_RST=ResetSignal(domain), o_Q=q)
 
-        # CK: ck_en re-registered in hr90 so CK lags DQ by a quarter cycle.
-        ck_en90 = Signal()
-        m.d.hr90 += ck_en90.eq(p.ck_en)
+        # CK lags DQ a quarter cycle. hr -> hr90 via an hr falling-edge stage: half and
+        # three-quarter cycle budgets instead of one quarter (#628); CK edges unchanged.
+        m.domains.hr_neg = ClockDomain("hr_neg", clk_edge="neg", reset_less=True, local=True)
+        m.d.comb += ClockSignal("hr_neg").eq(ClockSignal("hr"))
+        ck_en_neg, ck_en90 = Signal(), Signal()
+        m.d.hr_neg += ck_en_neg.eq(p.ck_en_next)
+        m.d.hr90 += ck_en90.eq(ck_en_neg)
         oddr(ck_en90, 0, bus.clk.o, "hr90")
 
         for i in range(8):
