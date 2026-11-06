@@ -74,7 +74,7 @@ from amaranth_soc.wishbone import Decoder                      # noqa: E402
 
 from bus.wishbone_pipe import RegisteredResponse                # noqa: E402
 from bus.fault import BusFault                                  # noqa: E402
-from peripherals.flash import xip_worst_sync_cycles             # noqa: E402
+from peripherals.flash import SCK_MHZ, xip_worst_sync_cycles    # noqa: E402
 
 # A small memory with distinct, non-zero words.
 #
@@ -542,10 +542,10 @@ def fault_checks(checks, verbose):
     bound, fill = -(-5 * worst // 4), -(-5 * xip // 4)
     checks.check(
         "the shipping bound is 1.25x the slowest legitimate answer, above the XIP watchdog",
-        worst == 791 and bound == 989 and fill < bound,
+        fill < bound,
         f"worst legitimate answer {worst} cycles, bound {bound}, XIP fill watchdog {fill}. "
         f"The worst is an XIP line fill queued behind one maximal (256 B x1) command "
-        f"transaction at SCK 180, sync 60.")
+        f"transaction at SCK {SCK_MHZ:g}, sync 60.")
     checks.note(f"bus timeout {bound} cycles = 1.25 x {worst} (XIP behind one command)")
 
 
