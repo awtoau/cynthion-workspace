@@ -103,14 +103,58 @@ Recorded so they are not re-investigated:
 - Vary one variable per cell (AUX-through-hubs vs TARGET-direct changes two).
 - When a result surprises, suspect the instrument before the device.
 
+## Re-measurement 2026-11-06 (#612 S0)
+
+Everything above this section is the OLD measurement (undated, pre-cf62c6d harness). Numbers here are NEW.
+
+- **Conditions**
+  - Date 2026-11-06T11:28+11:00; commit `a5e54da` (worktree branch of #612 S0); `scripts/usb/usb_baseline.py run --runs 3 --pidcodes`.
+  - Host `selwyn`: Intel i9-14900K, Fedora kernel 7.2.15-300.fc45, Intel 700-series xHCI (`00:14.0`), Python 3.15.2t, pyusb 1.3.1, pyserial 3.5.
+  - Gateware: luna_usb 0.2.3.post15+git.352cdbfc, amaranth 0.5.10, `usb`/`sync` = 60 MHz oscillator direct (no PLL, unlike the old LUNA generator); AUX PHY, high speed (sysfs `speed` 480), 512-byte bulk packets.
+  - Host transfer 64 KiB; one-way window 3 s; loopback 32 MiB per run; per-transfer limit 23 ms.
+- **Topology: NOT a direct root port.** AUX at `1-1.3.1.3.4`, behind 4 USB 2.0 hubs (`17ef:a392`/`a394`). `lsusb -t` excerpt:
+  ```
+  Bus 001.Port 001: root_hub xhci_hcd/16p 480M
+    Port 001: Dev 002 Hub 480M
+      Port 003: Dev 005 Hub 480M
+        Port 001: Dev 011 Hub 480M
+          Port 003: Dev 016 Hub 480M
+            Port 002: Dev 020 btusb + rtw89_8851bu (Wi-Fi) 480M   <- same hub
+            Port 003: Dev 022 Hub (Apollo on CONTROL, 12M, below it)
+            Port 004: Dev 110 Cynthion AUX 480M
+  ```
+  - A Wi-Fi adapter shares the last hub; not idle-controlled.
+- **Results** (Mbps; loopback = bus figure, 2x payload; 3 runs each)
+
+| test | run 1 | run 2 | run 3 | median | spread | old (same topology class) |
+|---|---|---|---|---|---|---|
+| bulk IN | 294.0 | 288.4 | 272.3 | 288.4 | 21.7 (7.5%) | 292.2 (four hubs) / 388.0 (direct) |
+| bulk OUT | 297.3 | 290.6 | 284.3 | 290.6 | 13.0 (4.5%) | 338.8 (direct) |
+| bulk loopback, FIFO | 265.7 | 264.7 | 265.8 | 265.7 | 1.1 (0.4%) | 244.2 (topology not recorded) |
+| CDC-ACM loopback, combinational | 212.4 | 213.0 | 213.9 | 213.0 | 1.5 (0.7%) | 195.4 (topology not recorded) |
+
+- Bulk IN through 4 hubs matches the old four-hub figure (288.4 vs 292.2); the old 388.0 direct-port figure is not re-tested (no direct port cabled).
+- Bulk OUT through 4 hubs (290.6) is below the old direct figure (338.8); not comparable, different topology.
+- Both loopbacks are above the old figures through 4 hubs; cause not isolated (clocking change, host, kernel, topology of the old run unknown).
+- IN/OUT spread (4.5-7.5%) is larger than loopback spread (<1%); shared hub traffic is a candidate, UNVERIFIED.
+- **Checks, every run**: 0 data errors; IN sequence verified host-side after timing; OUT verified by the device checker (device byte count = host byte count) over JTAG.
+- **Negative controls, every run**: one byte of the expected data corrupted host-side -> checker reports exactly 1 error at that index (IN, both loopbacks); one byte corrupted in an OUT chunk -> device checker reports 2 errors (the byte and its successor).
+- Build: TRELLIS_COMB oneway 2095, bulk FIFO 2095, CDC 2008 (of 24288).
+- `--pidcodes`: bulk probes enumerate as `1209:000a`; the installed `55-cynthion-test.rules` predates `ede08a0` and udev ignores every rule in it (trailing comments), so `1d50:6182`/`6188` get no uaccess. Fix: `sudo ./scripts/install_udev.py`.
+
 ## Files
 
 | path | purpose |
 |---|---|
-| `scripts/usb_serial_speed.py` | CDC throughput, payload and bus columns |
-| `scripts/usb_oneway_speed.py` | one-way throughput, verification after timing |
-| `scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
+| `scripts/usb/usb_baseline.py` | build, load, measure all four tests, negative controls; log `tmp/logs/usb_baseline.log`, rows `tmp/usb-baseline/results.jsonl` |
+| `gateware/probes/usb_bulk/usb_oneway.py` | bulk IN source, bulk OUT checker, selectable PHY |
+| `gateware/probes/usb_bulk/usb_bulk.py` | bulk loopback, FIFO or combinational |
+| `gateware/probes/usb_serial/usb_serial.py` | CDC-ACM loopback (LUNA `USBSerialDevice`) |
+| `gateware/probes/usb_domains.py` | `usb`/`sync` from the oscillator, PHY power-on reset |
+| `debris/scripts/usb_serial_speed.py`, `usb_oneway_speed.py`, `usb_bulk_speed.py` | the old host scripts (superseded by `usb_baseline.py`) |
+| `debris/scripts/usb_async_speed.py` | queue-depth sweep with libusb1 |
 | `debris/scripts/usb_speed_native.c` | native C, to rule out the host language |
+| `usb_timing.py` (cf62c6d^, not restored) | per-transaction timing from inside the FPGA |
 
 ## In context
 
