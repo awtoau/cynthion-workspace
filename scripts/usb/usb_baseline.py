@@ -213,7 +213,8 @@ def build(names):
 
 def configure(name):
     from soc_confirm import configure_and_confirm
-    rc = configure_and_confirm(bdir(name) / "top.bit", expect="design")
+    bit = bdir(name) / "top.bit"
+    rc = configure_and_confirm(bit, expect="design")
     say(f"configure {name}: rc {rc}")
     return rc == 0
 
