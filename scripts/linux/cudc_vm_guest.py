@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Guest half of cudc_vm_test.py: runs as root INSIDE the virtme-ng VM, never on the host.
+# Gadget test for cynthion_udc, as root: inside the vng VM (cudc_vm_test.py) or on the host.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Load cynthion_udc (stub backend), enumerate configfs gadgets on it, unload, scan dmesg.
