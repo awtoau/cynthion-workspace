@@ -8,7 +8,7 @@ Source: [`gateware/soc/peripherals/hyperram.py`](../../../gateware/soc/periphera
   - core flags `reg_write` and `masked` are on
 - No CPU address for HyperRAM. Two windows instead:
   - CSR registers at `0xf0000800` (0x80)
-  - a 4 KiB data window at `0xf0010000`: dual-clock EBR, CPU port in `sync`, HyperRAM port in `hr`; no bus crosses a domain
+  - a 4 KiB data window at `0xf0020000`: dual-clock EBR, CPU port in `sync`, HyperRAM port in `hr`; no bus crosses a domain
 - Commands are CSR writes, then poll `STATUS.busy` (no Wishbone wait states). IRQ 18 is level, gated by `IRQ_EN`.
 - Crossings:
   - command: `sync` latches the operands, then toggles; the engine echoes the toggle

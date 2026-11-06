@@ -122,6 +122,7 @@ from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
 from peripherals.stream_buffer import StreamBuffer
 from bus.wishbone_pipe import RegisteredResponse
+from bus.csr_bridge import CsrBridge
 from bus.fault         import BusFault
 from peripherals.hyperram import HyperRAM
 from peripherals.flash import Flash, SCK_MHZ as FLASH_SCK_MHZ, xip_worst_sync_cycles
@@ -215,15 +216,14 @@ CONSOLE_BASE = 0xf0000000
 # precaution; it logs here whenever it feels like it, and contends.
 APOLLO_UART_BASE = 0xf0000500
 
-# The board's own peripherals -- LEDs, the power monitor's I2C bus, and the
-# sideband payload -- behind ONE Wishbone window and one CSR bridge.
-#
-# Three separate windows would have been three more `WishboneCSRBridge`
-# instances and three more comparators on the Wishbone decoder's address path,
-# which is on the critical path this design has just finished recovering margin
-# on (commit 18c1fa5). A `csr.Decoder` costs one comparator on an eight-bit
-# address inside an already-decoded window, which is nothing, and it is what
-# amaranth-soc provides the class for.
+# One window for every CSR peripheral: one csr.Decoder behind one `CsrBridge` (#619),
+# `docs/soc-csr-bridge.md`. 128 KiB at CSR_BASE; the CLINT's 64 KiB window sits at +0x10000,
+# so the window can be no smaller. Bytes in it that no peripheral claims answer ERR.
+CSR_BASE       = 0xf0000000
+CSR_ADDR_WIDTH = 17
+
+# The board's own peripherals -- LEDs, the power monitor's I2C bus, the sideband
+# payload and the clock/fabric readouts -- in one block of the CSR window:
 #
 #   +0x00  gpio      16 bytes  amaranth_soc.gpio.Peripheral, 8 pins
 #   +0x10  i2c        8 bytes  i2c_master.I2CMaster
@@ -233,17 +233,11 @@ APOLLO_UART_BASE = 0xf0000500
 #   +0x24  vbus       1 byte   vbus_csr.VbusControl
 #   +0x40  fabric     8 bytes  fabric_status.FabricStatus
 #
-# The sub-addresses are the peripherals' natural sizes and each window is
-# aligned to its own size, which is what MemoryMap requires. The decoder is 128
-# bytes rather than the 32 the first three fit in, because a peripheral added
-# later should not have to move an existing one -- and moving one changes every
-# address in the generated PAC at once.
+# Sub-addresses are the peripherals' natural sizes, each aligned to its own size.
+# The block is 128 bytes so a peripheral added later does not move an existing one,
+# and moving one changes every address in the generated PAC at once.
 #
-# `fabric` is not a board peripheral and is here anyway: it is the one window
-# whose whole purpose is to be readable, and a second Wishbone window for it
-# would be another comparator on the address path the paragraph above is about.
-# The decoder it goes in is inside an already-decoded window and costs one more
-# address bit.
+# `fabric` is a readout, not a board peripheral; it lives here because the block had room.
 BOARD_BASE     = 0xf0000600
 GPIO_BASE      = BOARD_BASE + 0x00
 I2C_BASE       = BOARD_BASE + 0x10
@@ -369,13 +363,13 @@ FLASH_CACHED = True
 # HyperRAM (#588): registers + a 4 KiB data window, both in the uncached CSR region.
 # No memory-mapped HyperRAM: the CPU reaches it through the window and COPY.
 HYPERRAM_BASE = 0xf0000800
-HYPERRAM_WINDOW_BASE = 0xf0010000
+HYPERRAM_WINDOW_BASE = 0xf0020000
 
 # The flash command port's registers (`peripherals/flash.py`, #593) and its 256 B
 # data buffer (reads: received bytes; writes: bytes to send). Both in the uncached
 # CSR region: the status changes under the CPU and the buffer between commands.
-FLASH_CSR_BASE = 0xf0000100
-FLASH_BUF_BASE = 0xf0000200
+FLASH_CSR_BASE = 0xf0021000
+FLASH_BUF_BASE = 0xf0021100
 
 # The interrupt controller: two registers, `cpu/intc.py`.
 #
@@ -400,7 +394,7 @@ USB_HOST_BASE = 0xf0001000
 # QEMU's `-M virt` puts its CLINT at 0x02000000 (`clint@2000000` in the device
 # tree), so again the difference is one constant in
 # firmware/cynthion-soc/src/target.rs and src/timer.rs is the same code on both.
-CLINT_BASE = 0xf0800000
+CLINT_BASE = 0xf0010000
 
 # Interrupt source numbers, and each source's trigger.
 #
@@ -656,8 +650,7 @@ class AwtoSoc(Elaboratable):
         m.submodules.console = console = Uart16550()
         m.submodules.apollo_uart = apollo_uart = Uart16550()
 
-        # Wishbone: RAM only. The consoles are CSR peripherals behind their own
-        # bridges, added to the same decoder through wishbone-to-CSR bridges.
+        # Wishbone: RAM, flash and HyperRAM windows, and the one CSR window (`CsrBridge`).
         decoder = Decoder(addr_width=30, data_width=32, granularity=8,
                           features={"cti", "bte", "err"})
         m.submodules.decoder = decoder
@@ -675,15 +668,18 @@ class AwtoSoc(Elaboratable):
         self.decoder = decoder
         decoder.add(ram.bus, addr=RAM_BASE, name="ram")
 
-        from amaranth_soc.csr.wishbone import WishboneCSRBridge
-        csr_bridge = WishboneCSRBridge(console.bus, data_width=32)
-        m.submodules.csr_bridge = csr_bridge
-        decoder.add(csr_bridge.wb_bus, addr=CONSOLE_BASE, name="console")
+        # Every CSR peripheral sits on ONE csr.Decoder behind ONE bridge, added to the
+        # Wishbone decoder as a single window at CSR_BASE (#619). The bridge is added
+        # last, below, once every peripheral exists.
+        csr_dec = csr.Decoder(addr_width=CSR_ADDR_WIDTH, data_width=8)
+        m.submodules.csr_dec = csr_dec
+        self.csr_decoder = csr_dec
 
-        apollo_csr_bridge = WishboneCSRBridge(apollo_uart.bus, data_width=32)
-        m.submodules.apollo_csr_bridge = apollo_csr_bridge
-        decoder.add(apollo_csr_bridge.wb_bus, addr=APOLLO_UART_BASE,
-                    name="apollo_uart")
+        def csr_add(bus, base, name):
+            csr_dec.add(bus, addr=base - CSR_BASE, name=name)
+
+        csr_add(console.bus, CONSOLE_BASE, "console")
+        csr_add(apollo_uart.bus, APOLLO_UART_BASE, "apollo_uart")
 
         # The interrupt controller, and the two UART lines into it.
         #
@@ -724,9 +720,7 @@ class AwtoSoc(Elaboratable):
         # The role mux between UlpiRegisters and the host SIE / raw byte stream,
         # on the same pins. Reset role is `off`, which routes UlpiRegisters.
         m.submodules.target_usb = target_usb = UsbPort(name="target", trace_depth=1024 if variant.flag("CYNTHION_USB_TRACE") else 0)
-        usb_host_bridge = WishboneCSRBridge(target_usb.bus, data_width=32)
-        m.submodules.usb_host_bridge = usb_host_bridge
-        decoder.add(usb_host_bridge.wb_bus, addr=USB_HOST_BASE, name="usb_host")
+        csr_add(target_usb.bus, USB_HOST_BASE, "usb_host")
 
         # The bus select for the one I2C controller, and the four Type-C signals
         # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
@@ -743,28 +737,14 @@ class AwtoSoc(Elaboratable):
         # a constant while `sync` was not oscillating at all.
         m.submodules.clock_monitor = clock_monitor = ClockMonitor(lock=car.locked)
 
-        board_csr = csr.Decoder(addr_width=7, data_width=8)
-        m.submodules.board_csr = board_csr
-        board_csr.add(board_gpio.bus,    addr=GPIO_BASE     - BOARD_BASE,
-                      name="gpio")
-        board_csr.add(i2c.bus,           addr=I2C_BASE      - BOARD_BASE,
-                      name="i2c")
-        board_csr.add(sideband_ctrl.bus, addr=SIDEBAND_BASE - BOARD_BASE,
-                      name="sideband")
-        board_csr.add(target_ulpi.bus,   addr=ULPI_BASE     - BOARD_BASE,
-                      name="ulpi")
-        board_csr.add(i2c_mux.bus,       addr=I2C_MUX_BASE  - BOARD_BASE,
-                      name="i2c_mux")
-        board_csr.add(vbus_ctrl.bus,     addr=VBUS_BASE     - BOARD_BASE,
-                      name="vbus")
-        board_csr.add(fabric_status.bus, addr=FABRIC_BASE - BOARD_BASE,
-                      name="fabric")
-        board_csr.add(clock_monitor.bus, addr=CLOCKS_BASE   - BOARD_BASE,
-                      name="clocks")
-
-        board_bridge = WishboneCSRBridge(board_csr.bus, data_width=32)
-        m.submodules.board_bridge = board_bridge
-        decoder.add(board_bridge.wb_bus, addr=BOARD_BASE, name="board")
+        csr_add(board_gpio.bus,    GPIO_BASE,    ("board", "gpio"))
+        csr_add(i2c.bus,           I2C_BASE,     ("board", "i2c"))
+        csr_add(sideband_ctrl.bus, SIDEBAND_BASE, ("board", "sideband"))
+        csr_add(target_ulpi.bus,   ULPI_BASE,    ("board", "ulpi"))
+        csr_add(i2c_mux.bus,       I2C_MUX_BASE, ("board", "i2c_mux"))
+        csr_add(vbus_ctrl.bus,     VBUS_BASE,    ("board", "vbus"))
+        csr_add(fabric_status.bus, FABRIC_BASE,  ("board", "fabric"))
+        csr_add(clock_monitor.bus, CLOCKS_BASE,  ("board", "clocks"))
 
         m.submodules.intc = intc = Interrupts(IRQ_TRIGGERS)
         m.d.comb += [
@@ -790,7 +770,7 @@ class AwtoSoc(Elaboratable):
         # down somewhere else is a source number that can disagree with the
         # wire, and firmware that enables the wrong one produces a console that
         # never interrupts with nothing to see anywhere. The names are the
-        # `name=` arguments to `decoder.add()` and `board_csr.add()`, joined.
+        # `name=` arguments to `decoder.add()` and `csr_add()`, joined.
         #
         # A dict value where ONE window raises more than one source: each entry
         # becomes its own <interrupt> and its own `<WINDOW>_<SUFFIX>_IRQ`
@@ -816,9 +796,7 @@ class AwtoSoc(Elaboratable):
             "spi0":          IRQ_FLASH,
         }
 
-        intc_bridge = WishboneCSRBridge(intc.bus, data_width=32)
-        m.submodules.intc_bridge = intc_bridge
-        decoder.add(intc_bridge.wb_bus, addr=INTC_BASE, name="intc")
+        csr_add(intc.bus, INTC_BASE, "intc")
 
         # The CLINT, comparing against the CPU's own `rdtime` counter rather
         # than one of its own. Two counters could disagree; one cannot, and
@@ -826,9 +804,7 @@ class AwtoSoc(Elaboratable):
         m.submodules.clint = clint = Clint()
         m.d.comb += clint.mtime.eq(cpu.mtime)
 
-        clint_bridge = WishboneCSRBridge(clint.bus, data_width=32)
-        m.submodules.clint_bridge = clint_bridge
-        decoder.add(clint_bridge.wb_bus, addr=CLINT_BASE, name="clint")
+        csr_add(clint.bus, CLINT_BASE, "clint")
 
         # The configuration SPI flash (#593): `peripherals/flash.py` on the #590 core.
         # - `spiflash`: XIP, read-only, cached by the CPU (FLASH_CACHED)
@@ -845,10 +821,13 @@ class AwtoSoc(Elaboratable):
         # HyperRAM (#588): `peripherals/hyperram.py`. Stream ring tied off until #580.
         m.submodules.hyperram = hyperram = HyperRAM(ck_mhz=HYPERRAM_CK_MHZ,
                                                     sync_mhz=SYNC_MHZ)
-        hyperram_bridge = WishboneCSRBridge(hyperram.bus, data_width=32)
-        m.submodules.hyperram_bridge = hyperram_bridge
-        decoder.add(hyperram_bridge.wb_bus, addr=HYPERRAM_BASE, name="hyperram")
+        csr_add(hyperram.bus, HYPERRAM_BASE, "hyperram")
         decoder.add(hyperram.window, addr=HYPERRAM_WINDOW_BASE, name="hyperram_window")
+
+        # The one bridge, now that every CSR window is on `csr_dec`.
+        m.submodules.csr_bridge = csr_bridge = CsrBridge(csr_dec.bus)
+        self.csr_bridge = csr_bridge
+        decoder.add(csr_bridge.wb_bus, addr=CSR_BASE)
         m.d.comb += [hyperram.stream_w_en.eq(0), hyperram.stream_r_en.eq(0),
                      intc.lines[IRQ_HYPERRAM].eq(hyperram.irq)]
 

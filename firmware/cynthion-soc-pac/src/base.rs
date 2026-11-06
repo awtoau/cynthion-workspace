@@ -26,18 +26,6 @@ pub const CONSOLE_SIZE: usize = 0x00000008;
 /// Interrupt source number wired to CONSOLE.
 pub const CONSOLE_IRQ: u32 = 1;
 
-/// spi0: 64 bytes of memory at 0xf0000100
-pub const SPI0: usize = 0xf0000100;
-/// Size of the SPI0 window, in bytes.
-pub const SPI0_SIZE: usize = 0x00000040;
-/// Interrupt source number wired to SPI0.
-pub const SPI0_IRQ: u32 = 19;
-
-/// spi0_buf: 256 bytes of memory at 0xf0000200
-pub const SPI0_BUF: usize = 0xf0000200;
-/// Size of the SPI0_BUF window, in bytes.
-pub const SPI0_BUF_SIZE: usize = 0x00000100;
-
 /// apollo_uart: 8 registers at 0xf0000500
 pub const APOLLO_UART: usize = 0xf0000500;
 /// Size of the APOLLO_UART window, in bytes.
@@ -45,31 +33,31 @@ pub const APOLLO_UART_SIZE: usize = 0x00000008;
 /// Interrupt source number wired to APOLLO_UART.
 pub const APOLLO_UART_IRQ: u32 = 2;
 
-/// board/gpio: 4 registers at 0xf0000600
+/// board_gpio: 4 registers at 0xf0000600
 pub const BOARD_GPIO: usize = 0xf0000600;
 /// Size of the BOARD_GPIO window, in bytes.
 pub const BOARD_GPIO_SIZE: usize = 0x00000010;
 /// Interrupt source number wired to BOARD_GPIO_BUTTON.
 pub const BOARD_GPIO_BUTTON_IRQ: u32 = 13;
 
-/// board/i2c: 5 registers at 0xf0000610
+/// board_i2c: 5 registers at 0xf0000610
 pub const BOARD_I2C: usize = 0xf0000610;
 /// Size of the BOARD_I2C window, in bytes.
 pub const BOARD_I2C_SIZE: usize = 0x00000008;
 /// Interrupt source number wired to BOARD_I2C.
 pub const BOARD_I2C_IRQ: u32 = 3;
 
-/// board/sideband: 4 registers at 0xf0000618
+/// board_sideband: 4 registers at 0xf0000618
 pub const BOARD_SIDEBAND: usize = 0xf0000618;
 /// Size of the BOARD_SIDEBAND window, in bytes.
 pub const BOARD_SIDEBAND_SIZE: usize = 0x00000004;
 
-/// board/ulpi: 4 registers at 0xf000061c
+/// board_ulpi: 4 registers at 0xf000061c
 pub const BOARD_ULPI: usize = 0xf000061c;
 /// Size of the BOARD_ULPI window, in bytes.
 pub const BOARD_ULPI_SIZE: usize = 0x00000004;
 
-/// board/i2c_mux: 2 registers at 0xf0000620
+/// board_i2c_mux: 2 registers at 0xf0000620
 pub const BOARD_I2C_MUX: usize = 0xf0000620;
 /// Size of the BOARD_I2C_MUX window, in bytes.
 pub const BOARD_I2C_MUX_SIZE: usize = 0x00000002;
@@ -84,17 +72,17 @@ pub const BOARD_I2C_MUX_TARGET_FAULT_IRQ: u32 = 8;
 /// Interrupt source number wired to BOARD_I2C_MUX_AUX_FAULT.
 pub const BOARD_I2C_MUX_AUX_FAULT_IRQ: u32 = 9;
 
-/// board/vbus: 1 register at 0xf0000624
+/// board_vbus: 1 register at 0xf0000624
 pub const BOARD_VBUS: usize = 0xf0000624;
 /// Size of the BOARD_VBUS window, in bytes.
 pub const BOARD_VBUS_SIZE: usize = 0x00000004;
 
-/// board/fabric: 2 registers at 0xf0000640
+/// board_fabric: 2 registers at 0xf0000640
 pub const BOARD_FABRIC: usize = 0xf0000640;
 /// Size of the BOARD_FABRIC window, in bytes.
 pub const BOARD_FABRIC_SIZE: usize = 0x00000008;
 
-/// board/clocks: 2 registers at 0xf0000660
+/// board_clocks: 2 registers at 0xf0000660
 pub const BOARD_CLOCKS: usize = 0xf0000660;
 /// Size of the BOARD_CLOCKS window, in bytes.
 pub const BOARD_CLOCKS_SIZE: usize = 0x00000010;
@@ -120,15 +108,27 @@ pub const USB_HOST_SIZE: usize = 0x00000020;
 /// Interrupt source number wired to USB_HOST.
 pub const USB_HOST_IRQ: u32 = 10;
 
-/// hyperram_window: 4096 bytes of memory at 0xf0010000
-pub const HYPERRAM_WINDOW: usize = 0xf0010000;
+/// clint: 5 registers at 0xf0010000
+pub const CLINT: usize = 0xf0010000;
+/// Size of the CLINT window, in bytes.
+pub const CLINT_SIZE: usize = 0x00010000;
+
+/// hyperram_window: 4096 bytes of memory at 0xf0020000
+pub const HYPERRAM_WINDOW: usize = 0xf0020000;
 /// Size of the HYPERRAM_WINDOW window, in bytes.
 pub const HYPERRAM_WINDOW_SIZE: usize = 0x00001000;
 
-/// clint: 5 registers at 0xf0800000
-pub const CLINT: usize = 0xf0800000;
-/// Size of the CLINT window, in bytes.
-pub const CLINT_SIZE: usize = 0x00010000;
+/// spi0: 64 bytes of memory at 0xf0021000
+pub const SPI0: usize = 0xf0021000;
+/// Size of the SPI0 window, in bytes.
+pub const SPI0_SIZE: usize = 0x00000040;
+/// Interrupt source number wired to SPI0.
+pub const SPI0_IRQ: u32 = 19;
+
+/// spi0_buf: 256 bytes of memory at 0xf0021100
+pub const SPI0_BUF: usize = 0xf0021100;
+/// Size of the SPI0_BUF window, in bytes.
+pub const SPI0_BUF_SIZE: usize = 0x00000100;
 
 include!(concat!(env!("OUT_DIR"), "/variant.rs"));
 
@@ -156,4 +156,4 @@ pub const CPU_CACHE_WAYS: u32 = 1;
 
 /// First 32 bits of SHA-256 over the SVD plus everything above:
 /// the map this firmware was built against. Host-compared (#307).
-pub const MAP_DIGEST: u32 = 0x80ae2ed4;
+pub const MAP_DIGEST: u32 = 0x66bc31ce;

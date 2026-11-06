@@ -1000,7 +1000,7 @@ def main():
         # the emulator without needing the gateware fix. On the board it is the
         # gateware fix that makes it reachable at all.
         command("cpu fault",
-                [b"*** TRAP 5 (load access fault)", b"addr f0000700"],
+                [b"*** TRAP 5 (load access fault)", b"addr f0030000"],
                 "`cpu fault` reads an unmapped address, traps, and NAMES it")
         command("cpu check", [b"sum   acf13568 ok"],
                 "the shell still answers after a bus fault")
@@ -1737,10 +1737,10 @@ def main():
                 the rest.
                 """
             # The CLINT address is the TARGET's: `virt` puts it at 0x02000000
-            # per its device tree, the SoC at 0xf0800000. Asserting one against
+            # per its device tree, the SoC at 0xf0010000. Asserting one against
             # the other asserts that the board is QEMU.
             reply = command("time",
-                            [b"uptime", b"clint   @f0800000"] if board
+                            [b"uptime", b"clint   @f0010000"] if board
                             else [b"uptime", b"clint   @02000000"], name)
             uptime = re.search(rb"uptime\s+(\d{6})\.(\d{3})", reply)
             mtime = re.search(rb"mtime ([0-9a-f]{8}):([0-9a-f]{8}) at (\d+) Hz",

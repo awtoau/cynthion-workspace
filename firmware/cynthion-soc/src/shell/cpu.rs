@@ -42,11 +42,10 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8]) {
 
 /// The address `cpu fault` reads when none is given.
 ///
-/// Inside the CPU's `f0000000+10000000` I/O region -- so the core issues the
-/// cycle rather than trapping on the PMA -- and inside no decoder window on
-/// either variant: the board block ends at f0000680 and the BIST engine, when
-/// present, starts at f0000800.
-const FAULT_ADDR: u32 = 0xf000_0700;
+/// Inside the CPU's CSR I/O region -- so the core issues the cycle rather than
+/// trapping on the PMA -- and inside no decoder window: the CSR window ends at
+/// f0020000 and the flash command port ends below f0022000.
+const FAULT_ADDR: u32 = 0xf003_0000;
 
 /// `cpu fault [hex]` -- read an address nothing decodes, on purpose.
 ///
