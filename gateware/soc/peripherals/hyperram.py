@@ -75,6 +75,8 @@ REG_ADDRS = (0x0000, 0x0001, 0x0800, 0x0801)
 # CS# high, +1 for `done`. A read whose words never arrive also spends n cycles in FILL.
 # XFER watchdog = 1.25 x (n [+ n read] + latency + this); expiry WDOG.
 XFER_OVERHEAD = 1 + GUARD_CYCLES + 3 + TAIL_CYCLES + POST_GUARD_CYCLES + CS_HIGH_CYCLES + 1
+# Cycles into XFER / DELAY_WAIT at which the pipelined limit is latched (stages after the inputs).
+XFER_LIM_AT, DELAY_LIM_AT = 3, 1
 # sync<->hr toggle round trip: 2 FF + edge each way <= 8 sync cycles; 1.25x.
 HANDSHAKE_SYNC = 10
 # Engine idle but no done yet: both cross by 2 FFs, so they agree within ~5 sync cycles.
@@ -336,13 +338,16 @@ class _Engine(Elaboratable):
             s.__iadd__([c[k].eq(0) for k in c] + [c["bad_index"].eq(0xFFFFFFFF),
                                                   c_bits.eq(0), both_phase.eq(0)])
 
-        res_out = Signal()
+        res_out, fin, fin_code = Signal(), Signal(), Signal(4)
 
         def complete(code):
-            s.__iadd__([self.r_code.eq(code), self.r_op.eq(d_op), self.r_cmd.eq(op_cmd),
-                        self.r_bits.eq(c_bits), res_out.eq(1), op_live.eq(0),
-                        rd_active.eq(0), g_active.eq(0)] + [self.r[k].eq(c[k]) for k in c])
+            s.__iadd__([fin.eq(1), fin_code.eq(code), op_live.eq(0),
+                        rd_active.eq(0), g_active.eq(0)])
 
+        # Results copied a cycle after `complete`: their CE is one register, not the FSM decode (#628).
+        with m.If(fin):
+            s += [fin.eq(0), self.r_code.eq(fin_code), self.r_op.eq(d_op), self.r_cmd.eq(op_cmd),
+                  self.r_bits.eq(c_bits), res_out.eq(1)] + [self.r[k].eq(c[k]) for k in c]
         with m.If(res_out):
             s += res_out.eq(0)
             m.d.comb += self.done.eq(1)
@@ -369,8 +374,15 @@ class _Engine(Elaboratable):
 
         reg_addr = Mux(o["reg_sel"][1], Cat(o["reg_sel"][0], Const(0, 10), Const(1, 1)),
                        o["reg_sel"][0])
-        lim_xfer = ((Mux(x_write, n_x, 2 * n_x) + lat + XFER_OVERHEAD) * 5) >> 2
-        lim_delay = ((8 + 8 * self.delay_tap + 4) * 5) >> 2
+        # Watchdog limits: one adder per register stage (#628). Inputs are set on entry to
+        # XFER / DELAY_LOAD; a limit is latched once its stages have settled.
+        xl_a, xl_b, xl_c = Signal(18), Signal(18), Signal(20)
+        s += [xl_a.eq(Mux(x_write, n_x, 2 * n_x) + lat), xl_b.eq(xl_a + XFER_OVERHEAD),
+              xl_c.eq(xl_b + (xl_b << 2))]
+        lim_xfer = xl_c >> 2                         # 1.25 x, valid at wd_cnt == XFER_LIM_AT
+        dl_a, dl_b = Signal(11), Signal(11)
+        s += [dl_a.eq((self.delay_tap << 3) + (self.delay_tap << 1)), dl_b.eq(dl_a + 15)]
+        lim_delay = dl_b                             # (8 + 8 tap + 4) x 1.25, at DELAY_LIM_AT
         rst_cycles = int(RESET_NS * self.ck_mhz / 1000.0)
         lim_reset = (2 * rst_cycles + 8) * 5 // 4
         state = Signal(4)
@@ -540,7 +552,7 @@ class _Engine(Elaboratable):
             with m.State("XFER"):
                 m.d.comb += state.eq(3)
                 s += wd_cnt.eq(wd_cnt + 1)
-                with m.If(wd_cnt == 0):
+                with m.If(wd_cnt == XFER_LIM_AT):
                     s += wd_lim.eq(lim_xfer)
                 with m.If(core.idle & ~started):
                     m.d.comb += core.start.eq(1)
@@ -559,7 +571,7 @@ class _Engine(Elaboratable):
                             s += [left.eq(left - n_x), wi.eq(wi + n_x), cur.eq(cur + n_x),
                                   both_phase.eq(0)]
                     m.next = "DRAIN"
-                with m.Elif((wd_cnt != 0) & (wd_cnt >= wd_lim)):
+                with m.Elif((wd_cnt > XFER_LIM_AT) & (wd_cnt >= wd_lim)):
                     s += self.r_state.eq(Cat(Const(3, 4), core.fsm_state, x_src, x_snk,
                                              x_cmd, x_write))
                     m.next = "WDOG"
@@ -571,19 +583,21 @@ class _Engine(Elaboratable):
 
             with m.State("DELAY_LOAD"):
                 m.d.comb += [state.eq(4), self.delay_load.eq(1)]
-                s += [wd_cnt.eq(0), wd_lim.eq(lim_delay)]
+                s += wd_cnt.eq(0)
                 m.next = "DELAY_WAIT"
 
             with m.State("DELAY_WAIT"):
                 m.d.comb += state.eq(5)
                 s += wd_cnt.eq(wd_cnt + 1)
+                with m.If(wd_cnt == DELAY_LIM_AT):
+                    s += wd_lim.eq(lim_delay)
                 with m.If((wd_cnt > 1) & ~self.delay_busy):
                     with m.If(d_op == OP_CALIBRATE):
                         m.next = "PICK"
                     with m.Else():
                         complete(CODE_OK)
                         m.next = "PICK"
-                with m.Elif(wd_cnt >= wd_lim):
+                with m.Elif((wd_cnt > DELAY_LIM_AT) & (wd_cnt >= wd_lim)):
                     s += self.r_state.eq(Cat(Const(5, 4), Const(0, 4)))
                     m.next = "WDOG"
 
