@@ -13,10 +13,11 @@ to VexiiRiscv, and sorts every byte of the 4 GiB space into one of four classes:
   * **ERR** -- in a PMA region, in no decoder window. `amaranth_soc`'s decoder
     answers nothing at all here (its `m.Switch` has no `m.Default()`), so this
     would hang the initiator forever; `bus/fault.BusFault` is what turns it into
-    an ERR in the cycle of the request.
+    an ERR in the cycle of the request. Also ERR: a word of the CSR window that
+    no CSR peripheral overlaps (`bus/csr_bridge.CsrBridge`, #619).
   * **SILENT** -- inside a decoder window, behind no resource. The window claims
     it, so `BusFault` sees a claimed address and the timeout never fires, and
-    `WishboneCSRBridge` acks unconditionally after its byte cycles. A read
+    the CSR bridge acks unconditionally after its byte cycles. A read
     returns zero and a write is dropped, with no error anywhere. This is the
     class nothing catches.
   * **MAPPED** -- a resource answers.
@@ -96,17 +97,36 @@ def total(spans):
     return sum(end - start for start, end in spans)
 
 
-def analyse(memory_map, regions=(), space=SPACE):
+def word_spans(sub, base):
+    """Absolute spans of `sub`'s own windows, widened to whole 32-bit words."""
+    spans = []
+    for window, name, (start, end, _) in sub.windows():
+        if name is None:    # the bridge's own wrapper: look through it
+            spans += word_spans(window, base + start)
+        else:
+            spans.append((base + (start & ~3), base + ((end + 3) & ~3)))
+    return merge(spans)
+
+
+def analyse(memory_map, regions=(), space=SPACE, erring=()):
     """Everything this script prints, as numbers, from one memory map.
 
     `regions` is a list of (base, size) the CPU will issue a bus cycle for.
+    `erring` holds sub-maps of windows whose bridge answers ERR for a word that
+    none of their own windows overlaps (`bus/csr_bridge.CsrBridge`): those
+    bytes are ERR, not SILENT.
     """
-    windows, mapped = [], []
+    windows, mapped, bridge_err = [], [], 0
     for name, start, end, sub in windows_of(memory_map):
         held = merge(resources_in(sub, start))
+        unclaimed = 0
+        if any(sub is e for e in erring):
+            unclaimed = (end - start) - total(word_spans(sub, start))
+            bridge_err += unclaimed
         windows.append({"name": name, "base": start, "end": end,
                         "size": end - start, "held": total(held),
-                        "silent": (end - start) - total(held)})
+                        "silent": (end - start) - total(held) - unclaimed,
+                        "err": unclaimed})
         mapped += held
     claimed = merge([(entry["base"], entry["end"]) for entry in windows])
     mapped = merge(mapped)
@@ -124,10 +144,11 @@ def analyse(memory_map, regions=(), space=SPACE):
         "space": space,
         "claimed": in_window,
         "mapped": held,
-        "silent": in_window - held,
+        "silent": in_window - held - bridge_err,
         "region": total(region_span),
         # In a region, in no window: the decoder answers nothing, BusFault ERRs.
-        "err": total(region_span) - reachable,
+        # In a bridged window, in none of its sub-windows: the bridge ERRs.
+        "err": total(region_span) - reachable + bridge_err,
         "no_region": space - total(region_span),
         "gaps": [(windows[i]["end"], windows[i + 1]["base"])
                  for i in range(len(windows) - 1)
@@ -337,7 +358,8 @@ def main():
 
     soc, regions = build_soc()
     facts = analyse(soc.decoder.bus.memory_map,
-                    regions=[(base, size) for base, size, _f in regions])
+                    regions=[(base, size) for base, size, _f in regions],
+                    erring=[soc.csr_bridge.wb_bus.memory_map])
 
     # Independent path: the decoder switches on `window_patterns()`, and
     # `BusFault` compares the same list. A window this script missed would show
@@ -373,7 +395,7 @@ def main():
     for label, key, what in (
             ("MAPPED    ", "mapped", "a resource answers"),
             ("SILENT    ", "silent", "in a window, behind nothing: ACK + zero"),
-            ("ERR       ", "err", "in a PMA region, in no window: BusFault ERR"),
+            ("ERR       ", "err", "in no window, or in no CSR peripheral: ERR"),
             ("NO REGION ", "no_region", "outside every PMA region: CPU traps")):
         value = facts[key]
         emit(f"    {label} {si(value):>10}  {100 * value / facts['space']:>7.3f}%"

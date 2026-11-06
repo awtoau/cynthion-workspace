@@ -275,25 +275,34 @@ def run_map_checks(checks, label, windows, addr_width, verbose):
                  detail=f"{[(hex(k[0]), k[1], v) for k, v in list(bad.items())[:4]]}")
 
 
-def real_soc_windows():
-    """(name, base, size) of the SoC's own CSR decoder, and its address width."""
+def run_soc_checks(checks, verbose):
     import soc_generate_pac as pac
+    import top
     soc, _ = pac.build_soc()
     csr_map = soc.csr_decoder.bus.memory_map
-    windows = []
-    for _, name, (start, end, _) in csr_map.windows():
-        windows.append(("_".join(str(p) for p in name), start, end - start))
-    return windows, soc.csr_decoder.bus.addr_width
+    windows = [("_".join(str(p) for p in name), start, end - start)
+               for _, name, (start, end, _) in csr_map.windows()]
 
-
-def run_soc_checks(checks, verbose):
-    try:
-        windows, addr_width = real_soc_windows()
-    except AttributeError:
-        checks.check("the SoC exposes its csr_decoder", False,
-                     detail="AwtoSoc has no csr_decoder")
-        return
-    run_map_checks(checks, "SoC map", windows, addr_width, verbose)
+    # The documented address of each peripheral is top.py's constant; the map
+    # must put the window there, through the one bridge at CSR_BASE.
+    documented = {
+        "console": top.CONSOLE_BASE, "apollo_uart": top.APOLLO_UART_BASE,
+        "board_gpio": top.GPIO_BASE, "board_i2c": top.I2C_BASE,
+        "board_sideband": top.SIDEBAND_BASE, "board_ulpi": top.ULPI_BASE,
+        "board_i2c_mux": top.I2C_MUX_BASE, "board_vbus": top.VBUS_BASE,
+        "board_fabric": top.FABRIC_BASE, "board_clocks": top.CLOCKS_BASE,
+        "hyperram": top.HYPERRAM_BASE, "intc": top.INTC_BASE,
+        "usb_host": top.USB_HOST_BASE, "clint": top.CLINT_BASE,
+    }
+    placed = {name: top.CSR_BASE + start for name, start, _ in windows}
+    wrong = {k: hex(v) for k, v in placed.items() if documented.get(k) != v}
+    checks.check("SoC map: every CSR peripheral sits at its documented address",
+                 placed == documented, detail=str(wrong))
+    bridge_windows = [w for w, _, _ in soc.decoder.bus.memory_map.windows()
+                      if w is soc.csr_bridge.wb_bus.memory_map]
+    checks.check("SoC map: one CsrBridge window on the Wishbone decoder",
+                 len(bridge_windows) == 1, detail=f"{len(bridge_windows)} windows")
+    run_map_checks(checks, "SoC map", windows, soc.csr_decoder.bus.addr_width, verbose)
 
 
 def main():

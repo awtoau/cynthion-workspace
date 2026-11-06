@@ -41,3 +41,13 @@
 - Moved (native windows that sat inside the new CSR window): hyperram_window `0xf0010000` -> `0xf0020000`, spi0 `0xf0000100` -> `0xf0021000`, spi0_buf `0xf0000200` -> `0xf0021100`.
 - CPU PMA region (`CSR_REGION_SIZE`) untouched; all windows stay inside it.
 - Firmware reads every base from the generated `cynthion-soc-pac` `base.rs`; the PAC and SVD are regenerated.
+
+## Checks
+
+- `./scripts/soc/soc_csr_map_sim.py` (88 checks, in `soc_sims.py`): behind the real CSR map, every window reads back at its address, strobes once per byte, answers in 5 cycles; every gap word answers ERR with no strobe; each peripheral sits at its documented `top.py` address.
+- `./scripts/soc/soc_map_audit.py` counts the CSR window's unclaimed words as ERR; holes inside a peripheral's own window (CLINT's 64 KiB) are still SILENT.
+- `cpu fault` reads `0xf0030000` (in the CPU's CSR region, in no window); the old `0xf0000700` is now inside the CSR window.
+
+## Saving
+
+- Estimate, not a build: 6 bridges removed = 216 FF; COMB from the isolated 4-peripheral model above is -711, whole-design slopes are noisier ([#453](https://github.com/awtoau/cynthion-workspace/issues/453)).

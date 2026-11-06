@@ -28,77 +28,77 @@ impl core::fmt::Debug for ApolloUart {
 }
 #[doc = "apollo_uart: 8 registers at 0xf0000500"]
 pub mod apollo_uart;
-#[doc = "board/gpio: 4 registers at 0xf0000600"]
+#[doc = "board_gpio: 4 registers at 0xf0000600"]
 pub type BoardGpio = crate::Periph<board_gpio::RegisterBlock, 0xf000_0600>;
 impl core::fmt::Debug for BoardGpio {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardGpio").finish()
     }
 }
-#[doc = "board/gpio: 4 registers at 0xf0000600"]
+#[doc = "board_gpio: 4 registers at 0xf0000600"]
 pub mod board_gpio;
-#[doc = "board/i2c: 5 registers at 0xf0000610"]
+#[doc = "board_i2c: 5 registers at 0xf0000610"]
 pub type BoardI2c = crate::Periph<board_i2c::RegisterBlock, 0xf000_0610>;
 impl core::fmt::Debug for BoardI2c {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardI2c").finish()
     }
 }
-#[doc = "board/i2c: 5 registers at 0xf0000610"]
+#[doc = "board_i2c: 5 registers at 0xf0000610"]
 pub mod board_i2c;
-#[doc = "board/sideband: 4 registers at 0xf0000618"]
+#[doc = "board_sideband: 4 registers at 0xf0000618"]
 pub type BoardSideband = crate::Periph<board_sideband::RegisterBlock, 0xf000_0618>;
 impl core::fmt::Debug for BoardSideband {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardSideband").finish()
     }
 }
-#[doc = "board/sideband: 4 registers at 0xf0000618"]
+#[doc = "board_sideband: 4 registers at 0xf0000618"]
 pub mod board_sideband;
-#[doc = "board/ulpi: 4 registers at 0xf000061c"]
+#[doc = "board_ulpi: 4 registers at 0xf000061c"]
 pub type BoardUlpi = crate::Periph<board_ulpi::RegisterBlock, 0xf000_061c>;
 impl core::fmt::Debug for BoardUlpi {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardUlpi").finish()
     }
 }
-#[doc = "board/ulpi: 4 registers at 0xf000061c"]
+#[doc = "board_ulpi: 4 registers at 0xf000061c"]
 pub mod board_ulpi;
-#[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
+#[doc = "board_i2c_mux: 2 registers at 0xf0000620"]
 pub type BoardI2cMux = crate::Periph<board_i2c_mux::RegisterBlock, 0xf000_0620>;
 impl core::fmt::Debug for BoardI2cMux {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardI2cMux").finish()
     }
 }
-#[doc = "board/i2c_mux: 2 registers at 0xf0000620"]
+#[doc = "board_i2c_mux: 2 registers at 0xf0000620"]
 pub mod board_i2c_mux;
-#[doc = "board/vbus: 1 register at 0xf0000624"]
+#[doc = "board_vbus: 1 register at 0xf0000624"]
 pub type BoardVbus = crate::Periph<board_vbus::RegisterBlock, 0xf000_0624>;
 impl core::fmt::Debug for BoardVbus {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardVbus").finish()
     }
 }
-#[doc = "board/vbus: 1 register at 0xf0000624"]
+#[doc = "board_vbus: 1 register at 0xf0000624"]
 pub mod board_vbus;
-#[doc = "board/fabric: 2 registers at 0xf0000640"]
+#[doc = "board_fabric: 2 registers at 0xf0000640"]
 pub type BoardFabric = crate::Periph<board_fabric::RegisterBlock, 0xf000_0640>;
 impl core::fmt::Debug for BoardFabric {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardFabric").finish()
     }
 }
-#[doc = "board/fabric: 2 registers at 0xf0000640"]
+#[doc = "board_fabric: 2 registers at 0xf0000640"]
 pub mod board_fabric;
-#[doc = "board/clocks: 2 registers at 0xf0000660"]
+#[doc = "board_clocks: 2 registers at 0xf0000660"]
 pub type BoardClocks = crate::Periph<board_clocks::RegisterBlock, 0xf000_0660>;
 impl core::fmt::Debug for BoardClocks {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("BoardClocks").finish()
     }
 }
-#[doc = "board/clocks: 2 registers at 0xf0000660"]
+#[doc = "board_clocks: 2 registers at 0xf0000660"]
 pub mod board_clocks;
 #[doc = "hyperram: 41 registers at 0xf0000800"]
 pub type Hyperram = crate::Periph<hyperram::RegisterBlock, 0xf000_0800>;
@@ -127,14 +127,14 @@ impl core::fmt::Debug for UsbHost {
 }
 #[doc = "usb_host: 27 registers at 0xf0001000"]
 pub mod usb_host;
-#[doc = "clint: 5 registers at 0xf0800000"]
-pub type Clint = crate::Periph<clint::RegisterBlock, 0xf080_0000>;
+#[doc = "clint: 5 registers at 0xf0010000"]
+pub type Clint = crate::Periph<clint::RegisterBlock, 0xf001_0000>;
 impl core::fmt::Debug for Clint {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("Clint").finish()
     }
 }
-#[doc = "clint: 5 registers at 0xf0800000"]
+#[doc = "clint: 5 registers at 0xf0010000"]
 pub mod clint;
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;

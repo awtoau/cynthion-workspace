@@ -192,30 +192,6 @@
       </registers>
     </peripheral>
     <peripheral>
-      <name>SPI0</name>
-      <description>spi0: 64 bytes of memory at 0xf0000100</description>
-      <baseAddress>0xF0000100</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x40</size>
-        <usage>buffer</usage>
-      </addressBlock>
-      <interrupt>
-        <name>SPI0</name>
-        <value>19</value>
-      </interrupt>
-    </peripheral>
-    <peripheral>
-      <name>SPI0_BUF</name>
-      <description>spi0_buf: 256 bytes of memory at 0xf0000200</description>
-      <baseAddress>0xF0000200</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x100</size>
-        <usage>buffer</usage>
-      </addressBlock>
-    </peripheral>
-    <peripheral>
       <name>APOLLO_UART</name>
       <description>apollo_uart: 8 registers at 0xf0000500</description>
       <baseAddress>0xF0000500</baseAddress>
@@ -377,7 +353,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_GPIO</name>
-      <description>board/gpio: 4 registers at 0xf0000600</description>
+      <description>board_gpio: 4 registers at 0xf0000600</description>
       <baseAddress>0xF0000600</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -717,7 +693,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_I2C</name>
-      <description>board/i2c: 5 registers at 0xf0000610</description>
+      <description>board_i2c: 5 registers at 0xf0000610</description>
       <baseAddress>0xF0000610</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -823,7 +799,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_SIDEBAND</name>
-      <description>board/sideband: 4 registers at 0xf0000618</description>
+      <description>board_sideband: 4 registers at 0xf0000618</description>
       <baseAddress>0xF0000618</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -907,7 +883,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_ULPI</name>
-      <description>board/ulpi: 4 registers at 0xf000061c</description>
+      <description>board_ulpi: 4 registers at 0xf000061c</description>
       <baseAddress>0xF000061C</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -1012,7 +988,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_I2C_MUX</name>
-      <description>board/i2c_mux: 2 registers at 0xf0000620</description>
+      <description>board_i2c_mux: 2 registers at 0xf0000620</description>
       <baseAddress>0xF0000620</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -1101,7 +1077,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_VBUS</name>
-      <description>board/vbus: 1 register at 0xf0000624</description>
+      <description>board_vbus: 1 register at 0xf0000624</description>
       <baseAddress>0xF0000624</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -1166,7 +1142,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_FABRIC</name>
-      <description>board/fabric: 2 registers at 0xf0000640</description>
+      <description>board_fabric: 2 registers at 0xf0000640</description>
       <baseAddress>0xF0000640</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -1228,7 +1204,7 @@
     </peripheral>
     <peripheral>
       <name>BOARD_CLOCKS</name>
-      <description>board/clocks: 2 registers at 0xf0000660</description>
+      <description>board_clocks: 2 registers at 0xf0000660</description>
       <baseAddress>0xF0000660</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
@@ -2772,19 +2748,9 @@
       </registers>
     </peripheral>
     <peripheral>
-      <name>HYPERRAM_WINDOW</name>
-      <description>hyperram_window: 4096 bytes of memory at 0xf0010000</description>
-      <baseAddress>0xF0010000</baseAddress>
-      <addressBlock>
-        <offset>0x0</offset>
-        <size>0x1000</size>
-        <usage>buffer</usage>
-      </addressBlock>
-    </peripheral>
-    <peripheral>
       <name>CLINT</name>
-      <description>clint: 5 registers at 0xf0800000</description>
-      <baseAddress>0xF0800000</baseAddress>
+      <description>clint: 5 registers at 0xf0010000</description>
+      <baseAddress>0xF0010000</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
         <size>0x10000</size>
@@ -2882,6 +2848,40 @@
           </fields>
         </register>
       </registers>
+    </peripheral>
+    <peripheral>
+      <name>HYPERRAM_WINDOW</name>
+      <description>hyperram_window: 4096 bytes of memory at 0xf0020000</description>
+      <baseAddress>0xF0020000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x1000</size>
+        <usage>buffer</usage>
+      </addressBlock>
+    </peripheral>
+    <peripheral>
+      <name>SPI0</name>
+      <description>spi0: 64 bytes of memory at 0xf0021000</description>
+      <baseAddress>0xF0021000</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x40</size>
+        <usage>buffer</usage>
+      </addressBlock>
+      <interrupt>
+        <name>SPI0</name>
+        <value>19</value>
+      </interrupt>
+    </peripheral>
+    <peripheral>
+      <name>SPI0_BUF</name>
+      <description>spi0_buf: 256 bytes of memory at 0xf0021100</description>
+      <baseAddress>0xF0021100</baseAddress>
+      <addressBlock>
+        <offset>0x0</offset>
+        <size>0x100</size>
+        <usage>buffer</usage>
+      </addressBlock>
     </peripheral>
   </peripherals>
 </device>

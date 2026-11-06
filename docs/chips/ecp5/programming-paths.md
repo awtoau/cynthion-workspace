@@ -166,7 +166,7 @@ firmware over the TARGET USB interface while the design keeps running.
 
 | half | state |
 |---|---|
-| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) command port ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)): any opcode as one /CS-low transaction, WREN and a bounded BUSY poll in gateware, 256 B buffer. `SPI0` at `0xf0000100`, `SPI0_BUF` at `0xf0000200` ([flash-soc-peripheral.md](../flash-soc-peripheral.md)). |
+| gateware | **present.** [`gateware/soc/peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) command port ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)): any opcode as one /CS-low transaction, WREN and a bounded BUSY poll in gateware, 256 B buffer. `SPI0` at `0xf0021000`, `SPI0_BUF` at `0xf0021100` ([flash-soc-peripheral.md](../flash-soc-peripheral.md)). |
 | firmware | **absent.** [`firmware/cynthion-soc/src/memory.rs`](../../../firmware/cynthion-soc/src/memory.rs) says so in its own header: reading all three regions is safe, writing is not, and no `write` verb exists. |
 
 What the shell can do today is `flash read <hex>` and `flash id` — and `flash
