@@ -96,8 +96,9 @@ from amaranth.lib.wiring    import In, Out
 from amaranth_soc           import csr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "probes"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from luna.gateware.interface.ulpi       import ULPIRegisterWindow  # noqa: E402
+from usbcore.ulpi_regwin                import ULPIRegisterWindow  # noqa: E402
 from usb_host.guh.sie                   import USBSIE              # noqa: E402
 
 from clocks                             import (PHY_PAD_RESET_CYCLES,  # noqa: E402

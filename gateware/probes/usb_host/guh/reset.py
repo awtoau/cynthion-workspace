@@ -9,7 +9,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from luna.gateware.interface.utmi import UTMITransmitInterface
+from ..guh_lower import UTMITransmitInterface
 
 from .types import *
 
