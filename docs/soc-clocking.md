@@ -8,7 +8,7 @@ Clock plan, owned here. Other docs link, they do not restate.
 |---|---|---|
 | `usb` | discrete 60 MHz oscillator (A8) passed straight through; FPGA sources the ULPI clock (`clk_dir='o'` on all three PHY resources in `cynthion_r1_4.py`) | 60.000 MHz exact |
 | `sync` (CPU, Wishbone) | PLL from the oscillator; `SYNC_MHZ` | default 60 (`CYNTHION_SYNC_MHZ`, `gateware/soc/variant.py:64`) |
-| flash `fsck` + `fcap`/`fcapn` + MCLK | CLKOS2 / CLKOS (runtime PHASESTEP) / CLKOS3 +180 degrees of the SAME PLL as `sync` ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | 180 MHz; [chips/flash-soc-peripheral.md](chips/flash-soc-peripheral.md) |
+| flash `fsck` + `fcap`/`fcapn` + MCLK | CLKOS2 / CLKOS (runtime PHASESTEP) / CLKOS3 +180 degrees of the SAME PLL as `sync` ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | 120 MHz; [chips/flash-soc-peripheral.md](chips/flash-soc-peripheral.md) |
 | HyperRAM `hr` (CK) + `hr90` | second PLL, CLKI = the 60 MHz `usb` net ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)) | 180 MHz; [chips/hyperram/soc-peripheral.md](chips/hyperram/soc-peripheral.md) |
 
 - Code: `gateware/soc/clocks.py` (`SocClocks`); HyperRAM PLL `_PLL` in `gateware/hyperram_baseline/top.py` ([#581](https://github.com/awtoau/cynthion-workspace/issues/581)).
@@ -24,7 +24,7 @@ Clock plan, owned here. Other docs link, they do not restate.
 |---|---|---|---|---|
 | `usb` | 60.000 (ULPI) | 60.000 only | 60.000 oscillator | none |
 | `sync` | PLL menu above | `SYNC_CEILING_MHZ` | 60 | default, unmeasured; CPU ceiling is [#110](https://github.com/awtoau/cynthion-workspace/issues/110) |
-| flash SCK | part 133 (fC1) | shares the `sync` VCO: LCM with 60 must be <= 800 | 180 ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | above rated; [#590](https://github.com/awtoau/cynthion-workspace/issues/590) climb clean to 190; 190 needs `sync` off 60 ([chips/flash-soc-peripheral.md](chips/flash-soc-peripheral.md#clocks)) |
+| flash SCK | part 133 (fC1) | shares the `sync` VCO: LCM with 60 must be <= 800 | 120 ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | in spec; 180 fails on the board, needs MCLK-route/write-phase calibration ([chips/flash-soc-peripheral.md](chips/flash-soc-peripheral.md#clocks)) |
 | HyperRAM CK | part rated 166 | LVCMOS33 output 150 (ECP5 Table 3.21) | 180 ([#588](https://github.com/awtoau/cynthion-workspace/issues/588)) | above both; [#581](https://github.com/awtoau/cynthion-workspace/issues/581) measured CK 60-180 clean ([chips/hyperram/sequential-baseline.md](chips/hyperram/sequential-baseline.md)) |
 | `jtag_tck` | n/a | 405 kHz driven | unconstrained in nextpnr | [#461](https://github.com/awtoau/cynthion-workspace/issues/461) |
 

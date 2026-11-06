@@ -14,7 +14,7 @@ The W25Q32JV config flash on the SoC bus, built on the clean-room [#590](https:/
 
 ## Clocks
 
-- SCK **180 MHz**, not the 190 of [#590](https://github.com/awtoau/cynthion-workspace/issues/590): two PLLs on the die (HyperRAM owns one), so the flash shares PLL0's VCO with `sync` 60. LCM(60, 190) = 1140 MHz > VCO max 800; 190 with in-spec fPFD needs `sync` off 60 (CLKOP = 190 as feedback, `sync` = 57 on CLKOS). 180: VCO 720, div 4, 32 PHASESTEPs per period. [#590](https://github.com/awtoau/cynthion-workspace/issues/590) climb at 180: EBh 0 errors, eye 9 points vs 8 at 190.
+- SCK **120 MHz** (2 x `sync`, in spec; part rated 133). 180 and 190 fail on the board ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)). Two PLLs on the die (HyperRAM owns one), so the flash shares PLL0's VCO with `sync` 60. LCM(60, 190) = 1140 MHz > VCO max 800; 190 with in-spec fPFD needs `sync` off 60 (CLKOP = 190 as feedback, `sync` = 57 on CLKOS). 180: VCO 720, div 4, 32 PHASESTEPs per period. [#590](https://github.com/awtoau/cynthion-workspace/issues/590) climb at 180: EBh 0 errors, eye 9 points vs 8 at 190.
 - PLL0: CLKOP `sync`, CLKOS `fcap` (PHASESEL 00, delay), CLKOS2 `fsck`, CLKOS3 MCLK +180 degrees. DPHASE_SOURCE enabled.
 - `fsck` reset: `~LOCK` through a `ResetSynchronizer`. PHASESTEP registered in `fsck`, low 4 / high 4 cycles.
 - MCLK: CLKOS3 -> DCCA (CE = registered `ck_en`, changes on `fsck` edges = MCLK falling) -> USRMCLK.
@@ -73,7 +73,7 @@ Plain Wishbone words (`REG_*` in flash.py), not amaranth-soc CSRs: the byte-wide
 - Reference: 64 B 0Bh (x1, IO1 only) at `0x0B0000` (the firmware image) at the x1 point.
 - x4: EBh of the same 64 B against the reference, lat x1 +- 1 x 2 xfer x N. Centre placed, verified. The final point serves XIP and commands.
 - A blank or constant reference (AND != 00 or OR != FF over the 64 bytes) cannot tell lines apart: x1 placement kept, `cal_x4` 0.
-- Bound: `cal_cycles(32)` = 68317 `fsck` cycles = 380 us at 180 MHz.
+- Bound: `cal_cycles(32)` = 68317 `fsck` cycles.
 
 ## Simulation (`soc_flash_sim.py`)
 

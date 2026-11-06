@@ -40,7 +40,7 @@ desc, W1, W4, LAT_MAX, MBYTE = core.desc, core.W1, core.W4, core.LAT_MAX, core.M
 
 __all__ = ["Flash", "SCK_MHZ", "FLASH_BYTES", "xip_worst_sync_cycles"]
 
-# Flash SCK, MHz: 180 shares PLL0's 720 MHz VCO with sync 60; 190 (#590) cannot (#593).
+# Flash SCK, MHz: 120 = 2 x sync, in spec (part rated 133); 180 fails on the board (#593).
 SCK_MHZ = 120.0
 FLASH_BYTES = 4 << 20
 LINE_BYTES = 64
