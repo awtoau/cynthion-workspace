@@ -23,6 +23,10 @@ Sections:
 - lockstep: the classes GUH imports (`usb_host/guh_lower.py`) against luna's, on the same
   random stimulus, every output compared every cycle: data receiver, handshake detector,
   data generator, handshake generator, inter-packet timer, ULPI translator.
+- sie: the whole GUH engine on usbcore in lockstep with the same GUH source re-pointed at
+  luna (written to tmp/usbcore_equiv/), on a ULPI PHY stimulus with random transfers.
+  Known divergence, excluded from the stimulus: DIR taken mid-transmit (an aborted packet)
+  makes luna's shared CRC count RX bytes into the TX CRC; ours keeps them apart.
 - Out of scope: bit stuffing, NRZI, SYNC, EOP (the PHY's; ULPI hands over bytes).
 """
 
@@ -812,9 +816,160 @@ def section_lockstep_ulpi(checks, rng, n_cycles):
     checks.note(f"exercised: {stats}")
 
 
+# ---------------------------------------------------------------- whole engine
+
+GUH_DIR = ROOT / "gateware" / "probes" / "usb_host" / "guh"
+LUNA_IMPORTS = {
+    "sie.py": ("from ..guh_lower import *\n",
+               "from luna.gateware.interface.ulpi import UTMITranslator\n"
+               "from luna.gateware.interface.utmi import *\n"
+               "from luna.gateware.usb.usb2.packet import *\n"),
+    "reset.py": ("from ..guh_lower import UTMITransmitInterface\n",
+                 "from luna.gateware.interface.utmi import UTMITransmitInterface\n"),
+    "types.py": ("from ..guh_lower import UTMIOperatingMode, UTMITerminationSelect\n"
+                 "from ..guh_lower import USBSpeed as LUNAUSBSpeed\n",
+                 "from luna.gateware.interface.utmi import UTMIOperatingMode, UTMITerminationSelect\n"
+                 "from luna.gateware.usb.usb2 import USBSpeed as LUNAUSBSpeed\n"),
+}
+# Shared, simulable timers for both engines (same role as model.scale_timing_for_simulation).
+SIE_TIMING = {
+    "USBResetController": {"_SETTLE_TIME": 600, "_MAX_RESET_TIME": 15000,
+                           "_MIN_RESET_BEFORE_CHIRP": 300, "_CHIRP_FILTER_CYCLES": 1500,
+                           "_CHIRP_DURATION": 300},
+    "USBSOFController": {"_SOF_CYCLES_FS": 6000, "_SOF_TX_TO_TX_MIN_FS": 1200,
+                         "_SOF_TX_TO_TX_MAX_FS": 4200, "_SOF_TX_TO_RX_MAX_FS": 5400,
+                         "_SOF_CYCLES_HS": 3750, "_SOF_TX_TO_TX_MIN_HS": 30,
+                         "_SOF_TX_TO_TX_MAX_HS": 2850, "_SOF_TX_TO_RX_MAX_HS": 3690},
+}
+
+
+def guh_on_luna():
+    """The current GUH source with its import lines pointed back at luna, as `guh_luna_ref`."""
+    import importlib
+    out = ROOT / "tmp" / "usbcore_equiv" / "guh_luna_ref"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "__init__.py").write_text("")
+    for name, (ours, luna) in LUNA_IMPORTS.items():
+        text = (GUH_DIR / name).read_text()
+        if ours not in text:
+            raise RuntimeError(f"guh/{name}: import line changed; update LUNA_IMPORTS")
+        (out / name).write_text(text.replace(ours, luna))
+    sys.path.insert(0, str(out.parent))
+    return importlib.import_module("guh_luna_ref.sie"), importlib.import_module("guh_luna_ref.reset")
+
+
+def section_sie(checks, rng, n_cycles):
+    from usb_host.guh import reset as ours_reset, sie as ours_sie
+    ref_sie, ref_reset = guh_on_luna()
+    for module_sie, module_reset in ((ours_sie, ours_reset), (ref_sie, ref_reset)):
+        for cls, values in SIE_TIMING.items():
+            target = getattr(module_reset if cls == "USBResetController" else module_sie, cls)
+            for attr, value in values.items():
+                setattr(target, attr, value)
+
+    m = Module()
+    shared = SimpleNamespace(dir=Signal(), nxt=Signal(), data=Signal(8))
+    o_pins, l_pins = ulpi_pins(shared), ulpi_pins(shared)
+    ours = ours_sie.USBSIE(bus=o_pins, handle_clocking=False, fifo_depth=64)
+    luna = ref_sie.USBSIE(bus=l_pins, handle_clocking=False, fifo_depth=64)
+    m.submodules.ours, m.submodules.luna = ours, luna
+    oc, lc = ours.ctrl, luna.ctrl
+    m.d.comb += [
+        lc.bus_reset.eq(oc.bus_reset), lc.tx_flush.eq(oc.tx_flush),
+        lc.xfer.as_value().eq(oc.xfer.as_value()),
+        lc.txs.valid.eq(oc.txs.valid), lc.txs.payload.eq(oc.txs.payload),
+        lc.rxs.ready.eq(oc.rxs.ready),
+    ]
+    compare = (("data.o", o_pins.data.o, l_pins.data.o), ("data.oe", o_pins.data.oe, l_pins.data.oe),
+               ("stp.o", o_pins.stp.o, l_pins.stp.o), ("status", oc.status.as_value(),
+               lc.status.as_value()), ("tx_pending", oc.tx_pending, lc.tx_pending),
+               ("txs.ready", oc.txs.ready, lc.txs.ready), ("rxs.valid", oc.rxs.valid, lc.rxs.valid),
+               ("utmi.busy", ours.utmi.busy, luna.utmi.busy),
+               ("utmi.tx_valid", ours.utmi.tx_valid, luna.utmi.tx_valid),
+               ("utmi.op_mode", ours.utmi.op_mode, luna.utmi.op_mode))
+    mism = []
+    stats = {"starts": 0, "txcmds": 0, "rx_packets": 0, "states": set(), "speeds": set()}
+    replies = [[pid_byte(int(p))] for p in HANDSHAKES] + [
+        ref_data(int(PID.DATA0), list(range(n))) for n in (0, 1, 8)] + [
+        ref_data(int(PID.DATA1), [rng.randrange(256) for _ in range(20)])]
+
+    async def tb(ctx):
+        line, line_left, phy = 0b01, 0, []   # phy: queued (dir, nxt, data) cycles
+        for cycle in range(n_cycles):
+            if line_left == 0:
+                line = rng.choice((0b01, 0b01, 0b01, 0b10, 0b00))
+                line_left = rng.randrange(2000, 25000)
+            line_left -= 1
+            # Link transmitting (TXCMD on the pins while DIR is low): accept, then reply.
+            data_o, stp = ctx.get(o_pins.data.o), ctx.get(o_pins.stp.o)
+            # The PHY does not take DIR while the link transmits (that aborts the packet,
+            # ULPI 3.8.2): there luna's shared CRC counts RX bytes into the TX CRC, ours not.
+            link_tx = ctx.get(ours.utmi.tx_valid)
+            if not phy and link_tx:
+                if data_o & 0xC0 == 0x40 and rng.random() < 0.8:
+                    stats["txcmds"] += 1
+                    phy.append((0, 1, 0))
+            elif not phy:
+                if data_o & 0xC0 == 0x40 and rng.random() < 0.8:
+                    stats["txcmds"] += 1
+                    phy.append((0, 1, 0))
+                elif stp and rng.random() < 0.7:
+                    reply = rng.choice(replies)
+                    stats["rx_packets"] += 1
+                    phy += [(1, 1, 0)] + [(1, int(rng.random() < 0.8), b) for b in reply]
+                    phy += [(1, 0, 0x10 | line)] * rng.randrange(2) + [(0, 0, 0)]
+                elif rng.random() < 0.01:
+                    phy += [(1, 0, 0)] + [(1, 0, line | 0x0C)] * rng.randrange(1, 4) + [(0, 0, 0)]
+                elif rng.random() < 0.002:
+                    phy += [(1, int(rng.random() < 0.5), rng.randrange(256))
+                            for _ in range(rng.randrange(1, 12))] + [(0, 0, 0)]
+            if phy:
+                d, n, v = phy.pop(0)
+            else:
+                # Link owns the bus (TX body or a register write): NXT most cycles.
+                d, n, v = 0, int(ctx.get(ours.utmi.busy) and rng.random() < 0.7), 0
+            ctx.set(shared.dir, d)
+            ctx.set(shared.nxt, n)
+            ctx.set(shared.data, v)
+            # CPU side of the engine.
+            ctx.set(oc.xfer.start, 0)
+            ctx.set(oc.bus_reset, rng.random() < 0.00005)
+            if ctx.get(oc.status.idle) and rng.random() < 0.02:
+                ctx.set(oc.xfer.type, rng.randrange(3))
+                ctx.set(oc.xfer.dev_addr, rng.randrange(128))
+                ctx.set(oc.xfer.ep_addr, rng.randrange(16))
+                ctx.set(oc.xfer.data_pid, rng.randrange(2))
+                ctx.set(oc.xfer.start, 1)
+                stats["starts"] += 1
+            ctx.set(oc.txs.valid, rng.random() < 0.05)
+            ctx.set(oc.txs.payload, rng.randrange(256))
+            ctx.set(oc.rxs.ready, rng.random() < 0.9)
+            ctx.set(oc.tx_flush, rng.random() < 0.001)
+            for name, a, b in compare:
+                if ctx.get(a) != ctx.get(b):
+                    mism.append((cycle, name))
+            if ctx.get(lc.rxs.valid) and ctx.get(oc.rxs.payload) != ctx.get(lc.rxs.payload):
+                mism.append((cycle, "rxs.payload"))
+            stats["speeds"].add(str(ctx.get(oc.status.detected_speed)))
+            stats["states"].add((int(ctx.get(oc.status.reset_active)),
+                                 str(ctx.get(oc.status.detected_speed)),
+                                 str(ctx.get(oc.status.response))))
+            await ctx.tick("usb")
+    run(m, tb, BoardPlatform())
+    stats["states"] = len(stats["states"])
+    checks.check(f"lockstep: whole GUH engine on usbcore == the same GUH source on luna "
+                 f"({n_cycles} cycles, ULPI PHY stimulus, random transfers)", not mism,
+                 f"{len(mism)} mismatches, first {mism[:4]}")
+    checks.check("lockstep engine: the stimulus reached transfers, TXCMDs and replies "
+                 "(a stuck engine would compare equal)",
+                 stats["starts"] > 0 and stats["txcmds"] > 0 and stats["rx_packets"] > 0,
+                 f"{stats}")
+    checks.note(f"exercised: {stats} (states = distinct reset/speed/response tuples)")
+
+
 # ---------------------------------------------------------------- main
 
-SECTIONS = ("crc", "codec", "reject", "negative", "lockstep")
+SECTIONS = ("crc", "codec", "reject", "negative", "lockstep", "sie")
 
 
 def main():
@@ -823,6 +978,7 @@ def main():
     parser.add_argument("--seed", type=int, default=612)
     parser.add_argument("--only", nargs="*", choices=SECTIONS, default=SECTIONS)
     parser.add_argument("--ulpi-cycles", type=int, default=40000)
+    parser.add_argument("--sie-cycles", type=int, default=120000)
     args = parser.parse_args()
     rng = random.Random(args.seed)
     checks = Checks(emit)
@@ -841,6 +997,8 @@ def main():
         section_lockstep_tx(checks, rng)
         section_lockstep_timer(checks, rng)
         section_lockstep_ulpi(checks, rng, args.ulpi_cycles)
+    if "sie" in args.only:
+        section_sie(checks, rng, args.sie_cycles)
     return checks.summary()
 
 
