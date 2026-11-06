@@ -142,11 +142,12 @@ Bespoke vs 16550, and the FIFO-depth options, are in `../../docs/architecture.md
 
 from amaranth               import Module, Mux, Cat, C, Signal
 from amaranth.lib           import wiring, stream
-from amaranth.lib.fifo      import SyncFIFOBuffered
 from amaranth.lib.wiring    import In, Out
 from amaranth.hdl           import ResetInserter
 
 from amaranth_soc           import csr
+
+from peripherals.bram_fifo  import BramSyncFIFOBuffered
 
 
 __all__ = ["Uart16550", "SplitRW"]
@@ -305,10 +306,10 @@ class Uart16550(wiring.Component):
         # 16 deep, per the standard. SyncFIFOBuffered rather than SyncFIFO: the
         # buffered variant registers its output, so `r_data` is a flop rather
         # than a memory read port feeding the CSR read mux, and the read path
-        # through the bus bridge stays short. At this depth the storage is
-        # distributed LUT RAM on the ECP5, not a block RAM.
-        rx = ResetInserter(rx_clear)(SyncFIFOBuffered(width=8, depth=FIFO_DEPTH))
-        tx = ResetInserter(tx_clear)(SyncFIFOBuffered(width=8, depth=FIFO_DEPTH))
+        # through the bus bridge stays short. Storage is pinned to block RAM
+        # (bram_fifo.py): distributed RAM is what yosys picks at this depth.
+        rx = ResetInserter(rx_clear)(BramSyncFIFOBuffered(width=8, depth=FIFO_DEPTH))
+        tx = ResetInserter(tx_clear)(BramSyncFIFOBuffered(width=8, depth=FIFO_DEPTH))
         m.submodules.rx = rx
         m.submodules.tx = tx
 
