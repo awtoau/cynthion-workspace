@@ -31,7 +31,8 @@ believing any Fmax difference, because this design has closed anywhere between
     ./scripts/soc/soc_peripheral_area.py
     ./scripts/soc/soc_peripheral_area.py --only uart16550,flash_probe
 
-Output is mirrored to ./tmp/logs/soc_peripheral_area.log.
+Output is mirrored to ./tmp/logs/soc_peripheral_area.log; each module's full
+yosys log (memory_libmap decisions included) to ./tmp/peripheral-area/<name>.yosys.log.
 """
 
 import argparse
@@ -159,6 +160,7 @@ def synth(name, dut):
     proc = subprocess.run(
         ["yosys", "-p", f"read_verilog {source}; synth_ecp5 -top {name}; stat"],
         capture_output=True, text=True)
+    (BUILD / f"{name}.yosys.log").write_text(proc.stdout + proc.stderr)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip()[-1500:])
 
@@ -188,8 +190,8 @@ def main():
         out.append(line)
 
     emit(f"  {'module':<20} {'LUT4':>6} {'CCU2C':>6} {'LUT4 eq':>8} "
-         f"{'DFF':>6} {'DP16KD':>7}  note")
-    emit("  " + "-" * 76)
+         f"{'DFF':>6} {'DP16KD':>7} {'DPR16X4':>8}  note")
+    emit("  " + "-" * 85)
 
     total_eq = total_dff = 0
     for name, thunk, note in _peripherals():
@@ -199,7 +201,7 @@ def main():
             cells = synth(name, thunk())
         except Exception as exc:                      # noqa: BLE001
             emit(f"  {name:<20} {'--':>6} {'--':>6} {'--':>8} {'--':>6} "
-                 f"{'--':>7}  {type(exc).__name__}: {str(exc).splitlines()[-1][:40]}")
+                 f"{'--':>7} {'--':>8}  {type(exc).__name__}: {str(exc).splitlines()[-1][:40]}")
             continue
         luts = cells.get("LUT4", 0)
         # A CCU2C is the carry-chain cell and occupies two LUT4 positions, which
@@ -208,12 +210,14 @@ def main():
         equivalent = luts + 2 * ccu
         dffs = cells.get("TRELLIS_FF", 0)
         bram = cells.get("DP16KD", 0)
+        # Distributed RAM: a 16x4 block, 6 cell positions (#619 rule: FIFOs belong in block RAM).
+        lutram = cells.get("TRELLIS_DPR16X4", 0)
         total_eq += equivalent
         total_dff += dffs
         emit(f"  {name:<20} {luts:>6} {ccu:>6} {equivalent:>8} {dffs:>6} "
-             f"{bram:>7}  {note}")
+             f"{bram:>7} {lutram:>8}  {note}")
 
-    emit("  " + "-" * 76)
+    emit("  " + "-" * 85)
     emit(f"  {'sum':<20} {'':>6} {'':>6} {total_eq:>8} {total_dff:>6}")
     emit()
     emit("OUT OF CONTEXT: an UPPER BOUND on what removing a module saves, not")
