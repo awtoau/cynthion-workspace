@@ -2,8 +2,19 @@
 //!
 //! Pure: no register access, host-tested through `cynthion-soc-tests`.
 
-/// Bytes of the configuration descriptor `find_endpoints` reads.
-pub const CONFIG_MAX: usize = 64;
+/// Configuration descriptor buffer, sized for composite gadgets with margin (#627). A longer one is
+/// still read whole (control drops bytes past the buffer); only its first 512 B are walked.
+pub const CONFIG_MAX: usize = 512;
+/// Configuration descriptor header (bLength 9); bytes 2-3 are wTotalLength.
+pub const CONFIG_HEADER: usize = 9;
+
+/// wTotalLength from a configuration descriptor header, `None` if it is not one.
+pub fn total_length(h: &[u8]) -> Option<u16> {
+    if h.len() < CONFIG_HEADER || h[0] < 9 || h[1] != 2 {
+        return None;
+    }
+    Some(u16::from_le_bytes([h[2], h[3]]))
+}
 
 /// First bulk IN and first bulk OUT endpoint numbers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -65,6 +76,14 @@ mod tests {
         assert!(c.len() > 64);
         let read = &c[..c.len().min(CONFIG_MAX)];
         assert_eq!(bulk_pair(read), Some(BulkPair { ep_in: 4, ep_out: 4 }));
+    }
+
+    #[test]
+    fn total_length_from_the_header() {
+        let c = config(&[&[endpoint(0x81, 2, 64), endpoint(0x01, 2, 64)]]);
+        assert_eq!(total_length(&c[..CONFIG_HEADER]), Some(c.len() as u16));
+        assert_eq!(total_length(&[18, 1, 0, 2, 0, 0, 0, 64, 0]), None);
+        assert_eq!(total_length(&c[..8]), None);
     }
 
     #[test]

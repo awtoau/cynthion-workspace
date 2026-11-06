@@ -740,8 +740,10 @@ impl Host {
     /// Find the first bulk IN and OUT endpoints; stored in `ep_in` / `ep_out` (numbers).
     pub fn find_endpoints(&mut self) -> Result<(), Error> {
         let mut c = [0u8; usb_desc::CONFIG_MAX];
-        let n = self.control(&setup_packet(0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, c.len() as u16), &[],
-                             &mut c)?;
+        let get = |len| setup_packet(0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, len);
+        let n = self.control(&get(usb_desc::CONFIG_HEADER as u16), &[], &mut c)?;
+        let total = usb_desc::total_length(&c[..n]).ok_or(Error::Bad("bad config descriptor header"))?;
+        let n = self.control(&get(total), &[], &mut c)?;
         let pair = usb_desc::bulk_pair(&c[..n]).ok_or(Error::Bad("no bulk IN/OUT pair"))?;
         (self.ep_in, self.ep_out) = (pair.ep_in, pair.ep_out);
         Ok(())
