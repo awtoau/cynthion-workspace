@@ -16,6 +16,7 @@ import re
 BLOCK = [
     ("regfile", r"asMem_ram", "--regfile-reg-based"),
     ("fetch_tags", r"FetchL1Plugin_logic_ways_\d+_mem", None),
+    ("lsu_tags", r"LsuL1Plugin_logic_ways_\d+_mem", None),
 ]
 
 
