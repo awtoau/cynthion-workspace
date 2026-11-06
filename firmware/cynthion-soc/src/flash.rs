@@ -1,84 +1,64 @@
-//! The SPI flash CONTROLLER: every opcode the memory map cannot issue.
+//! The config-flash COMMAND PORT: every opcode the XIP window does not issue (#593).
 //!
-//! Two paths reach the W25Q32 and they do different things:
-//!
-//! | path | opcodes | driver |
-//! |------|---------|--------|
-//! | `ModalSPIFlashMemoryMap` at `SPIFLASH` | one read opcode, no write in its FSM (`gateware/soc/top.py:534`) | `target::flash_word` |
-//! | `HoldableSPIController` at `SPI0` | any | this file |
-//!
-//! So JEDEC, SFDP, the status register, erase and page program are only
-//! reachable from here. Ported from the C bring-up firmware that found the
-//! path's faults -- `scripts/riscv/riscv_firmware.py`, which keeps the ILA evidence.
-//!
-//! ## Register access (`amaranth_soc.csr`, granularity 8)
-//!
-//!     0x00  phy     length[5:0] | width[9:6] | mask[17:10]   32-bit write
-//!     0x04  cs      a write PULSE; cannot hold chip select. Unused here
-//!     0x05  status  rx_ready[0], tx_ready[1]
-//!     0x08  data.rx 32-bit read -- READING POPS THE RX FIFO
-//!     0x0c  data.tx 32-bit write
-//!     0x20  hold    LATCHING chip select, `HoldableSPIController`
-//!
-//! A multi-byte register latches its shadow on its LOWEST byte and commits on
-//! its HIGHEST, so each access above is one aligned 32-bit or byte access and
-//! not a sequence. `data.rx` has a side effect on read, so `SPI0` must stay in
-//! an uncached PMA region.
-//!
-//! ## Two gotchas that cost days in the C firmware
-//!
-//! - **Data is right-aligned, not pre-shifted.** The PHY left-justifies:
-//!   `sr_out.eq(source.data << (32 - source.len))`. An 8-bit transfer of `0x9f`
-//!   becomes `0x9f000000` on its own; passing `0x9f << 24` shifts it a further
-//!   24 and clocks out eight zero bits. 32-bit transfers are unaffected, which
-//!   is why the address-bearing commands here do pack the opcode into 31..24.
-//! - **Chip select must be HELD across a multi-transfer command.** Upstream's
-//!   `cs` register is a write pulse and its CS collapses to TX FIFO occupancy,
-//!   which empties whenever the CPU is slower than the PHY -- always. `hold` is
-//!   the latch that fixes it; with it asserted, push/pop one transfer at a time
-//!   is safe and FIFO depth stops being a constraint.
-//!
-//! ## This image executes from the flash it drives
-//!
-//! Read off the linked ELF, not assumed -- `rust-objdump -h`, and `memory.x`:
-//!
-//!     .text    VMA 100b0000  LMA 100b0000   the SPIFLASH window, executed in place
-//!     .rodata  VMA 100c4400  LMA 100c4400   the same window
-//!     .data    VMA 00000400  LMA 100cd4e0   copied to block RAM by riscv-rt
-//!     .bss     VMA 00000508                 block RAM
-//!
-//! and `SPIFLASH_CACHED` is true, so the window is `main=1` and an I-cache miss
-//! is a memory-map read. Any instruction outside `.data` can therefore reach
-//! the flash at any moment.
-//!
-//! Two consequences, both enforced rather than hoped for: [`burst`] is
-//! `.data`-resident and [`resident`] refuses to run if it ever is not, and
-//! interrupts are masked across a command so no handler fetches inside one.
-//! Neither applies to a build whose `.text` is in block RAM -- but this one's
-//! is not, and #460 is where the mechanism is written up.
+//! - Peripheral: `gateware/soc/peripherals/flash.py`; map, codes, errors:
+//!   `docs/chips/flash-soc-peripheral.md`.
+//! - One command = optional WREN, one /CS-low transaction (descriptor, address, up to
+//!   256 bytes through `SPI0_BUF`), optional BUSY poll bounded by `wait_us`.
+//! - Buffer bytes are little-endian words: byte 0 is bits 7..0 of word 0, the same
+//!   order the XIP window reads, so a programmed word reads back unchanged.
+//! - `.text` executes from this flash, and while a write-class command runs XIP
+//!   answers ERR. [`run`] is `.data`-resident, interrupts masked; [`resident`]
+//!   refuses if it is not (#460, #463).
 
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::target;
 
-/// Register offsets in the `spi0` CSR window. See the table above.
-const PHY: usize = 0x00;
-const STATUS: usize = 0x05;
-const RX: usize = 0x08;
-const TX: usize = 0x0c;
-const HOLD: usize = 0x20;
+/// Generated register offsets in the `spi0` CSR window.
+#[cfg(not(feature = "qemu"))]
+use cynthion_soc_pac::spi0::offset;
 
-const STATUS_RX_READY: u8 = 1 << 0;
-const STATUS_TX_READY: u8 = 1 << 1;
+/// The same offsets under QEMU, where there is no such window and nothing runs them.
+#[cfg(feature = "qemu")]
+mod offset {
+    pub const STATUS: usize = 0x08;
+    pub const CMD: usize = 0x0c;
+    pub const ERRORS: usize = 0x10;
+    pub const DESC: usize = 0x14;
+    pub const ADDR: usize = 0x18;
+    pub const LEN: usize = 0x1c;
+    pub const FLAGS: usize = 0x1e;
+    pub const WAIT_US: usize = 0x20;
+    pub const POLL_US: usize = 0x24;
+    pub const CAL: usize = 0x28;
+    pub const CAL_US: usize = 0x38;
+}
 
-const CMD_READ_DATA: u32 = 0x03;
-const CMD_JEDEC_ID: u32 = 0x9f;
-const CMD_SFDP: u32 = 0x5a;
-const CMD_READ_STATUS1: u32 = 0x05;
-const CMD_WRITE_ENABLE: u32 = 0x06;
-const CMD_PAGE_PROGRAM: u32 = 0x02;
+const OP_RUN: u8 = 1;
+const OP_CALIBRATE: u8 = 2;
+const FLAG_WREN: u8 = 1 << 0;
+const FLAG_WAIT: u8 = 1 << 1;
+
+const STATUS_BUSY: u16 = 1 << 0;
+pub const STATUS_CAL: u16 = 1 << 3;
+pub const STATUS_X4: u16 = 1 << 4;
+const STATUS_SAW_BUSY: u16 = 1 << 5;
+
+const W1: u32 = 0;
+
+/// A transaction descriptor, as `desc()` in `gateware/flash_baseline/spiflash.py`.
+const fn desc(cmd: u32, abits: u32, dummy: u32, read: bool, tail: u32) -> u32 {
+    cmd | 1 << 8 | abits << 10 | W1 << 16 | dummy << 18 | W1 << 23 | (read as u32) << 25
+        | tail << 28
+}
+
+const JEDEC: u32 = desc(0x9f, 0, 0, true, 0);
+const READ_STATUS1: u32 = desc(0x05, 0, 0, true, 0);
+const SFDP: u32 = desc(0x5a, 24, 8, true, 0);
+const FAST_READ: u32 = desc(0x0b, 24, 8, true, 1);
+const PAGE_PROGRAM: u32 = desc(0x02, 24, 0, false, 0);
 /// 4 KiB. There is deliberately no block or chip erase in this driver.
-const CMD_SECTOR_ERASE: u32 = 0x20;
+const SECTOR_ERASE: u32 = desc(0x20, 24, 0, false, 0);
 
 /// Status register 1: WIP, and the write-enable latch.
 pub const SR1_BUSY: u8 = 0x01;
@@ -86,64 +66,33 @@ pub const SR1_WEL: u8 = 0x02;
 
 pub const SECTOR_SIZE: u32 = 4096;
 pub const PAGE_SIZE: u32 = 256;
+pub const MAX_PROGRAM_WORDS: usize = 64;
 
-/// The longest program this driver takes, so the transfer list is a fixed array
-/// on the stack: [`burst`] runs from block RAM and must not reach a heap or a
-/// `&str`, and there is neither here anyway.
-pub const MAX_PROGRAM_WORDS: usize = 16;
+/// The 4 KiB sector erase and program may touch, and nothing else: the first of the
+/// #590 test region (0x280000-0x37ffff, docs/chips/flash-baseline.md).
+pub const SCRATCH: u32 = 0x0028_0000;
 
-/// The 4 KiB sector erase and program may touch, and nothing else.
-///
-/// 2 MiB in: clear of the bitstream at offset 0 and of the image at 0xb0000,
-/// and well below 4 MiB, where the address wraps back onto the bitstream while
-/// appearing to be nowhere near it. Same sector as `scripts/riscv/riscv_firmware.py`.
-pub const SCRATCH: u32 = 0x0020_0000;
+/// BUSY bound for a sector erase: tSE max 400 ms, x1.25. Expiry: the gateware's WDOG.
+const ERASE_WAIT_US: u32 = 500_000;
+/// The same for a page program: tPP max 3 ms, x1.25.
+const PROGRAM_WAIT_US: u32 = 3_750;
+/// A command with no poll: three maximal transactions at SCK >= 90 MHz < 100 us.
+const SHORT_US: u32 = 100;
 
-/// `SPIFlashMemoryMap.MMAP_DEFAULT_TIMEOUT`: how long the memory map keeps chip
-/// select asserted after a burst, in `sync` cycles.
-const MMAP_CS_HOLD_CYCLES: u32 = 256;
-
-/// Waiting on the TX or RX FIFO.
-///
-/// One 32-bit transfer behind a full 16-deep FIFO is 17 x 32 bits at
-/// SCK = sync/2 (`FLASH_DIVISOR = 0`), i.e. 1088 `sync` cycles. 1.25x. On
-/// expiry the command gives up and names the side that stalled.
-const FIFO_LIMIT_CYCLES: u32 = 1360;
-
-/// Waiting for WIP to clear after a sector erase. W25Q32 tSE(max) is 400 ms;
-/// 1.25x. On expiry `Error::NeverIdle` carries the elapsed cycles.
-const ERASE_LIMIT_CYCLES: u32 = target::TIME_HZ / 2;
-
-/// The same, for a page program. tPP(max) 3 ms, 1.25x.
-const PROGRAM_LIMIT_CYCLES: u32 = target::TIME_HZ / 256;
-
-/// How long WIP has to rise before the operation counts as never started.
-/// 1 ms against a tSE of 45 ms typical -- 45x clear of the shortest real one,
-/// and the part sets WIP on the command's chip-select rise, so this is orders
-/// above what it takes.
-const START_LIMIT_CYCLES: u32 = target::TIME_HZ / 1000;
-
-/// A sector erase this fast did not erase anything: tSE is 45 ms typical, so
-/// 1 ms is 45x under the typical case. The C firmware saw exactly this -- an
-/// erase "completing" 14,000 times too fast -- while the command path was
-/// broken, so the check is the first thing a caller should report.
+/// An erase this fast erased nothing: tSE is 45 ms typical, 1 ms is 45x under it.
 pub const ERASE_FLOOR_US: u32 = 1000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    /// The TX FIFO never made room: the PHY is not draining it.
-    TxStalled,
-    /// No RX word came back: a transfer was accepted and never completed.
-    RxStalled,
-    /// WIP never cleared, with the cycles waited.
-    NeverIdle(u32),
-    /// Write Enable did not latch, with the status byte that says so.
-    NotEnabled(u8),
+    /// The peripheral refused or ended the command with this code (see the doc).
+    Code(u8),
+    /// The status never went idle: the CPU's own bound, past the gateware's.
+    Timeout,
     /// An erase or program address outside [`SCRATCH`].
     OutsideScratch,
     /// A page program that would wrap onto its own start.
     CrossesPage,
-    /// The transfer loop linked into the flash window it drives.
+    /// The command loop linked into the flash window it drives.
     NotResident,
     /// WIP never rose: the part did not take the erase or program.
     NeverStarted,
@@ -152,311 +101,227 @@ pub enum Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Error::TxStalled => write!(f, "TX FIFO never drained"),
-            Error::RxStalled => write!(f, "no RX word came back"),
-            Error::NeverIdle(cycles) => {
-                write!(f, "still busy after {} us", cycles / (target::TIME_HZ / 1_000_000))
-            }
-            Error::NotEnabled(sr1) => write!(f, "write enable did not latch (sr1 {:02x})", sr1),
+            Error::Code(code) => write!(f, "{}", code_name(*code)),
+            Error::Timeout => write!(f, "the peripheral never went idle"),
             Error::OutsideScratch => write!(
                 f, "outside the reserved sector at {:06x}", SCRATCH),
             Error::CrossesPage => write!(f, "a page program cannot cross a page boundary"),
             Error::NotResident => write!(
-                f, "the transfer loop is in the flash window; it must be in block RAM"),
+                f, "the command loop is in the flash window; it must be in block RAM"),
             Error::NeverStarted => write!(f, "WIP never rose; the part did not take the command"),
         }
     }
 }
 
-/// One transfer of a command: `len` bits, `mask` on the DQ drivers, `data` out
-/// and, on return, the word the flash sent back.
-///
-/// SPI is full duplex, so a send and a receive are the same operation with
-/// different masks and every transfer produces an RX word.
-#[derive(Clone, Copy)]
-pub struct Op {
-    len: u8,
-    mask: u8,
-    data: u32,
-}
-
-impl Op {
-    /// `len` bits out on DQ0.
-    const fn send(len: u8, data: u32) -> Op {
-        Op { len, mask: 1, data }
-    }
-
-    /// `len` bits in, every DQ released so the flash can drive them.
-    const fn recv(len: u8) -> Op {
-        Op { len, mask: 0, data: 0 }
+fn code_name(code: u8) -> &'static str {
+    match code {
+        1 => "BUSY: a command is in flight",
+        2 => "ARG: bad op, length or wait",
+        3 => "NOT_READY: not calibrated or not locked",
+        7 => "WDOG: a transaction or the BUSY poll ran past its bound",
+        8 => "HANDSHAKE: the flash clock domain stopped answering",
+        11 => "ABORT",
+        13 => "CAL_NONE: no clean capture point",
+        _ => "unknown code",
     }
 }
 
-/// THE WHOLE COMMAND, and its wait, from block RAM. See the module's layout.
+/// One command, start to idle, from block RAM with interrupts masked.
 ///
-/// - Between `hold(1)` and `hold(0)` nothing may touch the flash window: chip
-///   select follows the crossbar's grant, so a memory-map read inside the
-///   window takes the grant and the part reads our opcode as more of its burst.
-/// - `busy_limit` non-zero polls WIP here and returns the cycles it took. The
-///   part answers only the status register while WIP is set, so a wait anywhere
-///   else cannot be fetched for the 45 ms of a sector erase.
-/// - Therefore: no formatting, no calls out, no `&str`, no nested `fn` -- a
-///   nested one links into `.text`. #460.
+/// - No calls out: a call is a fetch from `.text`, which is the flash, which answers
+///   ERR while a write-class command runs. Byte stores and `mcycle` only.
+/// - `limit` in `mcycle`s; returns the final status, or `Err(Timeout)`.
 ///
 /// # Safety
 /// `base` must be the SPI0 CSR window.
 #[inline(never)]
-#[unsafe(link_section = ".data.flash_burst")]
-unsafe fn burst(base: usize, ops: &mut [Op], busy_limit: u32) -> Result<u32, Error> {
-    let phy = (base + PHY) as *mut u32;
-    let status = (base + STATUS) as *const u8;
-    let rx = (base + RX) as *const u32;
-    let tx = (base + TX) as *mut u32;
-    let hold = (base + HOLD) as *mut u8;
-
-    // `mcycle`, inline. A call to `metrics::mcycle` would leave RAM.
+#[unsafe(link_section = ".data.flash_run")]
+unsafe fn run(base: usize, d: u32, addr: u32, len: u32, flags: u8, wait_us: u32,
+              op: u8, limit: u32) -> Result<u16, ()> {
+    macro_rules! w8 {
+        ($off:expr, $v:expr) => {
+            unsafe { write_volatile((base + $off) as *mut u8, $v as u8) }
+        };
+    }
+    macro_rules! w32 {
+        ($off:expr, $v:expr) => {{
+            let v: u32 = $v;
+            w8!($off, v);
+            w8!($off + 1, v >> 8);
+            w8!($off + 2, v >> 16);
+            w8!($off + 3, v >> 24);
+        }};
+    }
     macro_rules! cycles {
         () => {{
             let value: u32;
             // SAFETY: a read of an implemented, side-effect-free counter.
             #[allow(unused_unsafe)]
             unsafe {
-                core::arch::asm!("csrr {0}, mcycle", out(reg) value,
-                                 options(nomem, nostack));
+                core::arch::asm!("csrr {0}, mcycle", out(reg) value, options(nomem, nostack));
             }
             value
         }};
     }
-
-    let mut poll = [Op::send(8, CMD_READ_STATUS1), Op::recv(8)];
-    let mut result = Ok(0);
+    w32!(offset::DESC, d);
+    w32!(offset::ADDR, addr);
+    w8!(offset::LEN, len);
+    w8!(offset::LEN + 1, len >> 8);
+    w8!(offset::FLAGS, flags);
+    w32!(offset::WAIT_US, wait_us);
+    w8!(offset::CMD, op);
     let started = cycles!();
-    let mut command = true;
-    // WIP must be SEEN SET before a clear reading ends the wait. The part sets
-    // it on the command's chip-select rise, so the first poll can beat it -- and
-    // a wait that ends before the operation starts returns the CPU to a flash
-    // window that stops answering microseconds later.
-    let mut saw_busy = false;
-
-    unsafe {
-        write_volatile(hold, 0);
-        // LET THE MEMORY MAP LET GO FIRST.
-        //
-        // `SPIFlashMemoryMap` keeps chip select asserted for
-        // MMAP_DEFAULT_TIMEOUT = 256 `sync` cycles after every burst so a
-        // sequential read can skip the command and address phases. Chip select
-        // at the pad follows the crossbar's grant, and the grant does not move
-        // to this controller until it has a transfer ready -- so without this
-        // wait CS never rises between the map's read and our opcode, and the
-        // flash takes our command bytes as more of its burst. Measured: JEDEC
-        // read back `140c34` and SFDP `20469420`, both plausible flash content
-        // rather than registers.
-        //
-        // 2x the timeout, counted from here rather than from the map's last
-        // transfer -- which was the instruction fetch that got us in here, so
-        // this is the conservative end. Only before the first command: nothing
-        // reaches the memory map after that until this function returns.
-        let idle = cycles!();
-        while cycles!().wrapping_sub(idle) < 2 * MMAP_CS_HOLD_CYCLES {}
-
-        'command: loop {
-            let list: &mut [Op] = if command { &mut *ops } else { &mut poll };
-
-            write_volatile(hold, 1);
-            for op in list.iter_mut() {
-                write_volatile(phy, u32::from(op.len) | (1 << 6) | (u32::from(op.mask) << 10));
-
-                let start = cycles!();
-                while read_volatile(status) & STATUS_TX_READY == 0 {
-                    if cycles!().wrapping_sub(start) > FIFO_LIMIT_CYCLES {
-                        result = Err(Error::TxStalled);
-                        write_volatile(hold, 0);
-                        break 'command;
-                    }
-                }
-                write_volatile(tx, op.data);
-
-                let start = cycles!();
-                while read_volatile(status) & STATUS_RX_READY == 0 {
-                    if cycles!().wrapping_sub(start) > FIFO_LIMIT_CYCLES {
-                        result = Err(Error::RxStalled);
-                        write_volatile(hold, 0);
-                        break 'command;
-                    }
-                }
-                // Reading POPS the RX FIFO, which is why this window must not
-                // be cached.
-                op.data = read_volatile(rx);
-            }
-            write_volatile(hold, 0);
-
-            if busy_limit == 0 {
-                break;
-            }
-            let elapsed = cycles!().wrapping_sub(started);
-            if !command {
-                if poll[1].data as u8 & SR1_BUSY != 0 {
-                    saw_busy = true;
-                } else if saw_busy {
-                    result = Ok(elapsed);
-                    break;
-                } else if elapsed > START_LIMIT_CYCLES {
-                    // WIP never rose: the part did not take the command, and
-                    // returning here would hand the CPU back to a window the
-                    // part is about to stop answering.
-                    result = Err(Error::NeverStarted);
-                    break;
-                }
-            }
-            if elapsed > busy_limit {
-                result = Err(Error::NeverIdle(elapsed));
-                break;
-            }
-            command = false;
+    loop {
+        // Low byte first: it latches the shadow the high byte comes from.
+        let lo = unsafe { read_volatile((base + offset::STATUS) as *const u8) } as u16;
+        let hi = unsafe { read_volatile((base + offset::STATUS + 1) as *const u8) } as u16;
+        let status = lo | hi << 8;
+        if status & STATUS_BUSY == 0 {
+            // A speculative fetch into the window during the command got ERR: drop
+            // whatever the I-cache kept of it before returning into the window.
+            // SAFETY: an instruction-stream fence; no memory operands.
+            unsafe { core::arch::asm!("fence.i", options(nostack)) };
+            return Ok(status);
+        }
+        if cycles!().wrapping_sub(started) > limit {
+            return Err(());
         }
     }
-    result
 }
 
-/// The one handle on the controller.
+/// The one handle on the command port.
 #[derive(Clone, Copy)]
 pub struct Flash {
     base: usize,
+    buf: usize,
 }
 
 impl Flash {
     /// `None` where the target has no such peripheral -- QEMU's `virt`.
     pub fn take() -> Option<Flash> {
-        target::SPI0_BASE.map(|base| Flash { base })
+        match (target::SPI0_BASE, target::SPI0_BUF_BASE) {
+            (Some(base), Some(buf)) => Some(Flash { base, buf }),
+            _ => None,
+        }
     }
 
-    /// One command, chip select held for it and interrupts masked over it.
-    ///
-    /// Masked because an RTIC handler is `.text` and `.text` is the flash
-    /// window: a handler inside a chip-select window is the same fault as a
-    /// cache miss inside one.
-    fn run(&self, ops: &mut [Op]) -> Result<(), Error> {
-        self.run_until_idle(ops, 0).map(|_| ())
+    fn r8(&self, off: usize) -> u8 {
+        // SAFETY: inside the generated SPI0 window.
+        unsafe { read_volatile((self.base + off) as *const u8) }
     }
 
-    /// The same, then WIP polled to completion before returning to any code in
-    /// the flash window. Returns the cycles the part was busy.
-    fn run_until_idle(&self, ops: &mut [Op], limit: u32) -> Result<u32, Error> {
+    fn r32(&self, off: usize) -> u32 {
+        (0..4).fold(0, |acc, i| acc | (self.r8(off + i) as u32) << (8 * i))
+    }
+
+    /// Buffer word `i` (received bytes), little-endian.
+    fn buf_word(&self, i: usize) -> u32 {
+        // SAFETY: inside the 256 B SPI0_BUF window; callers keep i < 64.
+        unsafe { read_volatile((self.buf + 4 * i) as *const u32) }
+    }
+
+    fn set_buf_word(&self, i: usize, value: u32) {
+        // SAFETY: as `buf_word`; a write lands in the bytes to send.
+        unsafe { write_volatile((self.buf + 4 * i) as *mut u32, value) }
+    }
+
+    /// Run one command; Ok carries the status (saw_busy etc.).
+    fn command(&self, d: u32, addr: u32, len: u32, flags: u8, wait_us: u32, op: u8)
+               -> Result<u16, Error> {
         resident()?;
+        let us = wait_us.max(SHORT_US);
+        // CPU bound: the gateware's own backstop (wait x 1.25 + 64 us) plus 64 us.
+        let limit = (us + us / 4 + 128).saturating_mul(target::TIME_HZ / 1_000_000);
         // SAFETY: `base` came from the generated memory map.
-        riscv::interrupt::free(|| unsafe { burst(self.base, ops, limit) })
+        let status = riscv::interrupt::free(|| unsafe {
+            run(self.base, d, addr, len, flags, wait_us, op, limit)
+        })
+        .map_err(|()| Error::Timeout)?;
+        match ((status >> 8) & 0xf) as u8 {
+            0 => Ok(status),
+            code => Err(Error::Code(code)),
+        }
     }
 
     /// The JEDEC id: `0x9f`, then three bytes. `ef4016` on this board.
     pub fn jedec_id(&self) -> Result<u32, Error> {
-        // Right-aligned. The PHY left-justifies, so `0x9f << 24` would clock
-        // out eight zero bits -- the mistake this comment exists for.
-        let mut ops = [Op::send(8, CMD_JEDEC_ID), Op::recv(8), Op::recv(8), Op::recv(8)];
-        self.run(&mut ops)?;
-        Ok(ops[1..4].iter().fold(0, |id, op| (id << 8) | (op.data & 0xff)))
+        self.command(JEDEC, 0, 3, 0, 0, OP_RUN)?;
+        let w = self.buf_word(0);
+        Ok((w & 0xff) << 16 | (w & 0xff00) | (w >> 16) & 0xff)
     }
 
     /// Status register 1. Bit 0 is WIP, bit 1 the write-enable latch.
     pub fn status1(&self) -> Result<u8, Error> {
-        let mut ops = [Op::send(8, CMD_READ_STATUS1), Op::recv(8)];
-        self.run(&mut ops)?;
-        Ok((ops[1].data & 0xff) as u8)
+        self.command(READ_STATUS1, 0, 1, 0, 0, OP_RUN)?;
+        Ok(self.buf_word(0) as u8)
     }
 
-    /// The first eight bytes of the SFDP space: `0x5a`, a 24-bit address, then
-    /// ONE dummy byte before the data.
-    ///
-    /// SFDP is what declares the 4 MiB every address above it aliases back
-    /// into, so this is the one authority on the part's size that is not a
-    /// constant somewhere.
+    /// The first eight bytes of the SFDP space: `0x5a`, a 24-bit address, 8 dummy clocks.
     pub fn sfdp(&self, offset: u32, out: &mut [u8; 8]) -> Result<(), Error> {
-        let mut ops = [Op::recv(8); 10];
-        ops[0] = Op::send(32, (CMD_SFDP << 24) | (offset & 0x00ff_ffff));
-        self.run(&mut ops)?;
-        for (byte, op) in out.iter_mut().zip(&ops[2..]) {
-            *byte = (op.data & 0xff) as u8;
+        self.command(SFDP, offset & 0x00ff_ffff, 8, 0, 0, OP_RUN)?;
+        let words = [self.buf_word(0), self.buf_word(1)];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = (words[i / 4] >> (8 * (i % 4))) as u8;
         }
         Ok(())
     }
 
-    /// One 32-bit word at `offset`, over the CONTROLLER rather than the memory
-    /// map -- so a readback after a program owes nothing to the D-cache.
-    ///
-    /// Byte order matches the memory map's (`SPIFlashMemoryMap.reverse_bytes`),
-    /// so a word written by [`Flash::page_program`] reads back identically
-    /// either way.
+    /// One 32-bit word at `offset` over the command port (0Bh), not XIP, so a
+    /// readback owes nothing to the caches. Same byte order as the window.
     pub fn read_word(&self, offset: u32) -> Result<u32, Error> {
-        let mut ops = [Op::recv(8); 5];
-        ops[0] = Op::send(32, (CMD_READ_DATA << 24) | (offset & 0x00ff_ffff));
-        self.run(&mut ops)?;
-        Ok(ops[1..5]
-            .iter()
-            .enumerate()
-            .fold(0, |word, (index, op)| word | ((op.data & 0xff) << (8 * index))))
+        self.command(FAST_READ, offset & 0x00ff_ffff, 4, 0, 0, OP_RUN)?;
+        Ok(self.buf_word(0))
     }
 
-    /// Write Enable, its own chip-select assertion. The flash clears the latch
-    /// itself when the operation completes, so it is one per operation.
-    fn write_enable(&self) -> Result<(), Error> {
-        self.run(&mut [Op::send(8, CMD_WRITE_ENABLE)])?;
-        let sr1 = self.status1()?;
-        if sr1 & SR1_WEL == 0 {
-            return Err(Error::NotEnabled(sr1));
-        }
-        Ok(())
-    }
-
-    /// Erase the 4 KiB sector containing `offset`. Returns the cycles it took.
-    ///
-    /// WIP is polled, not waited out: tSE is 45 ms typical against 400 ms
-    /// maximum, so any fixed delay is either mostly idle or corrupting.
+    /// Erase the 4 KiB sector containing `offset`. Returns the BUSY time in us.
     pub fn sector_erase(&self, offset: u32) -> Result<u32, Error> {
         scratch_only(offset)?;
-        self.write_enable()?;
-        // Opcode and 24-bit address as ONE 32-bit transfer: the four bytes the
-        // flash wants, in order, inside a single chip-select window.
-        self.run_until_idle(
-            &mut [Op::send(32, (CMD_SECTOR_ERASE << 24) | (offset & 0x00ff_ffff))],
-            ERASE_LIMIT_CYCLES)
+        let status = self.command(SECTOR_ERASE, offset & 0x00ff_ffff, 0,
+                                  FLAG_WREN | FLAG_WAIT, ERASE_WAIT_US, OP_RUN)?;
+        self.busy_time(status)
     }
 
-    /// Program up to one 256-byte page. Returns the cycles it took.
-    ///
-    /// A page program cannot cross a page boundary -- the address wraps within
-    /// the page and the overflow silently overwrites its own start -- so the
-    /// bound is checked here rather than trusted to the caller.
+    /// Program up to one 256-byte page. Returns the BUSY time in us.
     pub fn page_program(&self, offset: u32, words: &[u32]) -> Result<u32, Error> {
         scratch_only(offset)?;
-        if words.len() > MAX_PROGRAM_WORDS {
+        if words.len() > MAX_PROGRAM_WORDS
+            || offset % PAGE_SIZE + words.len() as u32 * 4 > PAGE_SIZE
+        {
             return Err(Error::CrossesPage);
         }
-        let bytes = words.len() as u32 * 4;
-        if offset % PAGE_SIZE + bytes > PAGE_SIZE {
-            return Err(Error::CrossesPage);
+        for (i, word) in words.iter().enumerate() {
+            self.set_buf_word(i, *word);
         }
-        self.write_enable()?;
+        let status = self.command(PAGE_PROGRAM, offset & 0x00ff_ffff, words.len() as u32 * 4,
+                                  FLAG_WREN | FLAG_WAIT, PROGRAM_WAIT_US, OP_RUN)?;
+        self.busy_time(status)
+    }
 
-        let mut ops = [Op::send(32, 0); MAX_PROGRAM_WORDS + 1];
-        ops[0] = Op::send(32, (CMD_PAGE_PROGRAM << 24) | (offset & 0x00ff_ffff));
-        for (op, word) in ops[1..].iter_mut().zip(words) {
-            // Byte-reversed on the way out to match the reversal the memory map
-            // applies on the way in. Without it a word written as 0x11223344
-            // reads back as 0x44332211 -- a byte-order bug that looks exactly
-            // like a flash fault.
-            op.data = word.swap_bytes();
+    fn busy_time(&self, status: u16) -> Result<u32, Error> {
+        if status & STATUS_SAW_BUSY == 0 {
+            return Err(Error::NeverStarted);
         }
-        self.run_until_idle(&mut ops[..=words.len()], PROGRAM_LIMIT_CYCLES)
+        Ok(self.r32(offset::POLL_US))
+    }
+
+    /// Rerun the capture calibration (XIP answers ERR while it runs). Bounded by the
+    /// scan's own length, which the gateware reports (`cal_us`).
+    pub fn calibrate(&self) -> Result<(), Error> {
+        let bound = self.r8(offset::CAL_US) as u32 | (self.r8(offset::CAL_US + 1) as u32) << 8;
+        self.command(0, 0, 0, 0, bound, OP_CALIBRATE).map(|_| ())
+    }
+
+    /// (status, cal register, sticky errors): the calibration and health readout.
+    pub fn health(&self) -> (u16, u32, u8) {
+        let status = self.r8(offset::STATUS) as u16 | (self.r8(offset::STATUS + 1) as u16) << 8;
+        (status, self.r32(offset::CAL), self.r8(offset::ERRORS))
     }
 }
 
-/// [`burst`] is in the flash window it drives, which is a refusal and not a
-/// warning: the alternative is the CPU erasing the ground it stands on.
-///
-/// Checked rather than trusted to the attribute, because nothing else would
-/// notice an outlined branch or a dropped `link_section`.
+/// [`run`] is in the flash window it drives: a refusal, not a warning.
 fn resident() -> Result<(), Error> {
     match target::FLASH_WINDOW {
-        Some((base, size)) if (burst as *const () as usize).wrapping_sub(base) < size => {
+        Some((base, size)) if (run as *const () as usize).wrapping_sub(base) < size => {
             Err(Error::NotResident)
         }
         _ => Ok(()),
@@ -469,10 +334,4 @@ fn scratch_only(offset: u32) -> Result<(), Error> {
         return Err(Error::OutsideScratch);
     }
     Ok(())
-}
-
-/// Microseconds from a cycle count, for reporting an erase or a program
-/// against the datasheet figures those bounds came from.
-pub fn micros(cycles: u32) -> u32 {
-    cycles / (target::TIME_HZ / 1_000_000)
 }
