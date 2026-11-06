@@ -839,9 +839,7 @@ class AwtoSoc(Elaboratable):
         m.d.comb += [flash.locked.eq(car.locked), car.flash_phasestep.eq(flash.phasestep),
                      flash.mclk.eq(car.flash_mclk), intc.lines[IRQ_FLASH].eq(flash.irq)]
         decoder.add(flash.xip, addr=FLASH_BASE, name="spiflash")
-        flash_csr_bridge = WishboneCSRBridge(flash.bus, data_width=32)
-        m.submodules.flash_csr_bridge = flash_csr_bridge
-        decoder.add(flash_csr_bridge.wb_bus, addr=FLASH_CSR_BASE, name="spi0")
+        decoder.add(flash.bus, addr=FLASH_CSR_BASE, name="spi0")
         decoder.add(flash.buf, addr=FLASH_BUF_BASE, name="spi0_buf")
 
         # HyperRAM (#588): `peripherals/hyperram.py`. Stream ring tied off until #580.

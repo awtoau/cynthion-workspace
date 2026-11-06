@@ -28,7 +28,7 @@ from amaranth.lib         import io, memory, wiring
 from amaranth.lib.cdc     import FFSynchronizer
 from amaranth.lib.fifo    import AsyncFIFO
 from amaranth.lib.wiring  import In, Out
-from amaranth_soc         import csr, wishbone
+from amaranth_soc         import wishbone
 from amaranth_soc.memory  import MemoryMap
 
 _spec = importlib.util.spec_from_file_location(
@@ -45,7 +45,6 @@ SCK_MHZ = 180.0
 FLASH_BYTES = 4 << 20
 LINE_BYTES = 64
 BUF_BYTES = 256
-APPLET_ID = 0x464C5331          # "FLS1"
 JEDEC_ID = 0xEF4016             # W25Q32JV-IQ (docs/chips/w25q32-config-flash.md)
 # Calibration reference: the firmware image (`.text` LMA), which every SoC boot needs.
 CAL_REF_ADDR = 0x0B0000
@@ -54,11 +53,18 @@ CAL_LATS = 8                    # lat 0..7 for the x1 scan (#590 harness range)
 CAL_MIN_WIDTH = 2               # clean points; fewer is no eye
 
 OP_RUN, OP_CALIBRATE = 1, 2
-(CODE_OK, CODE_BUSY, CODE_ARG, CODE_NOT_READY, CODE_WDOG, CODE_ABORT, CODE_HANDSHAKE,
- CODE_CAL_NONE) = 0, 1, 2, 3, 7, 11, 8, 13
-(ERR_OP, ERR_WDOG, ERR_CAL, ERR_XIP_BLOCKED, ERR_XIP_WRITE, ERR_XIP_FILL, ERR_PLL_LOST,
- ERR_HANDSHAKE) = range(8)
-N_ERR = 8
+(CODE_OK, CODE_BUSY, CODE_ARG, CODE_NOT_READY, CODE_WDOG, CODE_ABORT,
+ CODE_CAL_NONE) = 0, 1, 2, 3, 7, 11, 13
+(ERR_OP, ERR_WDOG, ERR_CAL, ERR_XIP_BLOCKED, ERR_XIP_WRITE, ERR_XIP_FILL,
+ ERR_PLL_LOST) = range(7)
+N_ERR = 7
+# Register words (`bus`, byte offset = 4 x word); fields in docs/chips/flash-soc-peripheral.md.
+(REG_STATUS, REG_CMD, REG_CTRL, REG_IRQ_EN, REG_DESC, REG_ADDR, REG_LEN, REG_WAIT_US,
+ REG_POLL_US, REG_CAL, REG_CAL_US) = range(11)
+REG_BYTES = 64
+# Command-port descriptors carry no QPI opcode (bit 9), no dual address (bit 16) and no
+# dual/DTR data (bit 23): x1 and x4 only, so the core's other width paths fold away.
+DESC_MASK = 0xFFFFFFFF & ~(1 << 9 | 1 << 16 | 1 << 23)
 
 XIP_DESC = desc(0xEB, abits=32, aw=W4, dummy=4, dw=W4, read=True, tail=1)
 JEDEC_DESC = desc(0x9F, dw=W1, read=True)
@@ -104,14 +110,6 @@ def xip_worst_sync_cycles(*, sync_mhz, sck_mhz=SCK_MHZ):
     return -(-int(sck * sync_mhz) // int(sck_mhz)) + CDC_SYNC
 
 
-def _rw(width, init=0):
-    return csr.Register({"v": csr.Field(csr.action.RW, width, init=init)}, access="rw")
-
-
-def _ro(width):
-    return csr.Register({"v": csr.Field(csr.action.R, width)}, access="r")
-
-
 class _Engine(Elaboratable):
     """Everything on the flash side. Written in `sync`; renamed to `fsck` by `Flash`."""
 
@@ -125,11 +123,10 @@ class _Engine(Elaboratable):
         # command, static while `start` is pending
         self.start, self.abort = Signal(), Signal()
         self.op, self.desc, self.addr = Signal(4), Signal(32), Signal(24)
-        self.len, self.wren, self.wait, self.wait_us = Signal(9), Signal(), Signal(), Signal(32)
+        self.len, self.wren, self.wait, self.wait_us = Signal(9), Signal(), Signal(), Signal(24)
         # results, static once `done` pulses
         self.done = Signal()
-        self.r_code, self.r_poll_us, self.r_saw_busy = Signal(4), Signal(32), Signal()
-        self.r_state = Signal(16)
+        self.r_code, self.r_poll_us, self.r_saw_busy = Signal(4), Signal(24), Signal()
         # XIP: request (payload static until the next), words out to the sync FIFO
         self.xip_start, self.xip_line, self.xip_id = Signal(), Signal(16), Signal(2)
         self.xip_we, self.xip_word, self.xip_idx = Signal(), Signal(32), Signal(4)
@@ -191,7 +188,12 @@ class _Engine(Elaboratable):
         b = tx.rx_byte
         k = nbytes[0:2]
         new_word = Signal(32)
-        m.d.comb += new_word.eq(Mux(k == 0, b, acc | (b << Cat(Const(0, 3), k))))
+        # byte k lands in lane k; lane 0 zero-extends, so lanes above k read 0
+        m.d.comb += new_word.eq(Mux(k == 0, b, acc))
+        with m.Switch(k):
+            for lane in range(1, 4):
+                with m.Case(lane):
+                    m.d.comb += new_word.word_select(lane, 8).eq(b)
         m.d.comb += ref_rp.addr.eq(nbytes[0:6])
         with m.If(tx.rx_valid):
             s += [nbytes.eq(nbytes + 1), acc.eq(new_word)]
@@ -232,7 +234,7 @@ class _Engine(Elaboratable):
         X1, X4 = 0, 1
         stage, from_cmd = Signal(), Signal()
         lat_lo, lat_hi, step_i = Signal(4), Signal(4), Signal(range(n + 1))
-        key, run_s, run_l, best_s, best_l = (Signal(12) for _ in range(5))
+        key, run_s, run_l, best_s, best_l = (Signal(range(CAL_LATS * n + 1)) for _ in range(5))
         best_x, target, lat_off = Signal(), Signal(range(n)), Signal(4)
 
         def scan_init(lo, hi):
@@ -250,7 +252,7 @@ class _Engine(Elaboratable):
                        ~mismatch & (nbytes == CAL_REF_BYTES))
 
         # ---- command results
-        poll_us, us_div = Signal(32), Signal(range(us_cycles))
+        poll_us, us_div = Signal(24), Signal(range(us_cycles))
         res_out = Signal()
 
         def complete(code):
@@ -268,12 +270,9 @@ class _Engine(Elaboratable):
             with m.If(from_cmd):
                 complete(Mux(valid, CODE_OK, CODE_CAL_NONE))
 
-        state = Signal(5)
-
         def end(code):
             """End the command now: core reset, result, back to PICK."""
             m.d.comb += tx_rst.eq(1)
-            s.__iadd__(self.r_state.eq(Cat(state, Const(0, 3), tx.phase)))
             complete(code)
             m.next = "PICK"
 
@@ -455,17 +454,19 @@ class _Engine(Elaboratable):
                                   Mux(lat == LAT_MAX, LAT_MAX, lat + 1))
                         m.next = "CAL_PROBE"
 
-        m.d.comb += [state.eq(fsm.state),
-                     self.busy.eq(~fsm.ongoing("PICK") | cmd_pending | cal_pending)]
+        m.d.comb += [self.busy.eq(~fsm.ongoing("PICK") | cmd_pending | cal_pending)]
         return m
 
 
 class Flash(wiring.Component):
-    """CSR `bus`, XIP `xip` (read-only Wishbone), command data `buf`, `irq`, `boot_ready`.
+    """Registers `bus`, XIP `xip` (read-only), command data `buf` (all Wishbone), `irq`,
+    `boot_ready`.
 
-    `boot_ready` (sync) holds the CPU until the first calibration has finished.
-    `sim=True` drops pins, DCCA and USRMCLK: the bench drives `fsck`/`fcap`/`fcapn`
-    and models the part on the `pad_*` signals.
+    - `bus`: 32-bit word registers, `REGS`; plain Wishbone, not amaranth-soc CSRs (a
+      byte-wide CSR multiplexer cost more cells than the registers, #593).
+    - `boot_ready` (sync) holds the CPU until the first calibration has finished.
+    - `sim=True` drops pins, DCCA and USRMCLK: the bench drives `fsck`/`fcap`/`fcapn`
+      and models the part on the `pad_*` signals.
     """
 
     def __init__(self, *, sck_mhz=SCK_MHZ, sync_mhz=60.0, n_steps=32, sim=False,
@@ -481,58 +482,23 @@ class Flash(wiring.Component):
         self.pad_o, self.pad_oe, self.pad_i = Signal(4), Signal(4), Signal(4)
         self.pad_cs, self.pad_ck_en = Signal(), Signal()
 
-        r = self._regs = {}
-        r["id"] = (0x00, _ro(32))
-        r["sck_khz"] = (0x04, _ro(32))
-        r["status"] = (0x08, csr.Register({
-            "busy": csr.Field(csr.action.R, 1), "ready": csr.Field(csr.action.R, 1),
-            "locked": csr.Field(csr.action.R, 1), "cal_valid": csr.Field(csr.action.R, 1),
-            "cal_x4": csr.Field(csr.action.R, 1), "saw_busy": csr.Field(csr.action.R, 1),
-            "_pad": csr.Field(csr.action.R, 2),
-            "code": csr.Field(csr.action.R, 4), "op": csr.Field(csr.action.R, 4)},
-            access="r"))
-        r["cmd"] = (0x0c, csr.Register({"op": csr.Field(csr.action.W, 4)}, access="w"))
-        r["ctrl"] = (0x0d, csr.Register({"abort": csr.Field(csr.action.W, 1)}, access="w"))
-        r["events"] = (0x0e, csr.Register({"v": csr.Field(csr.action.RW1C, 2)}, access="rw"))
-        r["irq_en"] = (0x0f, _rw(2))
-        r["errors"] = (0x10, csr.Register({"v": csr.Field(csr.action.RW1C, N_ERR)},
-                                          access="rw"))
-        r["desc"] = (0x14, _rw(32))
-        r["addr"] = (0x18, _rw(24))
-        r["len"] = (0x1c, _rw(9))
-        r["flags"] = (0x1e, csr.Register({
-            "wren": csr.Field(csr.action.RW, 1), "wait": csr.Field(csr.action.RW, 1)},
-            access="rw"))
-        r["wait_us"] = (0x20, _rw(32))
-        r["poll_us"] = (0x24, _ro(32))
-        r["cal"] = (0x28, csr.Register({
-            "step": csr.Field(csr.action.R, 8), "lat": csr.Field(csr.action.R, 4),
-            "xfer": csr.Field(csr.action.R, 1), "_pad": csr.Field(csr.action.R, 3),
-            "width_x1": csr.Field(csr.action.R, 8), "width_x4": csr.Field(csr.action.R, 8)},
-            access="r"))
-        r["steps"] = (0x2c, _ro(8))
-        r["seq"] = (0x30, _ro(16))
-        r["state"] = (0x32, _ro(16))
-        r["xip_fills"] = (0x34, _ro(32))
-        r["cal_us"] = (0x38, _ro(16))
-
-        builder = csr.Builder(addr_width=6, data_width=8)
-        for name, (offset, reg) in r.items():
-            builder.add(name, reg, offset=offset)
-        self._bridge = csr.Bridge(builder.as_memory_map())
-        self._line = memory.Memory(shape=32, depth=LINE_BYTES // 4, init=[])
-        self._txbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[])
-        self._rxbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[])
+        # Block RAM, not LUT RAM: logic cells are the scarce resource (#593).
+        ebr = {"ram_style": "block"}
+        self._line = memory.Memory(shape=32, depth=LINE_BYTES // 4, init=[], attrs=ebr)
+        self._txbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[], attrs=ebr)
+        self._rxbuf = memory.Memory(shape=32, depth=BUF_BYTES // 4, init=[], attrs=ebr)
 
         super().__init__({
-            "bus":  In(csr.Signature(addr_width=6, data_width=8)),
+            "bus":  In(wishbone.Signature(addr_width=4, data_width=32, granularity=8)),
             "xip":  In(wishbone.Signature(addr_width=20, data_width=32, granularity=8,
                                           features={"err"})),
             "buf":  In(wishbone.Signature(addr_width=6, data_width=32, granularity=8)),
             "irq":  Out(1),
             "boot_ready": Out(1),
         })
-        self.bus.memory_map = self._bridge.bus.memory_map
+        rmap = MemoryMap(addr_width=6, data_width=8)
+        rmap.add_resource(name=("regs",), size=REG_BYTES, resource=self._line)
+        self.bus.memory_map = rmap
         xmap = MemoryMap(addr_width=22, data_width=8)
         xmap.add_resource(name=("flash",), size=FLASH_BYTES, resource=self._line)
         self.xip.memory_map = xmap
@@ -542,12 +508,6 @@ class Flash(wiring.Component):
 
     def elaborate(self, platform):
         m = Module()
-        m.submodules.bridge = self._bridge
-        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
-        r = {name: reg for name, (_off, reg) in self._regs.items()}
-
-        def f(name):
-            return r[name].f.v
 
         eng = _Engine(n_steps=self.n_steps, sck_mhz=self.sck_mhz, jedec_id=self.jedec_id,
                       cal_ref_addr=self.cal_ref_addr)
@@ -613,45 +573,62 @@ class Flash(wiring.Component):
         ready_s, cal_valid_s, cal_x4_s = (to_sync("ready", eng.ready),
                                           to_sync("calv", eng.cal_valid),
                                           to_sync("calx4", eng.cal_x4))
-        busy_s, locked_s = to_sync("ebusy", eng.busy), to_sync("locked", self.locked)
+        locked_s = to_sync("locked", self.locked)
         cal_s = to_sync("cal", Cat(eng.cal_step, eng.cal_lat, eng.cal_xfer, Const(0, 3),
                                    eng.width_x1, eng.width_x4))
         done_s = toggle_out("done", eng.done)
-        m.d.comb += [self.boot_ready.eq(ready_s),
-                     r["cal"].f.step.r_data.eq(cal_s[0:8]), r["cal"].f.lat.r_data.eq(cal_s[8:12]),
-                     r["cal"].f.xfer.r_data.eq(cal_s[12]),
-                     r["cal"].f.width_x1.r_data.eq(cal_s[16:24]),
-                     r["cal"].f.width_x4.r_data.eq(cal_s[24:32]),
-                     f("steps").r_data.eq(self.n_steps),
-                     f("cal_us").r_data.eq(cal_us(self.n_steps, self.sck_mhz)),
-                     f("id").r_data.eq(APPLET_ID),
-                     f("sck_khz").r_data.eq(int(round(self.sck_mhz * 1000)))]
+        m.d.comb += self.boot_ready.eq(ready_s)
 
-        # ---- events, errors, IRQ
+        # ---- registers
+        rb = self.bus
+        desc_r, addr_r, wait_r = Signal(32), Signal(24), Signal(24)
+        len_r, wren_r, waitf_r = Signal(9), Signal(), Signal()
+        irq_en, events, errors = Signal(2), Signal(2), Signal(N_ERR)
+        pending, w_class = Signal(), Signal()
+        code_r, op_r = Signal(4), Signal(4)
+        saw_busy_r, poll_us_r = Signal(), Signal(24)
         ev_set, err_set = Signal(2), Signal(N_ERR)
-        m.d.comb += [r["events"].f.v.set.eq(ev_set), r["errors"].f.v.set.eq(err_set),
-                     ev_set[1].eq(err_set.any()),
-                     self.irq.eq((r["events"].f.v.data & f("irq_en").data).any())]
+        m.d.comb += [ev_set[1].eq(err_set.any()), self.irq.eq((events & irq_en).any())]
+
+        wr = rb.cyc & rb.stb & rb.we & ~rb.ack
+        m.d.sync += rb.ack.eq(rb.cyc & rb.stb & ~rb.ack)
+        status = Cat(pending, ready_s & locked_s, locked_s, cal_valid_s, cal_x4_s, saw_busy_r,
+                     Const(0, 2), code_r, op_r, events, Const(0, 6), errors)
+        with m.Switch(rb.adr):
+            for word, value in ((REG_STATUS, status), (REG_IRQ_EN, irq_en), (REG_DESC, desc_r),
+                                (REG_ADDR, addr_r), (REG_LEN, Cat(len_r, Const(0, 7), wren_r,
+                                                                  waitf_r)),
+                                (REG_WAIT_US, wait_r), (REG_POLL_US, poll_us_r),
+                                (REG_CAL, cal_s),
+                                (REG_CAL_US, cal_us(self.n_steps, self.sck_mhz))):
+                with m.Case(word):
+                    m.d.sync += rb.dat_r.eq(value)
+            with m.Default():
+                m.d.sync += rb.dat_r.eq(0)
+        d = rb.dat_w
+        with m.If(wr):
+            with m.Switch(rb.adr):
+                with m.Case(REG_IRQ_EN):
+                    m.d.sync += irq_en.eq(d[0:2])
+                with m.Case(REG_DESC):
+                    m.d.sync += desc_r.eq(d)
+                with m.Case(REG_ADDR):
+                    m.d.sync += addr_r.eq(d[0:24])
+                with m.Case(REG_LEN):
+                    m.d.sync += [len_r.eq(d[0:9]), wren_r.eq(d[16]), waitf_r.eq(d[17])]
+                with m.Case(REG_WAIT_US):
+                    m.d.sync += wait_r.eq(d[0:24])
+        clear = wr & (rb.adr == REG_CTRL)
+        m.d.sync += [events.eq((events & ~Mux(clear, d[16:18], 0)) | ev_set),
+                     errors.eq((errors & ~Mux(clear, d[24:24 + N_ERR], 0)) | err_set)]
 
         # ---- commands
-        status = r["status"].f
-        cmd = r["cmd"].f.op
-        pending, w_class = Signal(), Signal()
-        code_r, op_r, seq = Signal(4), Signal(4), Signal(16)
-        saw_busy_r, poll_us_r, state_r = Signal(), Signal(32), Signal(16)
         start = Signal()
-        m.d.comb += [status.busy.r_data.eq(pending), status.ready.r_data.eq(ready_s & locked_s),
-                     status.locked.r_data.eq(locked_s), status.cal_valid.r_data.eq(cal_valid_s),
-                     status.cal_x4.r_data.eq(cal_x4_s), status.saw_busy.r_data.eq(saw_busy_r),
-                     status.code.r_data.eq(code_r), status.op.r_data.eq(op_r),
-                     f("seq").r_data.eq(seq), f("poll_us").r_data.eq(poll_us_r),
-                     f("state").r_data.eq(state_r),
-                     eng.start.eq(toggle_in("start", start)),
-                     eng.abort.eq(toggle_in("abort", r["ctrl"].f.abort.w_stb
-                                            & r["ctrl"].f.abort.w_data))]
+        m.d.comb += [eng.start.eq(toggle_in("start", start)),
+                     eng.abort.eq(toggle_in("abort", clear & d[0]))]
 
         def finish(code, op):
-            m.d.sync += [code_r.eq(code), op_r.eq(op), pending.eq(0), seq.eq(seq + 1)]
+            m.d.sync += [code_r.eq(code), op_r.eq(op), pending.eq(0)]
             m.d.comb += ev_set[0].eq(1)
             with m.If(code != CODE_OK):
                 m.d.comb += err_set[ERR_OP].eq(1)
@@ -662,11 +639,10 @@ class Flash(wiring.Component):
             with m.If(~pending):
                 m.d.comb += ev_set[0].eq(1)
 
-        w = cmd.w_data
-        flags = r["flags"].f
-        arg_bad = (((w != OP_RUN) & (w != OP_CALIBRATE)) | (f("len").data > BUF_BYTES)
-                   | ((w == OP_RUN) & flags.wait.data & (f("wait_us").data == 0)))
-        with m.If(cmd.w_stb):
+        w = d[0:4]
+        arg_bad = (((w != OP_RUN) & (w != OP_CALIBRATE)) | (len_r > BUF_BYTES)
+                   | ((w == OP_RUN) & waitf_r & (wait_r == 0)))
+        with m.If(wr & (rb.adr == REG_CMD)):
             with m.If(pending):
                 refuse(CODE_BUSY, w)
             with m.Elif(~(ready_s & locked_s)):
@@ -674,41 +650,26 @@ class Flash(wiring.Component):
             with m.Elif(arg_bad):
                 refuse(CODE_ARG, w)
             with m.Else():
-                m.d.sync += [eng.op.eq(w), eng.desc.eq(f("desc").data), eng.addr.eq(f("addr").data),
-                             eng.len.eq(f("len").data), eng.wren.eq(flags.wren.data),
-                             eng.wait.eq(flags.wait.data),
-                             # CALIBRATE's bound is the scan's own, for the backstop below
-                             eng.wait_us.eq(Mux(w == OP_CALIBRATE,
-                                                cal_us(self.n_steps, self.sck_mhz),
-                                                f("wait_us").data)),
-                             pending.eq(1), op_r.eq(w), code_r.eq(CODE_OK),
-                             w_class.eq((w == OP_CALIBRATE) | flags.wren.data | flags.wait.data)]
+                m.d.sync += [eng.op.eq(w), eng.desc.eq(desc_r & DESC_MASK), eng.addr.eq(addr_r),
+                             eng.len.eq(len_r), eng.wren.eq(wren_r), eng.wait.eq(waitf_r),
+                             eng.wait_us.eq(wait_r), pending.eq(1), op_r.eq(w),
+                             code_r.eq(CODE_OK),
+                             w_class.eq((w == OP_CALIBRATE) | wren_r | waitf_r)]
                 m.d.comb += start.eq(1)
 
+        # The engine bounds every wait it has, so a done always comes; the CPU's own
+        # bound (flash.rs) covers an fsck clock that stops.
         with m.If(done_s):
-            m.d.sync += [saw_busy_r.eq(eng.r_saw_busy), poll_us_r.eq(eng.r_poll_us),
-                         state_r.eq(eng.r_state)]
+            m.d.sync += [saw_busy_r.eq(eng.r_saw_busy), poll_us_r.eq(eng.r_poll_us)]
             with m.If(pending):
                 finish(eng.r_code, op_r)
             for code, bit in ((CODE_WDOG, ERR_WDOG), (CODE_CAL_NONE, ERR_CAL)):
                 with m.If(eng.r_code == code):
                     m.d.comb += err_set[bit].eq(1)
 
-        # Backstop: the engine bounds its own waits, so a result that never comes means the
-        # fsck side stopped. Limit: wait_us x 1.25 + 64 us (three maximal transactions).
-        us_div, age_us = Signal(range(int(self.sync_mhz))), Signal(33)
-        m.d.sync += us_div.eq(Mux(us_div == int(self.sync_mhz) - 1, 0, us_div + 1))
-        with m.If(~pending):
-            m.d.sync += age_us.eq(0)
-        with m.Elif(us_div == 0):
-            m.d.sync += age_us.eq(age_us + 1)
-            with m.If(age_us > eng.wait_us + (eng.wait_us >> 2) + 64):
-                finish(CODE_HANDSHAKE, op_r)
-                m.d.comb += err_set[ERR_HANDSHAKE].eq(1)
-
         # ---- calibration result and lock loss as errors
-        calv_prev, ready_prev, locked_prev = Signal(), Signal(), Signal()
-        m.d.sync += [calv_prev.eq(cal_valid_s), ready_prev.eq(ready_s), locked_prev.eq(locked_s)]
+        ready_prev, locked_prev = Signal(), Signal()
+        m.d.sync += [ready_prev.eq(ready_s), locked_prev.eq(locked_s)]
         with m.If(ready_s & ~ready_prev & ~cal_valid_s):
             m.d.comb += err_set[ERR_CAL].eq(1)
         with m.If(locked_prev & ~locked_s):
@@ -720,16 +681,16 @@ class Flash(wiring.Component):
         m.d.comb += [fifo.w_en.eq(eng.xip_we),
                      fifo.w_data.eq(Cat(eng.xip_word, eng.xip_idx, eng.xip_wid))]
         line_wp = self._line.write_port(domain="sync")
-        line_rp = self._line.read_port(domain="comb")
+        line_rp = self._line.read_port(domain="sync")
         xb = self.xip
         tag, valid, filling, fill_id = Signal(16), Signal(16), Signal(), Signal(2)
         inv_pending, fill_age = Signal(), Signal(range(self.fill_limit + 1))
-        xip_t, fills = Signal(), Signal(32)
+        xip_go = Signal()
         req_line, req_word = xb.adr[4:20], xb.adr[0:4]
         f_word, f_idx, f_id = fifo.r_data[0:32], fifo.r_data[32:36], fifo.r_data[36:38]
         m.d.comb += [fifo.r_en.eq(1), line_rp.addr.eq(req_word),
                      eng.xip_line.eq(tag), eng.xip_id.eq(fill_id),
-                     eng.xip_start.eq(toggle_in("xip", xip_t)), f("xip_fills").r_data.eq(fills)]
+                     eng.xip_start.eq(toggle_in("xip", xip_go))]
         landed = Signal(16)
         m.d.comb += landed.eq(valid | (Const(1, 16) << f_idx))
         with m.If(fifo.r_rdy & filling & (f_id == fill_id)):
@@ -749,7 +710,9 @@ class Flash(wiring.Component):
         blocked = ~cal_valid_s | (pending & w_class)
         asking = xb.cyc & xb.stb & ~xb.ack & ~xb.err
         hit = (tag == req_line) & valid.bit_select(req_word, 1) & ~inv_pending
-        m.d.sync += [xb.ack.eq(0), xb.err.eq(0), xb.dat_r.eq(line_rp.data)]
+        # the read port answers the cycle after the address, with the registered ack
+        m.d.sync += [xb.ack.eq(0), xb.err.eq(0)]
+        m.d.comb += xb.dat_r.eq(line_rp.data)
         with m.If(asking):
             with m.If(xb.we):
                 m.d.sync += xb.err.eq(1)
@@ -764,5 +727,7 @@ class Flash(wiring.Component):
                 m.d.comb += err_set[ERR_XIP_FILL].eq(1)
             with m.Elif(~filling & ~inv_pending):
                 m.d.sync += [tag.eq(req_line), valid.eq(0), filling.eq(1), fill_age.eq(0),
-                             fill_id.eq(fill_id + 1), xip_t.eq(~xip_t), fills.eq(fills + 1)]
+                             fill_id.eq(fill_id + 1)]
+                m.d.comb += xip_go.eq(1)
+
         return m

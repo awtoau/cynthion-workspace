@@ -69,38 +69,52 @@ def le_word(dev, a):
 
 
 class Bench:
+    # name -> (register word, lsb, width); "cmd"/"ctrl" are write-only words, and
+    # "events"/"errors" are cleared by writing ones to their bits of `ctrl`.
+    FIELDS = {"status": (fp.REG_STATUS, 0, 16), "events": (fp.REG_STATUS, 16, 2),
+              "errors": (fp.REG_STATUS, 24, fp.N_ERR), "irq_en": (fp.REG_IRQ_EN, 0, 2),
+              "desc": (fp.REG_DESC, 0, 32), "addr": (fp.REG_ADDR, 0, 24),
+              "len": (fp.REG_LEN, 0, 9), "flags": (fp.REG_LEN, 16, 2),
+              "wait_us": (fp.REG_WAIT_US, 0, 24), "poll_us": (fp.REG_POLL_US, 0, 24),
+              "cal": (fp.REG_CAL, 0, 32), "cal_us": (fp.REG_CAL_US, 0, 16)}
+
     def __init__(self, periph, ctx):
         self.p, self.ctx = periph, ctx
-        self.regs = periph._regs
 
     async def tick(self, n=1):
         await self.ctx.tick("sync").repeat(n)
 
-    def _size(self, name):
-        n = (self.regs[name][1].element.width + 7) // 8
-        return 1 << (n - 1).bit_length()
-
-    async def write(self, name, value):
-        off, ctx, bus = self.regs[name][0], self.ctx, self.p.bus
-        for i in range(self._size(name)):
-            ctx.set(bus.addr, off + i)
-            ctx.set(bus.w_data, (value >> (8 * i)) & 0xFF)
-            ctx.set(bus.w_stb, 1)
-            await self.tick()
-        ctx.set(bus.w_stb, 0)
+    async def _wb(self, word, data=None):
+        ctx, wb = self.ctx, self.p.bus
+        ctx.set(wb.adr, word)
+        ctx.set(wb.sel, 0xF)
+        ctx.set(wb.we, int(data is not None))
+        ctx.set(wb.dat_w, data or 0)
+        ctx.set(wb.cyc, 1)
+        ctx.set(wb.stb, 1)
         await self.tick()
-
-    async def read(self, name):
-        off, ctx, bus = self.regs[name][0], self.ctx, self.p.bus
-        value = 0
-        for i in range(self._size(name)):
-            ctx.set(bus.addr, off + i)
-            ctx.set(bus.r_stb, 1)
+        while not ctx.get(wb.ack):
             await self.tick()
-            ctx.set(bus.r_stb, 0)
-            value |= ctx.get(bus.r_data) << (8 * i)
+        value = ctx.get(wb.dat_r)
+        ctx.set(wb.cyc, 0)
+        ctx.set(wb.stb, 0)
+        await self.tick()
         return value
 
+    async def write(self, name, value):
+        if name == "cmd":
+            return await self._wb(fp.REG_CMD, value)
+        if name in ("ctrl", "events", "errors"):
+            shift = {"ctrl": 0, "events": 16, "errors": 24}[name]
+            return await self._wb(fp.REG_CTRL, value << shift)
+        word, lsb, width = self.FIELDS[name]
+        mask = ((1 << width) - 1) << lsb
+        old = await self._wb(word)
+        await self._wb(word, (old & ~mask) | ((value << lsb) & mask))
+
+    async def read(self, name):
+        word, lsb, width = self.FIELDS[name]
+        return (await self._wb(word) >> lsb) & ((1 << width) - 1)
     async def status(self):
         v = await self.read("status")
         return dict(busy=v & 1, ready=(v >> 1) & 1, locked=(v >> 2) & 1, cal=(v >> 3) & 1,
@@ -265,7 +279,7 @@ def run(checks, name, scenario, dev=None, background=None):
 
 
 # ---------------------------------------------------------------- scenarios
-# Status polls (a 16-bit read: 2 sync cycles): the gateware's own calibration bound,
+# Status polls (a Wishbone read: >= 2 sync cycles): the gateware's own calibration bound,
 # 1.25x, + 100 for the crossings.
 BOOT_POLLS = int(1.25 * fp.cal_cycles(N_STEPS) * SYNC_MHZ / SCK_MHZ / 2) + 100
 
@@ -306,7 +320,6 @@ async def s_main(checks, b, dev, ctx, p, stats):
                              f"{stats['steps']} PHASESTEPs seen")
     checks.check("boot: the PHASESTEP count the part saw ends at the placed step",
                  stats["steps"] % N_STEPS == cal & 0xFF, f"{stats['steps']} vs {cal & 0xFF}")
-    checks.check("boot: steps register = the PLL's 8 x div", await b.read("steps") == N_STEPS)
     checks.check("boot: no sticky error", await b.read("errors") == 0)
 
     st, ident = await jedec(b)
@@ -315,21 +328,26 @@ async def s_main(checks, b, dev, ctx, p, stats):
     st = await b.run(SR1, length=1)
     sr1 = (await b.buf_words(1))[0] & 0xFF
     checks.check("SR1 = 00 (idle, no WEL)", st["code"] == 0 and sr1 == 0, f"{st} {sr1:#x}")
+    st = await b.run(JEDEC | 1 << 9, length=3)
+    word = (await b.buf_words(1))[0]
+    checks.check("DESC_MASK: a QPI-opcode bit is dropped, the x1 JEDEC still answers",
+                 st["code"] == 0 and word & 0xFFFFFF == 0x1640EF, f"{word:#x}")
 
     # XIP: byte order, one fill per line, hits
-    fills0 = await b.read("xip_fills")
+    cmds0 = len(dev.cmds)
     words = []
     for i in range(16):
         words.append(await b.xip(REF + 4 * i))
-    fills1 = await b.read("xip_fills")
+    fills = [c for c in dev.cmds[cmds0:]]
     checks.check("XIP: 16 words of one line, little-endian, == the part",
                  all(w == ("ack", le_word(dev, REF + 4 * i)) for i, w in enumerate(words)),
                  str(words[:2]))
-    checks.check("XIP: one fill for the whole line", fills1 - fills0 == 1, f"{fills1 - fills0}")
+    checks.check("XIP: one EBh transaction for the whole line", fills == [0xEB], str(fills))
     windows = dev.windows
+    await b.tick(50)                                 # a refill would start in here
     again = await b.xip(REF + 8)
-    checks.check("XIP: a hit costs no transaction", again[0] == "ack" and dev.windows == windows
-                 and await b.read("xip_fills") == fills1)
+    checks.check("XIP: a hit costs no transaction", again[0] == "ack" and dev.windows == windows,
+                 f"{again} windows {windows} -> {dev.windows}, {[hex(c) for c in dev.cmds[-3:]]}")
     picks = [REF + 4 * random.Random(1).randrange(0, 1024) for _ in range(12)]
     got = [await b.xip(a) for a in picks]
     checks.check("XIP: 12 scattered words across lines", all(
@@ -428,10 +446,6 @@ async def s_main(checks, b, dev, ctx, p, stats):
     r = await b.xip(REF + 0x104)
     checks.check("after CALIBRATE: XIP still right", r == ("ack", le_word(dev, REF + 0x104)),
                  str(r))
-    # finished: JEDEC, SR1, JEDEC, erase, program, 0Bh, WDOG erase, ABORT erase, JEDEC,
-    # CALIBRATE; the three refusals do not count
-    seq = await b.read("seq")
-    checks.check("seq counts finished commands, not refusals", seq == 10, f"{seq}")
 
 
 async def s_interleave_cmds(checks, b, dev, ctx, p, stats):

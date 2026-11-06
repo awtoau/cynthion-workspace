@@ -14,35 +14,29 @@ use core::ptr::{read_volatile, write_volatile};
 
 use crate::target;
 
-/// Generated register offsets in the `spi0` CSR window.
-#[cfg(not(feature = "qemu"))]
-use cynthion_soc_pac::spi0::offset;
-
-/// The same offsets under QEMU, where there is no such window and nothing runs them.
-#[cfg(feature = "qemu")]
+/// Register byte offsets in the `spi0` window: 32-bit words, `REG_*` in flash.py.
 mod offset {
-    pub const STATUS: usize = 0x08;
-    pub const CMD: usize = 0x0c;
-    pub const ERRORS: usize = 0x10;
-    pub const DESC: usize = 0x14;
-    pub const ADDR: usize = 0x18;
-    pub const LEN: usize = 0x1c;
-    pub const FLAGS: usize = 0x1e;
-    pub const WAIT_US: usize = 0x20;
-    pub const POLL_US: usize = 0x24;
-    pub const CAL: usize = 0x28;
-    pub const CAL_US: usize = 0x38;
+    pub const STATUS: usize = 0x00;
+    pub const CMD: usize = 0x04;
+    pub const DESC: usize = 0x10;
+    pub const ADDR: usize = 0x14;
+    pub const LEN: usize = 0x18;
+    pub const WAIT_US: usize = 0x1c;
+    pub const POLL_US: usize = 0x20;
+    pub const CAL: usize = 0x24;
+    pub const CAL_US: usize = 0x28;
 }
 
-const OP_RUN: u8 = 1;
-const OP_CALIBRATE: u8 = 2;
-const FLAG_WREN: u8 = 1 << 0;
-const FLAG_WAIT: u8 = 1 << 1;
+const OP_RUN: u32 = 1;
+const OP_CALIBRATE: u32 = 2;
+/// In the `len` word, above the 9-bit byte count.
+const FLAG_WREN: u32 = 1 << 16;
+const FLAG_WAIT: u32 = 1 << 17;
 
-const STATUS_BUSY: u16 = 1 << 0;
-pub const STATUS_CAL: u16 = 1 << 3;
-pub const STATUS_X4: u16 = 1 << 4;
-const STATUS_SAW_BUSY: u16 = 1 << 5;
+const STATUS_BUSY: u32 = 1 << 0;
+pub const STATUS_CAL: u32 = 1 << 3;
+pub const STATUS_X4: u32 = 1 << 4;
+const STATUS_SAW_BUSY: u32 = 1 << 5;
 
 const W1: u32 = 0;
 
@@ -86,7 +80,7 @@ pub const ERASE_FLOOR_US: u32 = 1000;
 pub enum Error {
     /// The peripheral refused or ended the command with this code (see the doc).
     Code(u8),
-    /// The status never went idle: the CPU's own bound, past the gateware's.
+    /// The status never went idle within the CPU's own bound: the fsck side stopped.
     Timeout,
     /// An erase or program address outside [`SCRATCH`].
     OutsideScratch,
@@ -119,7 +113,6 @@ fn code_name(code: u8) -> &'static str {
         2 => "ARG: bad op, length or wait",
         3 => "NOT_READY: not calibrated or not locked",
         7 => "WDOG: a transaction or the BUSY poll ran past its bound",
-        8 => "HANDSHAKE: the flash clock domain stopped answering",
         11 => "ABORT",
         13 => "CAL_NONE: no clean capture point",
         _ => "unknown code",
@@ -129,28 +122,19 @@ fn code_name(code: u8) -> &'static str {
 /// One command, start to idle, from block RAM with interrupts masked.
 ///
 /// - No calls out: a call is a fetch from `.text`, which is the flash, which answers
-///   ERR while a write-class command runs. Byte stores and `mcycle` only.
-/// - `limit` in `mcycle`s; returns the final status, or `Err(Timeout)`.
+///   ERR while a write-class command runs. Word stores, loads and `mcycle` only.
+/// - `limit` in `mcycle`s; returns the final status word, or `Err(Timeout)`.
 ///
 /// # Safety
-/// `base` must be the SPI0 CSR window.
+/// `base` must be the SPI0 register window.
 #[inline(never)]
 #[unsafe(link_section = ".data.flash_run")]
-unsafe fn run(base: usize, d: u32, addr: u32, len: u32, flags: u8, wait_us: u32,
-              op: u8, limit: u32) -> Result<u16, ()> {
-    macro_rules! w8 {
-        ($off:expr, $v:expr) => {
-            unsafe { write_volatile((base + $off) as *mut u8, $v as u8) }
-        };
-    }
+unsafe fn run(base: usize, d: u32, addr: u32, len_flags: u32, wait_us: u32, op: u32,
+              limit: u32) -> Result<u32, ()> {
     macro_rules! w32 {
-        ($off:expr, $v:expr) => {{
-            let v: u32 = $v;
-            w8!($off, v);
-            w8!($off + 1, v >> 8);
-            w8!($off + 2, v >> 16);
-            w8!($off + 3, v >> 24);
-        }};
+        ($off:expr, $v:expr) => {
+            unsafe { write_volatile((base + $off) as *mut u32, $v) }
+        };
     }
     macro_rules! cycles {
         () => {{
@@ -165,17 +149,12 @@ unsafe fn run(base: usize, d: u32, addr: u32, len: u32, flags: u8, wait_us: u32,
     }
     w32!(offset::DESC, d);
     w32!(offset::ADDR, addr);
-    w8!(offset::LEN, len);
-    w8!(offset::LEN + 1, len >> 8);
-    w8!(offset::FLAGS, flags);
+    w32!(offset::LEN, len_flags);
     w32!(offset::WAIT_US, wait_us);
-    w8!(offset::CMD, op);
+    w32!(offset::CMD, op);
     let started = cycles!();
     loop {
-        // Low byte first: it latches the shadow the high byte comes from.
-        let lo = unsafe { read_volatile((base + offset::STATUS) as *const u8) } as u16;
-        let hi = unsafe { read_volatile((base + offset::STATUS + 1) as *const u8) } as u16;
-        let status = lo | hi << 8;
+        let status = unsafe { read_volatile((base + offset::STATUS) as *const u32) };
         if status & STATUS_BUSY == 0 {
             // A speculative fetch into the window during the command got ERR: drop
             // whatever the I-cache kept of it before returning into the window.
@@ -205,13 +184,9 @@ impl Flash {
         }
     }
 
-    fn r8(&self, off: usize) -> u8 {
-        // SAFETY: inside the generated SPI0 window.
-        unsafe { read_volatile((self.base + off) as *const u8) }
-    }
-
     fn r32(&self, off: usize) -> u32 {
-        (0..4).fold(0, |acc, i| acc | (self.r8(off + i) as u32) << (8 * i))
+        // SAFETY: a word register inside the generated SPI0 window.
+        unsafe { read_volatile((self.base + off) as *const u32) }
     }
 
     /// Buffer word `i` (received bytes), little-endian.
@@ -226,15 +201,15 @@ impl Flash {
     }
 
     /// Run one command; Ok carries the status (saw_busy etc.).
-    fn command(&self, d: u32, addr: u32, len: u32, flags: u8, wait_us: u32, op: u8)
-               -> Result<u16, Error> {
+    fn command(&self, d: u32, addr: u32, len: u32, flags: u32, wait_us: u32, op: u32)
+               -> Result<u32, Error> {
         resident()?;
         let us = wait_us.max(SHORT_US);
-        // CPU bound: the gateware's own backstop (wait x 1.25 + 64 us) plus 64 us.
+        // CPU bound: wait x 1.25 + 128 us (three maximal transactions and the crossings).
         let limit = (us + us / 4 + 128).saturating_mul(target::TIME_HZ / 1_000_000);
         // SAFETY: `base` came from the generated memory map.
         let status = riscv::interrupt::free(|| unsafe {
-            run(self.base, d, addr, len, flags, wait_us, op, limit)
+            run(self.base, d, addr, len | flags, wait_us, op, limit)
         })
         .map_err(|()| Error::Timeout)?;
         match ((status >> 8) & 0xf) as u8 {
@@ -297,7 +272,7 @@ impl Flash {
         self.busy_time(status)
     }
 
-    fn busy_time(&self, status: u16) -> Result<u32, Error> {
+    fn busy_time(&self, status: u32) -> Result<u32, Error> {
         if status & STATUS_SAW_BUSY == 0 {
             return Err(Error::NeverStarted);
         }
@@ -307,14 +282,14 @@ impl Flash {
     /// Rerun the capture calibration (XIP answers ERR while it runs). Bounded by the
     /// scan's own length, which the gateware reports (`cal_us`).
     pub fn calibrate(&self) -> Result<(), Error> {
-        let bound = self.r8(offset::CAL_US) as u32 | (self.r8(offset::CAL_US + 1) as u32) << 8;
+        let bound = self.r32(offset::CAL_US);
         self.command(0, 0, 0, 0, bound, OP_CALIBRATE).map(|_| ())
     }
 
     /// (status, cal register, sticky errors): the calibration and health readout.
-    pub fn health(&self) -> (u16, u32, u8) {
-        let status = self.r8(offset::STATUS) as u16 | (self.r8(offset::STATUS + 1) as u16) << 8;
-        (status, self.r32(offset::CAL), self.r8(offset::ERRORS))
+    pub fn health(&self) -> (u32, u32, u8) {
+        let status = self.r32(offset::STATUS);
+        (status, self.r32(offset::CAL), (status >> 24) as u8)
     }
 }
 

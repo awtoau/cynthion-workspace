@@ -25,7 +25,7 @@ The W25Q32JV config flash on the SoC bus, built on the clean-room [#590](https:/
 | window | base | size | what |
 |---|---|---|---|
 | `spiflash` | `0x10000000` | 4 MiB | XIP, read-only, cached by the CPU (`main=1 exe=1`) |
-| `spi0` | `0xf0000100` | 64 B | command CSRs (below) |
+| `spi0` | `0xf0000100` | 64 B | command registers (below) |
 | `spi0_buf` | `0xf0000200` | 256 B | command data: reads = received bytes, writes = bytes to send; little-endian words |
 
 ## XIP
@@ -42,36 +42,29 @@ The W25Q32JV config flash on the SoC bus, built on the clean-room [#590](https:/
 - `flags.wren`: WREN first. `flags.wait`: poll SR1 after (ends on two consecutive ready bytes), bounded by `wait_us`; `poll_us` and `status.saw_busy` report it.
 - /CS high after a transaction: 10 ns after reads, 50 ns after writes (tSHSL1/2), in `fsck` cycles.
 - Transaction watchdog: `TX_LIMIT` = 1.25 x the longest non-poll transaction (2155 cycles) = 2694 `fsck` cycles.
-- Sync-side backstop: `wait_us` x 1.25 + 64 us; CALIBRATE uses the scan's own bound (`cal_us`).
+- CALIBRATE is bounded by the scan itself; `cal_us` reports the bound for the CPU.
 
-## Registers (`spi0`, byte offsets)
+## Registers (`spi0`, 32-bit words, byte offsets)
+
+Plain Wishbone words (`REG_*` in flash.py), not amaranth-soc CSRs: the byte-wide CSR multiplexer cost more cells than the registers.
 
 | off | name | access | fields |
 |---|---|---|---|
-| 0x00 | id | R32 | `FLS1` = 0x464C5331 |
-| 0x04 | sck_khz | R32 | 180000 |
-| 0x08 | status | R16 | busy 0, ready 1, locked 2, cal_valid 3, cal_x4 4, saw_busy 5, code 11:8, op 15:12 |
-| 0x0c | cmd | W8 | op: 1 RUN, 2 CALIBRATE |
-| 0x0d | ctrl | W8 | abort 0 |
-| 0x0e | events | RW1C | done 0, error 1 |
-| 0x0f | irq_en | RW | per event; IRQ 19, level |
-| 0x10 | errors | RW1C | see below |
-| 0x14 | desc | RW32 | transaction descriptor |
-| 0x18 | addr | RW24 | flash byte address |
-| 0x1c | len | RW9 | data bytes, <= 256 |
-| 0x1e | flags | RW | wren 0, wait 1 |
-| 0x20 | wait_us | RW32 | BUSY poll bound; 0 with `wait` is ARG |
-| 0x24 | poll_us | R32 | last poll, us |
-| 0x28 | cal | R32 | step 7:0, lat 11:8, xfer 12, width_x1 23:16, width_x4 31:24 |
-| 0x2c | steps | R8 | PHASESTEPs per period |
-| 0x30 | seq | R16 | commands finished (refusals not counted) |
-| 0x32 | state | R16 | engine state + core phase at the last watchdog/abort |
-| 0x34 | xip_fills | R32 | line fills issued |
-| 0x38 | cal_us | R16 | calibration bound, us |
+| 0x00 | status | R | busy 0, ready 1, locked 2, cal_valid 3, cal_x4 4, saw_busy 5, code 11:8, op 15:12, events 17:16 (done, error), errors 30:24 |
+| 0x04 | cmd | W | op 3:0: 1 RUN, 2 CALIBRATE |
+| 0x08 | ctrl | W | abort 0; write 1s to bits 17:16 to clear events, 30:24 to clear errors |
+| 0x0c | irq_en | RW | per event 1:0; IRQ 19, level |
+| 0x10 | desc | RW | transaction descriptor; bits 9, 16, 23 forced 0 (no QPI opcode, dual or DTR) |
+| 0x14 | addr | RW | flash byte address 23:0 |
+| 0x18 | len | RW | data bytes 8:0 (<= 256), wren 16, wait 17 |
+| 0x1c | wait_us | RW | BUSY poll bound 23:0; 0 with `wait` is ARG |
+| 0x20 | poll_us | R | last poll, us |
+| 0x24 | cal | R | step 7:0, lat 11:8, xfer 12, width_x1 23:16, width_x4 31:24 |
+| 0x28 | cal_us | R | calibration bound, us |
 
-- Codes: 0 OK, 1 BUSY, 2 ARG, 3 NOT_READY, 7 WDOG, 8 HANDSHAKE, 11 ABORT, 13 CAL_NONE.
-- Errors: 0 op (any non-OK), 1 wdog, 2 cal, 3 xip_blocked, 4 xip_write, 5 xip_fill, 6 pll_lost, 7 handshake.
-- Multi-byte CSRs: low byte first (amaranth-soc shadow latch/commit).
+- Codes: 0 OK, 1 BUSY, 2 ARG, 3 NOT_READY, 7 WDOG, 11 ABORT, 13 CAL_NONE.
+- Errors: 0 op (any non-OK), 1 wdog, 2 cal, 3 xip_blocked, 4 xip_write, 5 xip_fill, 6 pll_lost.
+- No sync-side backstop: the engine bounds every wait; the CPU's own bound in `flash.rs` covers an fsck clock that stops.
 
 ## Calibration
 
@@ -93,3 +86,9 @@ The W25Q32JV config flash on the SoC bus, built on the clean-room [#590](https:/
 
 - luna_soc `spiflash` subclasses (memory map, PHY copy, controller with CS hold, fair crossbar, pin probe), `flash_cdc.py`, `flash_sck_full.py`. Defects and evidence: [flash-lessons.md](flash-lessons.md), [upstream-bugs.md](../upstream-bugs.md).
 - Their behaviours here: CS hold = one descriptor per /CS window; modal read = `desc`; fair crossbar = round robin between XIP and command in the engine; pin probe = sim counters (no hardware counterpart).
+
+## Board status (2026-11-06)
+
+- Flash side works on the board (builds #438-#442): 1-line eye 16-18 steps, 4-line eye 19-20 of 32 per lat, placed lat 4 xfer 1, JEDEC EF4016; `flash status` answers when the CPU runs.
+- **HyperRAM fails with this peripheral in the SoC**: auto-calibration finds no clean tap of 128 (once also an underflow, once an XFER watchdog) on all 4 builds where the CPU ran. The previous design (0cd05bd, 20781 COMB) passes HyperRAM 13/13 and soc_test 132/132 on the same board the same day.
+- COMB 21878 (was 20781); the CPU is silent on some placements. Not yet separated: logic-cell pressure vs the extra 180 MHz clocks and 16 mA FAST flash pins. Open on [#593](https://github.com/awtoau/cynthion-workspace/issues/593).

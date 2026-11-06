@@ -19,15 +19,6 @@ impl core::fmt::Debug for Console {
 }
 #[doc = "console: 8 registers at 0xf0000000"]
 pub mod console;
-#[doc = "spi0: 20 registers at 0xf0000100"]
-pub type Spi0 = crate::Periph<spi0::RegisterBlock, 0xf000_0100>;
-impl core::fmt::Debug for Spi0 {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("Spi0").finish()
-    }
-}
-#[doc = "spi0: 20 registers at 0xf0000100"]
-pub mod spi0;
 #[doc = "apollo_uart: 8 registers at 0xf0000500"]
 pub type ApolloUart = crate::Periph<apollo_uart::RegisterBlock, 0xf000_0500>;
 impl core::fmt::Debug for ApolloUart {
@@ -152,8 +143,6 @@ static mut DEVICE_PERIPHERALS: bool = false;
 pub struct Peripherals {
     #[doc = "CONSOLE"]
     pub console: Console,
-    #[doc = "SPI0"]
-    pub spi0: Spi0,
     #[doc = "APOLLO_UART"]
     pub apollo_uart: ApolloUart,
     #[doc = "BOARD_GPIO"]
@@ -203,7 +192,6 @@ impl Peripherals {
         DEVICE_PERIPHERALS = true;
         Peripherals {
             console: Console::steal(),
-            spi0: Spi0::steal(),
             apollo_uart: ApolloUart::steal(),
             board_gpio: BoardGpio::steal(),
             board_i2c: BoardI2c::steal(),

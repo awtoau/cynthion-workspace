@@ -26,7 +26,7 @@ pub const CONSOLE_SIZE: usize = 0x00000008;
 /// Interrupt source number wired to CONSOLE.
 pub const CONSOLE_IRQ: u32 = 1;
 
-/// spi0: 20 registers at 0xf0000100
+/// spi0: 64 bytes of memory at 0xf0000100
 pub const SPI0: usize = 0xf0000100;
 /// Size of the SPI0 window, in bytes.
 pub const SPI0_SIZE: usize = 0x00000040;
@@ -156,4 +156,4 @@ pub const CPU_CACHE_WAYS: u32 = 1;
 
 /// First 32 bits of SHA-256 over the SVD plus everything above:
 /// the map this firmware was built against. Host-compared (#307).
-pub const MAP_DIGEST: u32 = 0xc5373b58;
+pub const MAP_DIGEST: u32 = 0x80ae2ed4;
