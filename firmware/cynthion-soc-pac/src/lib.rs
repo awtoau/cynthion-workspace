@@ -19,24 +19,15 @@ impl core::fmt::Debug for Console {
 }
 #[doc = "console: 8 registers at 0xf0000000"]
 pub mod console;
-#[doc = "spi0: 5 registers at 0xf0000100"]
+#[doc = "spi0: 20 registers at 0xf0000100"]
 pub type Spi0 = crate::Periph<spi0::RegisterBlock, 0xf000_0100>;
 impl core::fmt::Debug for Spi0 {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         f.debug_struct("Spi0").finish()
     }
 }
-#[doc = "spi0: 5 registers at 0xf0000100"]
+#[doc = "spi0: 20 registers at 0xf0000100"]
 pub mod spi0;
-#[doc = "flash_probe: 6 registers at 0xf0000200"]
-pub type FlashProbe = crate::Periph<flash_probe::RegisterBlock, 0xf000_0200>;
-impl core::fmt::Debug for FlashProbe {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        f.debug_struct("FlashProbe").finish()
-    }
-}
-#[doc = "flash_probe: 6 registers at 0xf0000200"]
-pub mod flash_probe;
 #[doc = "apollo_uart: 8 registers at 0xf0000500"]
 pub type ApolloUart = crate::Periph<apollo_uart::RegisterBlock, 0xf000_0500>;
 impl core::fmt::Debug for ApolloUart {
@@ -163,8 +154,6 @@ pub struct Peripherals {
     pub console: Console,
     #[doc = "SPI0"]
     pub spi0: Spi0,
-    #[doc = "FLASH_PROBE"]
-    pub flash_probe: FlashProbe,
     #[doc = "APOLLO_UART"]
     pub apollo_uart: ApolloUart,
     #[doc = "BOARD_GPIO"]
@@ -215,7 +204,6 @@ impl Peripherals {
         Peripherals {
             console: Console::steal(),
             spi0: Spi0::steal(),
-            flash_probe: FlashProbe::steal(),
             apollo_uart: ApolloUart::steal(),
             board_gpio: BoardGpio::steal(),
             board_i2c: BoardI2c::steal(),

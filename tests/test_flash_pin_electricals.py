@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-# The flash pins state DRIVE/SLEWRATE/PULLMODE, like the HyperRAM pins. #459.
+# The flash pins state DRIVE/SLEWRATE/PULLMODE, like the HyperRAM pins. #459, #593.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Are the flash pins' electricals stated, defaulted to what nextpnr applied, and sweepable?
+"""Are the flash pins' electricals stated, and are they the #590 baseline's?
 
   * the emitted LPF carries DRIVE, SLEWRATE and PULLMODE on every flash pin
-  * with those attributes removed the flash lines are the old `IO_TYPE=LVCMOS33`
-    and nothing else changed, so a default build differs only by stated defaults
-  * the sweep axes move the flash lines and nothing else
-  * the axes are in the variant table, hence in the cache key and the slug
+  * the values are 16 mA FAST, PULLMODE NONE (the baseline's climb ran on 16 FAST)
+  * with those attributes removed the flash lines are `IO_TYPE=LVCMOS33` and nothing else
+  * no build-variant axis for them (#593 removed CYNTHION_FLASH_DRIVE/_SLEWRATE)
 """
 
 from __future__ import annotations
@@ -38,8 +37,8 @@ class _Flash(Elaboratable):
         return m
 
 
-def _lpf(**kwargs) -> list[str]:
-    plan = CynthionPlatformRev1D4(**kwargs).prepare(_Flash())
+def _lpf() -> list[str]:
+    plan = CynthionPlatformRev1D4().prepare(_Flash())
     return plan.files["top.lpf"].splitlines()
 
 
@@ -60,33 +59,18 @@ def test_every_flash_pin_states_its_electricals():
             assert f" {attr}=" in line, line
 
 
-def test_defaults_are_what_nextpnr_applied_before():
-    # DRIVE 8, SLEWRATE SLOW, PULLMODE NONE: read from a built top.config, #459.
+def test_values_are_the_baseline_s():
     for line in _flash_iobufs(_lpf()):
-        assert "DRIVE=8" in line and "SLEWRATE=SLOW" in line \
+        assert "DRIVE=16" in line and "SLEWRATE=FAST" in line \
             and "PULLMODE=NONE" in line, line
 
 
-def test_default_lpf_differs_only_by_the_stated_attributes():
+def test_lpf_differs_only_by_the_stated_attributes():
     for line in _flash_iobufs(_lpf()):
         assert STATED.sub("", line).endswith("IO_TYPE=LVCMOS33;"), line
         assert len(STATED.findall(line)) == 3, line
 
 
-def test_the_axes_move_the_flash_lines_and_nothing_else():
-    base, swept = _lpf(), _lpf(flash_drive="16", flash_slewrate="FAST")
-    for line in _flash_iobufs(swept):
-        assert "DRIVE=16" in line and "SLEWRATE=FAST" in line, line
-    flash = lambda lines: set(_flash_iobufs(lines))
-    assert [l for l in base if l not in flash(base)] == \
-           [l for l in swept if l not in flash(swept)]
-
-
-def test_the_axes_are_in_the_variant_table_with_the_platform_defaults():
-    from board import cynthion_r1_4 as board
-    table = {name: default for name, default, _t, _k in variant.VARIANT_ENV}
-    assert table["CYNTHION_FLASH_DRIVE"] == board.FLASH_DRIVE
-    assert table["CYNTHION_FLASH_SLEWRATE"] == board.FLASH_SLEWRATE
-    base = variant.build_dir(ROOT, {})
-    for env in ({"CYNTHION_FLASH_DRIVE": "16"}, {"CYNTHION_FLASH_SLEWRATE": "FAST"}):
-        assert variant.build_dir(ROOT, env) != base
+def test_no_variant_axis():
+    names = {name for name, _d, _t, _k in variant.VARIANT_ENV}
+    assert not {"CYNTHION_FLASH_DRIVE", "CYNTHION_FLASH_SLEWRATE"} & names
