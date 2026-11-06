@@ -145,7 +145,7 @@ TOOLCHAINS = {
     "yosys070": {"CYNTHION_OSS_CAD_SUITE": FPGA_PREFIX,
                  "CYNTHION_NEXTPNR_ECP5": "",
                  "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
-                 "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut"},
+                 "AMARANTH_synth_opts": f"{SYNTH_OPTS} -nowidelut -cmp2softlogic"},
     "yosys070-widelut": {"CYNTHION_OSS_CAD_SUITE": FPGA_PREFIX,
                          "CYNTHION_NEXTPNR_ECP5": "",
                          "AMARANTH_script_after_synth": SCRIPT_AFTER_SYNTH,
