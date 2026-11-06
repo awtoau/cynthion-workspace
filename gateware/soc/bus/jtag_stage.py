@@ -86,7 +86,8 @@ End-to-end rate: `scripts/soc/soc_jtag_stage.py` measures it (#588 re-based the 
 from amaranth           import Cat, ClockDomain, ClockSignal, Const, Elaboratable
 from amaranth           import Instance, Module, Mux, ResetSignal, Signal
 from amaranth.lib.cdc   import FFSynchronizer
-from amaranth.lib.fifo  import AsyncFIFO
+
+from peripherals.bram_fifo import BramAsyncFIFO
 
 # Frame commands. Neither is 0x00 or 0xff, so an idle chain -- which shifts one or
 # the other -- decodes as `nop` and does nothing.
@@ -224,7 +225,7 @@ class JTAGStager(Elaboratable):
             ResetSignal("jtck").eq(ResetSignal("sync")),
         ]
 
-        m.submodules.fifo = fifo = AsyncFIFO(
+        m.submodules.fifo = fifo = BramAsyncFIFO(
             width=18, depth=self._depth, w_domain="jtck", r_domain="sync")
 
         # High while the TAP is shifting ER1 data. Everything else -- capture, update,
