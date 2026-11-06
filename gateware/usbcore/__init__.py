@@ -16,6 +16,7 @@ Plan and stages: #612. All logic runs in the 60 MHz `usb` domain.
 | L1 | `data` | DATA0/1/2/MDATA generate / receive (CRC16) |
 | L1 | `handshake` | ACK / NAK / STALL / NYET generate / detect |
 | L1 | `timer` | inter-packet turnaround windows (HS, FS) |
+| buffer | `fifo` | `SyncFIFO` in block RAM, amaranth `SyncFIFO`'s cycle behaviour (#619) |
 
 - No bit stuffing, NRZI, SYNC or EOP here: the PHY does them. EOP = `valid` / `active` low.
 - Simulation equivalence against luna: `scripts/soc/usbcore_equiv_sim.py`.

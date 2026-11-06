@@ -11,6 +11,8 @@ Adapter beside `guh/` (docs/upstream-boundary.md: additions go beside the packag
   `scripts/soc/usbcore_equiv_sim.py` runs them in lockstep with luna's.
 - CRC16 lives inside the data generator and receiver: `USBDataPacketCRC` and the
   `crc` / `data_crc` attributes exist only so GUH's wiring calls still elaborate.
+- `fifo`: `sie.py`'s `fifo.SyncFIFO` resolves to `usbcore.fifo.SyncFIFO`, block RAM with
+  amaranth `SyncFIFO`'s cycle behaviour (#619). Imported by name, not in `__all__`.
 """
 
 import sys
@@ -22,6 +24,7 @@ if _GATEWARE not in sys.path:
 
 from amaranth import Elaboratable, Module, Signal  # noqa: E402
 
+from usbcore import fifo  # noqa: E402,F401
 from usbcore.crc import crc5  # noqa: E402
 from usbcore.data import DataGenerator, DataReceiver  # noqa: E402
 from usbcore.handshake import HandshakeDetector, HandshakeGenerator  # noqa: E402

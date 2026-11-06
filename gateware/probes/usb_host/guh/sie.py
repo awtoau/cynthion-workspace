@@ -7,11 +7,12 @@ Token packet generation, SOF controller, and the main transfer engine.
 """
 
 from amaranth import *
-from amaranth.lib import data, enum, fifo, stream, wiring
+from amaranth.lib import data, enum, stream, wiring
 from amaranth.lib.cdc import ResetInserter
 from amaranth.lib.wiring import In, Out
 
 from ..guh_lower import *
+from ..guh_lower import fifo
 
 from .types import *
 from .reset import *

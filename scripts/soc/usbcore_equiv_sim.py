@@ -820,10 +820,12 @@ def section_lockstep_ulpi(checks, rng, n_cycles):
 
 GUH_DIR = ROOT / "gateware" / "probes" / "usb_host" / "guh"
 LUNA_IMPORTS = {
-    "sie.py": ("from ..guh_lower import *\n",
+    # Both engines keep the block-RAM SIE FIFO: this section compares the lower layers only.
+    "sie.py": ("from ..guh_lower import *\nfrom ..guh_lower import fifo\n",
                "from luna.gateware.interface.ulpi import UTMITranslator\n"
                "from luna.gateware.interface.utmi import *\n"
-               "from luna.gateware.usb.usb2.packet import *\n"),
+               "from luna.gateware.usb.usb2.packet import *\n"
+               "from usb_host.guh_lower import fifo\n"),
     "reset.py": ("from ..guh_lower import UTMITransmitInterface\n",
                  "from luna.gateware.interface.utmi import UTMITransmitInterface\n"),
     "types.py": ("from ..guh_lower import UTMIOperatingMode, UTMITerminationSelect\n"
