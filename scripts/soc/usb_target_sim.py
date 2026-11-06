@@ -112,6 +112,8 @@ class SimBackend(Backend):
             resp = "resend"
         length = await pc.read(REG_RXLEN_LO) | (await pc.read(REG_RXLEN_HI) << 8)
         data, spins = [], 0
+        if resp not in (RESP_ACK, "resend"):    # as the firmware: RX is popped only on ACK
+            return resp, length, b""
         while len(data) < length and spins < length * RX_SPINS_PER_BYTE + 64:
             spins += 1
             if await pc.read(REG_RX_TAG) & 2:

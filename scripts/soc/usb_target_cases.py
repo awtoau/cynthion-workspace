@@ -457,6 +457,14 @@ def table():
          S("ctrl", E(length=18), bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18)],
         profiles=("model", "model_fs"), board=inject, after=NONE,
         about="one data byte of the device packet flipped: CRC_ERROR after 3 tries; bus recovers")
+    add("handshake_crc_then_clean_in", "handshake",
+        [S("bulk_out", E(), ep=1, data=bytes(range(16))),
+         S("fault", None, mode="crc"),
+         S("bulk_in", E("crc"), ep=1, n=64),
+         S("fault", None, mode="none"),
+         S("bulk_in", E(data=bytes(range(16)), length=16), ep=1, n=64)],
+        profiles=("model", "model_fs"), board=inject, after=NONE,
+        about="the CRC-bad copies must not reach the next good IN (#627): RX is empty after any response")
     add("handshake_pid_corrupt", "handshake",
         [S("fault", None, mode="pid"),
          S("ctrl", E("timeout", "crc"), bm=0x80, req=GET_DESC, val=0x0100, idx=0, len=18),
