@@ -685,7 +685,9 @@ def parse_reply(text):
     t = text.replace("\r", "")
     m = re.search(r"^(\d+) bytes\s*\n((?:[0-9a-f]{2} )*)", t, re.M)
     if m:
-        return Result("ack", bytes.fromhex(m.group(2).replace(" ", "")), {}, t)
+        cut = re.search(r"^truncated: packet (\d+) bytes", t, re.M)
+        return Result("ack", bytes.fromhex(m.group(2).replace(" ", "")),
+                      {"packet": int(cut.group(1))} if cut else {}, t)
     if re.search(r"^(ack|reset done|queued|addr \d+)", t, re.M):
         return Result("ack", b"", {}, t)
     m = re.search(r"^([0-9a-f]{4}):([0-9a-f]{4})", t, re.M)

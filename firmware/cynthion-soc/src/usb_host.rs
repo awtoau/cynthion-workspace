@@ -509,14 +509,14 @@ impl Host {
     }
 
     /// Bulk/interrupt IN on endpoint `ep`; NAK retried until `limit_us`.
+    /// Returns the packet's length; bytes past `buf` are dropped (the toggle still advances).
     pub fn bulk_in(&mut self, ep: u8, buf: &mut [u8], limit_us: u32) -> Result<usize, Error> {
         let r = self.host()?;
         let bit = 1 << (ep & 15);
-        let cap = buf.len();
         let n = self.stage(r, TY_IN, ep & 15, (self.tog_in & bit != 0) as u8, &[], buf,
                            "bulk in", limit_us)?;
         self.tog_in ^= bit;
-        Ok(n.min(cap))
+        Ok(n)
     }
 
     /// Bulk/interrupt OUT on endpoint `ep`, one packet; NAK retried until `limit_us`.
@@ -574,7 +574,7 @@ impl Host {
                  -> Result<(), Error> {
         let mps = self.bulk_mps()?.0;
         let mut buf = [0u8; 512];
-        let n = self.bulk_in(ep, &mut buf[..mps], Self::pump_left(started, "pump in")?)?;
+        let n = self.bulk_in(ep, &mut buf[..mps], Self::pump_left(started, "pump in")?)?.min(mps);
         let mut sum = p.sum;
         for &b in &buf[..n] {
             sum = sum.wrapping_add(b as u32);

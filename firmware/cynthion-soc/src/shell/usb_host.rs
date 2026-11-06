@@ -117,9 +117,13 @@ pub(crate) fn command(uart: &mut Uart, host: &mut Host, verb: &[u8], args: &[u8]
                 return;
             };
             match host.bulk_in(ep as u8, &mut buf[..len as usize], usb_host::BULK_US) {
-                Ok(n) => {
+                Ok(packet) => {
+                    let n = packet.min(len as usize);
                     let _ = writeln!(uart, "{} bytes", n);
                     dump(uart, &buf[..n]);
+                    if packet > n {
+                        let _ = writeln!(uart, "truncated: packet {} bytes", packet);
+                    }
                 }
                 Err(e) => fail(uart, e),
             }
