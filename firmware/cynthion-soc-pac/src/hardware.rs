@@ -37,13 +37,13 @@ pub static PERIPHERALS: &[Peripheral] = &[
         name: "spi0",
         base: 0xf0000100,
         size: 0x00000040,
-        registers: 5,
+        registers: 20,
     },
     Peripheral {
-        name: "flash_probe",
+        name: "spi0_buf",
         base: 0xf0000200,
-        size: 0x00000020,
-        registers: 6,
+        size: 0x00000100,
+        registers: 1,
     },
     Peripheral {
         name: "apollo_uart",

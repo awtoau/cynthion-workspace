@@ -400,17 +400,20 @@ pub const FLASH_CACHED: bool = cynthion_soc_pac::base::SPIFLASH_CACHED;
 #[cfg(feature = "qemu")]
 pub const FLASH_CACHED: bool = false;
 
-/// The SPI flash CONTROLLER's CSR window -- `HoldableSPIController`, and the
-/// only path to an opcode the memory map cannot issue: JEDEC, SFDP, the status
-/// register, erase, page program. See `src/flash.rs`.
-///
-/// `Option` rather than two constants, because `virt` has no such peripheral
-/// and every caller has to branch on that anyway.
+/// The flash command port's CSRs and its 256 B data buffer (#593): the only path
+/// to an opcode XIP does not issue -- JEDEC, SFDP, status, erase, program.
+/// See `src/flash.rs`. `None` on `virt`, which has no such peripheral.
 #[cfg(not(feature = "qemu"))]
 pub const SPI0_BASE: Option<usize> = Some(cynthion_soc_pac::base::SPI0);
 
 #[cfg(feature = "qemu")]
 pub const SPI0_BASE: Option<usize> = None;
+
+#[cfg(not(feature = "qemu"))]
+pub const SPI0_BUF_BASE: Option<usize> = Some(cynthion_soc_pac::base::SPI0_BUF);
+
+#[cfg(feature = "qemu")]
+pub const SPI0_BUF_BASE: Option<usize> = None;
 
 /// One 32-bit word from the memory-mapped configuration flash.
 ///

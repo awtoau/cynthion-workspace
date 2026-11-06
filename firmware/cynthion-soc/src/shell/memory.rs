@@ -21,7 +21,7 @@ pub fn command(uart: &mut Uart, region: Region, rest: &[u8]) {
 
     // The controller's verbs are flash-only: `bram sfdp` is not a sentence, and
     // the region check keeps them out of the other two regions' usage lines.
-    if matches!(region, Region::Flash) && matches!(verb, b"sfdp" | b"erase" | b"program") {
+    if matches!(region, Region::Flash) && matches!(verb, b"sfdp" | b"erase" | b"program" | b"cal") {
         return controller(uart, verb, arg);
     }
 
@@ -198,8 +198,25 @@ fn controller(uart: &mut Uart, verb: &[u8], arg: &[u8]) {
         b"status" => status(uart, &spi),
         b"erase" => erase(uart, &spi, arg),
         b"program" => program(uart, &spi, arg),
+        b"cal" => {
+            if let Err(why) = spi.calibrate() {
+                let _ = writeln!(uart, "flash cal failed: {}", why);
+            }
+            health(uart, &spi);
+        }
         _ => {}
     }
+}
+
+/// The peripheral's own account: calibration placement and eye widths, sticky errors.
+fn health(uart: &mut Uart, spi: &Flash) {
+    let (status, cal, errors) = spi.health();
+    let _ = writeln!(uart, "flash cal valid {} x4 {}  step {} lat {} xfer {}  width x1 {} x4 {}  \
+                            errors {:02x}",
+                     (status & flash::STATUS_CAL != 0) as u8,
+                     (status & flash::STATUS_X4 != 0) as u8,
+                     cal & 0xff, (cal >> 8) & 0xf, (cal >> 12) & 1,
+                     (cal >> 16) & 0xff, cal >> 24, errors);
 }
 
 /// The SFDP header: signature, revision, and how many parameter headers follow.
@@ -236,6 +253,7 @@ fn status(uart: &mut Uart, spi: &Flash) {
                              (sr1 & flash::SR1_WEL != 0) as u8);
         }
     }
+    health(uart, spi);
 }
 
 /// `flash erase <hex>` -- one 4 KiB sector, and only the reserved one.
@@ -249,18 +267,14 @@ fn erase(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
                          flash::SCRATCH);
         return;
     };
-    // Announced BEFORE it starts, because the shell does not come back from it:
-    // the erase lands, and the CPU does not survive the 45 ms the part spends
-    // answering nothing but its status register. Reconfigure to get it back;
-    // the sector is erased when you do. #463.
-    let _ = writeln!(uart, "flash erase {:06x} starting -- the console will not \
-                            return; reconfigure after (#463)", offset);
+    // Announced before it starts: if the console does not come back, #463 is not
+    // fixed and this line says what was running.
+    let _ = writeln!(uart, "flash erase {:06x} starting", offset);
     match spi.sector_erase(offset) {
         Err(why) => {
             let _ = writeln!(uart, "flash erase {:06x} failed: {}", offset, why);
         }
-        Ok(cycles) => {
-            let us = flash::micros(cycles);
+        Ok(us) => {
             let _ = write!(uart, "flash erase {:06x}  4 KiB in {} us", offset, us);
             // tSE is 45 ms typical. An erase two orders under that erased
             // nothing, which is the shape of the fault the C bring-up firmware
@@ -284,16 +298,14 @@ fn program(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
     for (index, word) in words.iter_mut().enumerate() {
         *word = seed.wrapping_add(index as u32);
     }
-    // As `erase`: the program lands and the console does not come back (#463).
-    let _ = writeln!(uart, "flash program {:06x} starting -- the console will not \
-                            return; reconfigure after (#463)", flash::SCRATCH);
+    let _ = writeln!(uart, "flash program {:06x} starting", flash::SCRATCH);
     match spi.page_program(flash::SCRATCH, &words) {
         Err(why) => {
             let _ = writeln!(uart, "flash program failed: {}", why);
         }
-        Ok(cycles) => {
+        Ok(us) => {
             let _ = write!(uart, "flash program {:06x}  {} words in {} us",
-                           flash::SCRATCH, words.len(), flash::micros(cycles));
+                           flash::SCRATCH, words.len(), us);
             readback(uart, spi, flash::SCRATCH, seed);
         }
     }
@@ -323,7 +335,7 @@ fn usage(uart: &mut Uart, region: Region) {
         "usage: {} status|read <hex offset>|bench{}",
         region.name(),
         if region.no_id().is_none() {
-            ", or `flash sfdp|erase|program`"
+            ", or `flash sfdp|erase|program|cal`"
         } else {
             ""
         }

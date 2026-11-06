@@ -193,253 +193,487 @@
     </peripheral>
     <peripheral>
       <name>SPI0</name>
-      <description>spi0: 5 registers at 0xf0000100</description>
+      <description>spi0: 20 registers at 0xf0000100</description>
       <baseAddress>0xF0000100</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
         <size>0x40</size>
         <usage>registers</usage>
       </addressBlock>
+      <interrupt>
+        <name>SPI0</name>
+        <value>19</value>
+      </interrupt>
       <registers>
         <register>
-          <name>PHY</name>
-          <description>SPI0.PHY, 18 bits at +0x00</description>
+          <name>ID</name>
+          <description>SPI0.ID, 32 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
-          <access>read-write</access>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x3FFFF</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>LENGTH</name>
-              <description>length [5:0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>6</bitWidth>
-              <access>read-write</access>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>SCK_KHZ</name>
+          <description>SPI0.SCK_KHZ, 32 bits at +0x04</description>
+          <addressOffset>0x4</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STATUS</name>
+          <description>SPI0.STATUS, 16 bits at +0x08</description>
+          <addressOffset>0x8</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>BUSY</name>
+              <description>busy [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
             </field>
             <field>
-              <name>WIDTH</name>
-              <description>width [9:6]</description>
+              <name>READY</name>
+              <description>ready [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>LOCKED</name>
+              <description>locked [2]</description>
+              <bitOffset>2</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CAL_VALID</name>
+              <description>cal_valid [3]</description>
+              <bitOffset>3</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>CAL_X4</name>
+              <description>cal_x4 [4]</description>
+              <bitOffset>4</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>SAW_BUSY</name>
+              <description>saw_busy [5]</description>
+              <bitOffset>5</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>_PAD</name>
+              <description>_pad [7:6]</description>
               <bitOffset>6</bitOffset>
-              <bitWidth>4</bitWidth>
-              <access>read-write</access>
+              <bitWidth>2</bitWidth>
+              <access>read-only</access>
             </field>
             <field>
-              <name>MASK</name>
-              <description>mask [17:10]</description>
-              <bitOffset>10</bitOffset>
+              <name>CODE</name>
+              <description>code [11:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>OP</name>
+              <description>op [15:12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CMD</name>
+          <description>SPI0.CMD, 4 bits at +0x0c</description>
+          <addressOffset>0xC</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>OP</name>
+              <description>op [3:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CTRL</name>
+          <description>SPI0.CTRL, 1 bits at +0x0d</description>
+          <addressOffset>0xD</addressOffset>
+          <size>8</size>
+          <access>write-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>ABORT</name>
+              <description>abort [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>write-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>EVENTS</name>
+          <description>SPI0.EVENTS, 2 bits at +0x0e</description>
+          <addressOffset>0xE</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IRQ_EN</name>
+          <description>SPI0.IRQ_EN, 2 bits at +0x0f</description>
+          <addressOffset>0xF</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [1:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>2</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>ERRORS</name>
+          <description>SPI0.ERRORS, 8 bits at +0x10</description>
+          <addressOffset>0x10</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [7:0]</description>
+              <bitOffset>0</bitOffset>
               <bitWidth>8</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>CS</name>
-          <description>SPI0.CS, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
+          <name>DESC</name>
+          <description>SPI0.DESC, 32 bits at +0x14</description>
+          <addressOffset>0x14</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
+          <resetMask>0xFFFFFFFF</resetMask>
           <fields>
             <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
+              <name>V</name>
+              <description>v [31:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>STATUS</name>
-          <description>SPI0.STATUS, 2 bits at +0x05</description>
-          <addressOffset>0x5</addressOffset>
+          <name>ADDR</name>
+          <description>SPI0.ADDR, 24 bits at +0x18</description>
+          <addressOffset>0x18</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [23:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>24</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>LEN</name>
+          <description>SPI0.LEN, 9 bits at +0x1c</description>
+          <addressOffset>0x1C</addressOffset>
+          <size>16</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x1FF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [8:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>9</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>FLAGS</name>
+          <description>SPI0.FLAGS, 2 bits at +0x1e</description>
+          <addressOffset>0x1E</addressOffset>
+          <size>8</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x3</resetMask>
+          <fields>
+            <field>
+              <name>WREN</name>
+              <description>wren [0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>WAIT</name>
+              <description>wait [1]</description>
+              <bitOffset>1</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WAIT_US</name>
+          <description>SPI0.WAIT_US, 32 bits at +0x20</description>
+          <addressOffset>0x20</addressOffset>
+          <size>32</size>
+          <access>read-write</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0xFFFFFFFF</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>POLL_US</name>
+          <description>SPI0.POLL_US, 32 bits at +0x24</description>
+          <addressOffset>0x24</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CAL</name>
+          <description>SPI0.CAL, 32 bits at +0x28</description>
+          <addressOffset>0x28</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>STEP</name>
+              <description>step [7:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>LAT</name>
+              <description>lat [11:8]</description>
+              <bitOffset>8</bitOffset>
+              <bitWidth>4</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>XFER</name>
+              <description>xfer [12]</description>
+              <bitOffset>12</bitOffset>
+              <bitWidth>1</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>_PAD</name>
+              <description>_pad [15:13]</description>
+              <bitOffset>13</bitOffset>
+              <bitWidth>3</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>WIDTH_X1</name>
+              <description>width_x1 [23:16]</description>
+              <bitOffset>16</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+            <field>
+              <name>WIDTH_X4</name>
+              <description>width_x4 [31:24]</description>
+              <bitOffset>24</bitOffset>
+              <bitWidth>8</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>STEPS</name>
+          <description>SPI0.STEPS, 8 bits at +0x2c</description>
+          <addressOffset>0x2C</addressOffset>
           <size>8</size>
           <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>RX_READY</name>
-              <description>rx_ready [0]</description>
+              <name>V</name>
+              <description>v [7:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-            <field>
-              <name>TX_READY</name>
-              <description>tx_ready [1]</description>
-              <bitOffset>1</bitOffset>
-              <bitWidth>1</bitWidth>
+              <bitWidth>8</bitWidth>
               <access>read-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>DATA</name>
-          <description>SPI0.DATA, 64 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>64</size>
-          <access>read-write</access>
+          <name>SEQ</name>
+          <description>SPI0.SEQ, 16 bits at +0x30</description>
+          <addressOffset>0x30</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
           <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>RX</name>
-              <description>rx [31:0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>32</bitWidth>
+              <bitWidth>16</bitWidth>
               <access>read-only</access>
-            </field>
-            <field>
-              <name>TX</name>
-              <description>tx [63:32]</description>
-              <bitOffset>32</bitOffset>
-              <bitWidth>32</bitWidth>
-              <access>write-only</access>
             </field>
           </fields>
         </register>
         <register>
-          <name>HOLD</name>
-          <description>SPI0.HOLD, 1 bits at +0x20</description>
-          <addressOffset>0x20</addressOffset>
-          <size>8</size>
-          <access>read-write</access>
+          <name>STATE</name>
+          <description>SPI0.STATE, 16 bits at +0x32</description>
+          <addressOffset>0x32</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x1</resetMask>
+          <resetMask>0x0</resetMask>
           <fields>
             <field>
-              <name>SELECT</name>
-              <description>select [0]</description>
+              <name>V</name>
+              <description>v [15:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-write</access>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>XIP_FILLS</name>
+          <description>SPI0.XIP_FILLS, 32 bits at +0x34</description>
+          <addressOffset>0x34</addressOffset>
+          <size>32</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [31:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>32</bitWidth>
+              <access>read-only</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>CAL_US</name>
+          <description>SPI0.CAL_US, 16 bits at +0x38</description>
+          <addressOffset>0x38</addressOffset>
+          <size>16</size>
+          <access>read-only</access>
+          <resetValue>0x0</resetValue>
+          <resetMask>0x0</resetMask>
+          <fields>
+            <field>
+              <name>V</name>
+              <description>v [15:0]</description>
+              <bitOffset>0</bitOffset>
+              <bitWidth>16</bitWidth>
+              <access>read-only</access>
             </field>
           </fields>
         </register>
       </registers>
     </peripheral>
     <peripheral>
-      <name>FLASH_PROBE</name>
-      <description>flash_probe: 6 registers at 0xf0000200</description>
+      <name>SPI0_BUF</name>
+      <description>spi0_buf: 256 bytes of memory at 0xf0000200</description>
       <baseAddress>0xF0000200</baseAddress>
       <addressBlock>
         <offset>0x0</offset>
-        <size>0x20</size>
-        <usage>registers</usage>
+        <size>0x100</size>
+        <usage>buffer</usage>
       </addressBlock>
-      <registers>
-        <register>
-          <name>CS_FELL</name>
-          <description>FLASH_PROBE.CS_FELL, 1 bits at +0x00</description>
-          <addressOffset>0x0</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>SCK_EDGES</name>
-          <description>FLASH_PROBE.SCK_EDGES, 16 bits at +0x02</description>
-          <addressOffset>0x2</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>DQ_DRIVEN</name>
-          <description>FLASH_PROBE.DQ_DRIVEN, 1 bits at +0x04</description>
-          <addressOffset>0x4</addressOffset>
-          <size>8</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>SEEN</name>
-              <description>seen [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>GRANTS</name>
-          <description>FLASH_PROBE.GRANTS, 16 bits at +0x06</description>
-          <addressOffset>0x6</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>OE_EDGES</name>
-          <description>FLASH_PROBE.OE_EDGES, 16 bits at +0x08</description>
-          <addressOffset>0x8</addressOffset>
-          <size>16</size>
-          <access>read-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>COUNT</name>
-              <description>count [15:0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>16</bitWidth>
-              <access>read-only</access>
-            </field>
-          </fields>
-        </register>
-        <register>
-          <name>CLEAR</name>
-          <description>FLASH_PROBE.CLEAR, 1 bits at +0x0a</description>
-          <addressOffset>0xA</addressOffset>
-          <size>8</size>
-          <access>write-only</access>
-          <resetValue>0x0</resetValue>
-          <resetMask>0x0</resetMask>
-          <fields>
-            <field>
-              <name>STROBE</name>
-              <description>strobe [0]</description>
-              <bitOffset>0</bitOffset>
-              <bitWidth>1</bitWidth>
-              <access>write-only</access>
-            </field>
-          </fields>
-        </register>
-      </registers>
     </peripheral>
     <peripheral>
       <name>APOLLO_UART</name>
@@ -2361,7 +2595,7 @@
       <registers>
         <register>
           <name>ENABLE</name>
-          <description>INTC.ENABLE, 19 bits at +0x00</description>
+          <description>INTC.ENABLE, 20 bits at +0x00</description>
           <addressOffset>0x0</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2370,16 +2604,16 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>
         </register>
         <register>
           <name>PENDING</name>
-          <description>INTC.PENDING, 19 bits at +0x04</description>
+          <description>INTC.PENDING, 20 bits at +0x04</description>
           <addressOffset>0x4</addressOffset>
           <size>32</size>
           <access>read-write</access>
@@ -2388,9 +2622,9 @@
           <fields>
             <field>
               <name>MASK</name>
-              <description>mask [18:0]</description>
+              <description>mask [19:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>19</bitWidth>
+              <bitWidth>20</bitWidth>
               <access>read-write</access>
             </field>
           </fields>

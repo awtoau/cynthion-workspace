@@ -26,6 +26,8 @@ pub enum Interrupt {
     BOARD_CLOCKS_PLL_LOSS = 17,
     #[doc = "18 - HYPERRAM"]
     HYPERRAM = 18,
+    #[doc = "19 - SPI0"]
+    SPI0 = 19,
 }
 #[doc = r" TryFromInterruptError"]
 #[derive(Debug, Copy, Clone)]
@@ -47,6 +49,7 @@ impl Interrupt {
             13 => Ok(Interrupt::BOARD_GPIO_BUTTON),
             17 => Ok(Interrupt::BOARD_CLOCKS_PLL_LOSS),
             18 => Ok(Interrupt::HYPERRAM),
+            19 => Ok(Interrupt::SPI0),
             _ => Err(TryFromInterruptError(())),
         }
     }

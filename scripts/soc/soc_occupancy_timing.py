@@ -129,8 +129,6 @@ ARMS = {
     # netlist and the environment selects it -- set before `import top`, which
     # is where it is read, rather than by the caller's shell.
     "sync60": 'os.environ["CYNTHION_SYNC_MHZ"] = "60"\n',
-    # Removals.
-    "window-spi0": TRIMS["window-spi0"],
     # An addition, to test whether the relationship is monotonic or one-sided.
     "plus3-bridged-windows": TRIMS["plus3-bridged-windows"],
     # Controls.

@@ -48,12 +48,12 @@ SPI NOR flash the ECP5 boots from on Cynthion r1.4, U7. 4 MiB. Index: [`../hardw
 
 | design | DRIVE | SLEWRATE | PULLMODE | HYSTERESIS | source |
 |---|---|---|---|---|---|
-| SoC | 8 | SLOW | NONE | ON (DQ), unset (CS#) | `FLASH_DRIVE` / `FLASH_SLEWRATE` / `FLASH_PULLMODE` in [`cynthion_r1_4.py`](../../gateware/board/cynthion_r1_4.py) ([#459](https://github.com/awtoau/cynthion-workspace/issues/459)); before that unset, which `top.config` decodes as the same |
+| SoC | 16 | FAST | NONE | ON (DQ), unset (CS#) | `FLASH_DRIVE` / `FLASH_SLEWRATE` / `FLASH_PULLMODE` in [`cynthion_r1_4.py`](../../gateware/board/cynthion_r1_4.py) ([#459](https://github.com/awtoau/cynthion-workspace/issues/459)); the baseline values since [#593](https://github.com/awtoau/cynthion-workspace/issues/593) (was 8 SLOW) |
 | flash baseline | 16 | FAST | unset | not checked | baseline `gateware/hyperram_baseline/board_r14.py` (design choice, not a board fact) |
 
 - Rated: DRIVE 4/8/12/16 mA in the Trellis PIC bits; 24 mA in the Lattice datasheet, UNVERIFIED.
-- Gate: [`test_flash_pin_electricals.py`](../../tests/test_flash_pin_electricals.py). Explicit SoC values packing to the same bits as unset: UNVERIFIED (no before/after `top.bit` compare).
-- DRIVE x SLEWRATE sweep (4/8/12/16 x SLOW/FAST, build slug `<variant>-fdrive<D>-fslew<S>`, env `CYNTHION_FLASH_DRIVE` / `CYNTHION_FLASH_SLEWRATE`): planned, never run.
+- Gate: [`test_flash_pin_electricals.py`](../../tests/test_flash_pin_electricals.py).
+- DRIVE x SLEWRATE: no build axis since [#593](https://github.com/awtoau/cynthion-workspace/issues/593); the [#590](https://github.com/awtoau/cynthion-workspace/issues/590) baseline compared 16 FAST and 8 SLOW at 190 MHz (eye 8 both, [flash-baseline.md](flash-baseline.md)). A full 4/8/12/16 x SLOW/FAST sweep was never run.
 
 ## Datasheet ratings (Rev G §9.6, VCC 3.0-3.6 V on this board)
 
@@ -72,7 +72,7 @@ SPI NOR flash the ECP5 boots from on Cynthion r1.4, U7. 4 MiB. Index: [`../hardw
 
 - Pin rates at 133 MHz (SDR, one bit per lane per clock): 0Bh 16.6 MB/s, BBh 33.3, EBh 66.5; 03h at 50 MHz 6.25.
 - DTR (per the DTR datasheet, for the -IM part): rated 66 MHz SCK; 4 x 2 x 66e6 / 8 = 66 MB/s.
-- tPP 0.7 ms (in #100's body and `repos/apollo` `90c8b7b`) is from the preliminary 2014 datasheet; Rev G says 0.4 ms.
+- tPP 0.7 ms (in [#100](https://github.com/awtoau/cynthion-workspace/issues/100)'s body and `repos/apollo` `90c8b7b`) is from the preliminary 2014 datasheet; Rev G says 0.4 ms.
 
 ## Read modes and commands
 
@@ -135,8 +135,8 @@ Baseline (`50d95a9`, SCK 20 MHz, one pass, 2026-11-03, [#590](https://github.com
 | host, slow | `apollo flash`: Apollo software JTAG TAP, background SPI | only with no USRMCLK design loaded; `apollo flash-read` of all 4 MiB in one call corrupts past ~1.9 MB (`2b2ada5`) |
 | host, fast | `apollo flash --fast`: FlashBridge gateware in SRAM, USB bulk to the fabric | |
 | host program cost | 58,940 B at `0xb0000`: 3.33 s = 17.3 KiB/s (`repos/apollo` `90c8b7b`, 2026-08-06); one USB round trip 3.00 ms; part needs ~0.53 s of it | page loop on the SAMD11: [#100](https://github.com/awtoau/cynthion-workspace/issues/100) |
-| SoC, memory-mapped | `SPIFlashMemoryMap`, [register reference](../hardware.md#register-reference) | EBh non-continuous; SCK = sync / (2 x (1 + `FLASH_DIVISOR`)) = 60 / 2 = 30 MHz, ceiling 4 x 30e6 / 8 = 15.0 MB/s ([`top.py`](../../gateware/soc/top.py) `FLASH_MODE`, `FLASH_DIVISOR`); quad adopted in `03482f4` |
-| SoC, commands | [`flash.py`](../../gateware/soc/peripherals/flash.py) `HoldableSPIController` + `FairSPIControlPortCrossbar` (luna_soc's has two defects, [upstream-boundary.md](../upstream-boundary.md)) | removals approved in [#591](https://github.com/awtoau/cynthion-workspace/issues/591) |
+| SoC, memory-mapped | XIP window of [`flash.py`](../../gateware/soc/peripherals/flash.py) on the [#590](https://github.com/awtoau/cynthion-workspace/issues/590) core ([flash-soc-peripheral.md](flash-soc-peripheral.md)) | EBh 1-4-4 per 64 B line at SCK 180 MHz: 148 clocks + setup/hold/gap per line, pin ceiling 90 MB/s; UNVERIFIED on the board ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) |
+| SoC, commands | the same peripheral's command port: WREN + one descriptor transaction + BUSY poll | erase/program/ID/SR/SFDP from `firmware/cynthion-soc/src/flash.rs` |
 | sideband | `scripts/sideband_read.py` | |
 
 - Boot slots and partitions: [flash-partitioning.md](ecp5/flash-partitioning.md). Programming paths: [programming-paths.md](ecp5/programming-paths.md).

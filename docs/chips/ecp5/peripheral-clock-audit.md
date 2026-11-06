@@ -35,11 +35,7 @@ output of the `sync` PLL at 2×, `jtck` a local domain on the JTAG TCK pin.
 | [`peripherals/sideband_csr.py`](../../../gateware/soc/peripherals/sideband_csr.py) | `sync` only | none needed | — | **sound** |
 | [`peripherals/vbus_csr.py`](../../../gateware/soc/peripherals/vbus_csr.py) | `sync` only | none needed | — | **sound** |
 | [`peripherals/fabric_status.py`](../../../gateware/soc/peripherals/fabric_status.py) | `sync` only | none needed | `2**19` `sync` cycles (DTR cadence) | **sound** — scales harmlessly |
-| [`peripherals/flash_cdc.py`](../../../gateware/soc/peripherals/flash_cdc.py) | `sync` + `phy_domain` | two `AsyncFIFOBuffered` + `FFSynchronizer` on `cs` | — | **sound** |
-| [`peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) mmap / crossbar | `domain` param, honoured | none | `MMAP_DEFAULT_TIMEOUT = 256` cycles | **sound** |
-| `flash.py` `HoldableSPIController` | `domain` param, **not** honoured | none | — | **DEFECT 6** — latent |
-| `flash.py` `ObservablePHY` | `domain` param, honoured | one flop on `dq.i` (upstream) | SCK = `f_domain / 2(1+divisor)` | **sound** |
-| `flash.py` `FlashPinProbe` | hardcoded `sync` | **none** | — | **DEFECT 7** — latent |
+| [`peripherals/flash.py`](../../../gateware/soc/peripherals/flash.py) ([#593](https://github.com/awtoau/cynthion-workspace/issues/593)) | `sync` + `fsck` + `fcap`/`fcapn` | toggles over static payloads, `AsyncFIFO` for XIP words, `FFSynchronizer` for status | SCK = `fsck`, PLL0 (`clocks.py`) | not audited here; sim: `soc_flash_sim.py`. Defects 6 and 7 below were in the controller [#593](https://github.com/awtoau/cynthion-workspace/issues/593) replaced |
 | [`bus/jtag_stage.py`](../../../gateware/soc/bus/jtag_stage.py) | `jtck` + `sync` | `AsyncFIFO` for the stream, `FFSynchronizer` for `busy` and `cpu_hold` | `JTCK_CONSTRAINT_HZ` (constraint only) | **sound** |
 | [`bus/wishbone_pipe.py`](../../../gateware/soc/bus/wishbone_pipe.py) | `sync` only | none — a same-domain pipeline register | latency in cycles | **sound**; see **DEFECT 8** |
 | [`cpu/intc.py`](../../../gateware/soc/cpu/intc.py), [`cpu/clint.py`](../../../gateware/soc/cpu/clint.py), [`cpu/cpu.py`](../../../gateware/soc/cpu/cpu.py) | `sync` only | JTAG handled inside VexiiRiscv | `mtime` = 1 `sync` cycle | **sound**, with a firmware coupling |

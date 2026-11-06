@@ -26,15 +26,17 @@ pub const CONSOLE_SIZE: usize = 0x00000008;
 /// Interrupt source number wired to CONSOLE.
 pub const CONSOLE_IRQ: u32 = 1;
 
-/// spi0: 5 registers at 0xf0000100
+/// spi0: 20 registers at 0xf0000100
 pub const SPI0: usize = 0xf0000100;
 /// Size of the SPI0 window, in bytes.
 pub const SPI0_SIZE: usize = 0x00000040;
+/// Interrupt source number wired to SPI0.
+pub const SPI0_IRQ: u32 = 19;
 
-/// flash_probe: 6 registers at 0xf0000200
-pub const FLASH_PROBE: usize = 0xf0000200;
-/// Size of the FLASH_PROBE window, in bytes.
-pub const FLASH_PROBE_SIZE: usize = 0x00000020;
+/// spi0_buf: 256 bytes of memory at 0xf0000200
+pub const SPI0_BUF: usize = 0xf0000200;
+/// Size of the SPI0_BUF window, in bytes.
+pub const SPI0_BUF_SIZE: usize = 0x00000100;
 
 /// apollo_uart: 8 registers at 0xf0000500
 pub const APOLLO_UART: usize = 0xf0000500;
@@ -154,4 +156,4 @@ pub const CPU_CACHE_WAYS: u32 = 1;
 
 /// First 32 bits of SHA-256 over the SVD plus everything above:
 /// the map this firmware was built against. Host-compared (#307).
-pub const MAP_DIGEST: u32 = 0x2c96519f;
+pub const MAP_DIGEST: u32 = 0xc5373b58;
