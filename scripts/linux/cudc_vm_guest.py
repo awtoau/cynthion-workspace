@@ -65,7 +65,7 @@ def check(ok, what):
 
 def run(*cmd):
     log("$ " + " ".join(cmd))
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, check=False)
     for line in (p.stdout + p.stderr).splitlines():
         log(f"  {line}")
     if p.returncode:
@@ -91,7 +91,7 @@ class Kmsg:
                 if e.errno == errno.EPIPE:      # ring buffer overwrote unread records
                     continue
                 raise
-            head, _, text = rec.partition(";")
+            _, _, text = rec.partition(";")
             self.lines.append(text.split("\n", 1)[0])
 
     def drain(self):
@@ -278,7 +278,8 @@ def main():
     if not CONFIGFS.joinpath("usb_gadget").exists() and not os.path.ismount(CONFIGFS):
         run("mount", "-t", "configfs", "none", str(CONFIGFS))
 
-    have_ncm = subprocess.run(["modprobe", "-n", "usb_f_ncm"], capture_output=True).returncode == 0
+    have_ncm = subprocess.run(["modprobe", "-n", "usb_f_ncm"], capture_output=True,
+                              check=False).returncode == 0
     mods = ["udc_core", "libcomposite", "usb_f_acm"] + (["usb_f_ncm"] if have_ncm else [])
     for m in mods:
         run("modprobe", m)

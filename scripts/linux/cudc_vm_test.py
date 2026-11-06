@@ -111,7 +111,7 @@ def build():
     if rc != 0 or not KO.is_file():
         return False
     vermagic = subprocess.run(["modinfo", "-F", "vermagic", KO], capture_output=True,
-                              text=True).stdout.split()
+                              text=True, check=False).stdout.split()
     ok = bool(vermagic) and vermagic[0] == os.uname().release
     log(f"vermagic {vermagic[:1]} vs running {os.uname().release}: {'ok' if ok else 'MISMATCH'}")
     return ok
