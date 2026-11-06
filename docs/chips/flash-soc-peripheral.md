@@ -25,8 +25,8 @@ The W25Q32JV config flash on the SoC bus, built on the clean-room [#590](https:/
 | window | base | size | what |
 |---|---|---|---|
 | `spiflash` | `0x10000000` | 4 MiB | XIP, read-only, cached by the CPU (`main=1 exe=1`) |
-| `spi0` | `0xf0000100` | 64 B | command registers (below) |
-| `spi0_buf` | `0xf0000200` | 256 B | command data: reads = received bytes, writes = bytes to send; little-endian words |
+| `spi0` | `0xf0021000` | 64 B | command registers (below) |
+| `spi0_buf` | `0xf0021100` | 256 B | command data: reads = received bytes, writes = bytes to send; little-endian words |
 
 ## XIP
 

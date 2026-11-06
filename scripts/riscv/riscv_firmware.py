@@ -82,8 +82,8 @@ CONSOLE_BASE = 0xf0000000
 # Must match gateware/soc/top.py -- FLASH_BASE, FLASH_CSR_BASE
 # and FLASH_TEST_OFFSET there.
 FLASH_BASE = 0x10000000
-FLASH_CSR_BASE = 0xf0000100
-FLASH_PROBE_BASE = 0xf0000200
+FLASH_CSR_BASE = 0xf0021000
+FLASH_PROBE_BASE = 0xf0021100
 FLASH_ILA_BASE = 0xf0000300
 ILA_DEPTH = 1024
 # The offset the firmware reads twice, and benchmarks. Read only -- the write
