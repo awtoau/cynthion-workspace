@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SUBDIRS = ("apollo", "board", "fabric", "hyperram", "issues", "riscv", "sideband", "soc", "tools", "usb")
+SUBDIRS = ("apollo", "board", "fabric", "hyperram", "issues", "linux", "riscv", "sideband", "soc", "tools", "usb")
 
 for _dir in (HERE, *(HERE / name for name in SUBDIRS)):
     if _dir.is_dir() and str(_dir) not in sys.path:
