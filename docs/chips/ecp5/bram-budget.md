@@ -20,7 +20,7 @@ All built for r1.4, same device, package and speed grade.
 - Count by mode, not one mode: `grep -cE "^enum: EBR[0-9]+\.MODE " top.config` (all modes) agrees with nextpnr's `N/56` line; a `DP16KD`-only grep undercounts `PDPW16KD` cells (details: [`lfe5u-12f.md`](lfe5u-12f.md#block-ram)).
 - Recorded counts: 44 of 56 (42 `DP16KD` + 2 `PDPW16KD`; [`lfe5u-12f.md`](lfe5u-12f.md)); 48 of 56 with 8 KiB caches, 49 for the shipping geometry in the 2026-08-12 sweep below (those builds differ).
 - USB host SIE tx/rx FIFOs (512x8 each) in block RAM, 2 blocks ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)): `SyncFIFOBuffered` with the engine reading `r_level` (`docs/upstream-boundary.md`, GUH). Whole SoC with the earlier drop-in FIFO (`6465c5f`): metrics build 445, 2026-11-06, 33/56 BRAM, 19555 COMB (main before: 31, 20809).
-- UNVERIFIED: the current count. No build report exists under `tmp/` in this worktree; run `./dev.py metrics report`.
+- Current count: 54 of 56 (build #456, main 948d481, 2026-11-06): CPU memories and the small FIFOs moved to block RAM ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)).
 - Consumers: main block RAM 64 KiB at address 0 in the recorded builds (32 blocks); `top.py` now has `RAM_SIZE = 32 * 1024`. USB buffers 3, BTB 2, ILA 1; I-cache and D-cache 5 blocks each at 8 KiB. Doubling both caches from 4 to 8 KiB cost 4 blocks, not 6 (tag and status RAM did not double).
 - Spare went to the caches rather than RAM: `.bss` was 9,728 bytes and `.data` zero, so the rest of the RAM region was stack slack. Doubling the caches addresses the frontend-stall number [`../../rtic.md`](../../rtic.md) measured.
 

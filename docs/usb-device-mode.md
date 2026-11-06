@@ -139,12 +139,12 @@ Measured AUX figures, luna gateware, 512-byte bulk, AUX on a direct root port, 2
 
 ### Block RAM
 
-Hard constraint. [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md): 56 `DP16KD` blocks; last recorded whole-SoC count 33/56 (metrics build 445, 2026-11-06); current count UNVERIFIED there (`./dev.py metrics report`).
+Hard constraint. [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md): 56 `DP16KD` blocks; whole SoC uses 54/56 (build #456, main 948d481, board-tested 2026-11-06), so 2 spare.
 
-- Cost: one DP16KD (2 KiB = 4 x 512 B packets) per mapped pipe; 8 pipes = 8 blocks. EP0 CSR FIFO in LUTRAM.
+- Cost: one DP16KD (2 KiB = 4 x 512 B packets) per mapped pipe; 8 pipes = 8 blocks. EP0 FIFO in block RAM too (FIFOs belong in block RAM).
 - Pipes shared between legs: one FIFO serves both TARGET EPn and AUX EPn (both in fabric), so no second copy per leg.
 - Freed in a device-mode build: GUH host SIE FIFOs (2 blocks, [#619](https://github.com/awtoau/cynthion-workspace/issues/619)) and luna's AUX USB buffers (3 blocks), both replaced by our stack.
-- Still short -> next levers in that doc: main RAM (`RAM_SIZE`), cache geometry (64x1 saves 6 vs shipping 64x2).
+- Still short -> next lever: main RAM (`RAM_SIZE`). The instruction cache does not shrink.
 
 ## Increments
 
