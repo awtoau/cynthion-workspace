@@ -13,10 +13,14 @@
 
 # USB devices.
 SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6180", TAG+="uaccess"   # AUX -- riscv_console
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6181", TAG+="uaccess"   # AUX -- usb_serial
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6182", TAG+="uaccess"   # AUX -- usb_bulk
 SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6186", TAG+="uaccess"   # TARGET -- riscv_vex_console
 SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6187", TAG+="uaccess"   # TARGET -- riscv_bench
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6188", TAG+="uaccess"   # AUX -- usb_oneway
 
 # The tty interfaces some of them expose. SUBSYSTEM=="tty" matches the
 # interface, so vendor/product come from the parent device and need ATTRS.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6180", TAG+="uaccess"   # AUX -- riscv_console
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6181", TAG+="uaccess"   # AUX -- usb_serial
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="6186", TAG+="uaccess"   # TARGET -- riscv_vex_console
