@@ -26,10 +26,11 @@ from amaranth             import (Cat, Const, Elaboratable, Instance, Module, Mu
                                   ResetInserter, Signal, DomainRenamer)
 from amaranth.lib         import io, memory, wiring
 from amaranth.lib.cdc     import FFSynchronizer
-from amaranth.lib.fifo    import AsyncFIFO
 from amaranth.lib.wiring  import In, Out
 from amaranth_soc         import wishbone
 from amaranth_soc.memory  import MemoryMap
+
+from peripherals.bram_fifo import BramAsyncFIFO
 
 _spec = importlib.util.spec_from_file_location(
     "flash_baseline_spiflash",
@@ -676,8 +677,8 @@ class Flash(wiring.Component):
             m.d.comb += err_set[ERR_PLL_LOST].eq(1)
 
         # ---- XIP: line buffer, fill from the engine, ack per word
-        fifo = m.submodules.xip_fifo = AsyncFIFO(width=38, depth=LINE_BYTES // 4,
-                                                 w_domain="fsck", r_domain="sync")
+        fifo = m.submodules.xip_fifo = BramAsyncFIFO(width=38, depth=LINE_BYTES // 4,
+                                                     w_domain="fsck", r_domain="sync")
         m.d.comb += [fifo.w_en.eq(eng.xip_we),
                      fifo.w_data.eq(Cat(eng.xip_word, eng.xip_idx, eng.xip_wid))]
         line_wp = self._line.write_port(domain="sync")
