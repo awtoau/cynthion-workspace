@@ -22,7 +22,7 @@
 import importlib.util
 from pathlib import Path
 
-from amaranth             import (Cat, Const, Elaboratable, Instance, Module, Mux,
+from amaranth             import (Cat, ClockSignal, Const, Elaboratable, Instance, Module, Mux,
                                   ResetInserter, Signal, DomainRenamer)
 from amaranth.lib         import io, memory, wiring
 from amaranth.lib.cdc     import FFSynchronizer
@@ -481,6 +481,7 @@ class Flash(wiring.Component):
         # pads, registered in fsck by the core PHY
         self.pad_o, self.pad_oe, self.pad_i = Signal(4), Signal(4), Signal(4)
         self.pad_cs, self.pad_ck_en = Signal(), Signal()
+        self.debug = Signal(48)          # TEMPORARY (#593 debug)
 
         # Block RAM, not LUT RAM: logic cells are the scarce resource (#593).
         ebr = {"ram_style": "block"}
@@ -512,19 +513,36 @@ class Flash(wiring.Component):
         eng = _Engine(n_steps=self.n_steps, sck_mhz=self.sck_mhz, jedec_id=self.jedec_id,
                       cal_ref_addr=self.cal_ref_addr)
         m.submodules.engine = DomainRenamer("fsck")(eng)
-        phy = core.FlashPHY(eng.pins, pad_o=self.pad_o, pad_oe=self.pad_oe, pad_i=self.pad_i,
-                            pad_cs=self.pad_cs, pad_ck_en=self.pad_ck_en)
-        m.submodules.phy = DomainRenamer({"sync": "fsck", "cap": "fcap", "capn": "fcapn"})(phy)
-        m.d.comb += [phy.xfer.eq(eng.xfer), self.phasestep.eq(eng.phasestep)]
-
-        if not self.sim:
+        m.d.comb += self.phasestep.eq(eng.phasestep)
+        if self.sim:
+            phy = core.FlashPHY(eng.pins, pad_o=self.pad_o, pad_oe=self.pad_oe,
+                                pad_i=self.pad_i, pad_cs=self.pad_cs, pad_ck_en=self.pad_ck_en)
+            m.submodules.phy = DomainRenamer({"sync": "fsck", "cap": "fcap",
+                                              "capn": "fcapn"})(phy)
+            m.d.comb += phy.xfer.eq(eng.xfer)
+        else:
+            # The core PHY's output stage in the I/O registers (OFS1P3DX + OE register), so
+            # data-to-MCLK at the flash no longer depends on where the placer put a
+            # fabric flop (#593, board). One IOLOGIC has one clock, so the fcap input
+            # flop stays in fabric: the calibration scan absorbs its delay.
+            # - in: fcap, then fsck directly (xfer 0) or through an fcapn stage (xfer 1),
+            #   FlashPHY's SDR path; the DDR half (pins.i[4:8]) is unused (DESC_MASK).
             pads = platform.request("qspi_flash", 0, dir="-")
+            q_c, q_cn = Signal(4), Signal(4)
             for i in range(4):
-                buf = m.submodules[f"dq{i}"] = io.Buffer("io", pads.dq[i])
-                m.d.comb += [buf.o.eq(self.pad_o[i]), buf.oe.eq(self.pad_oe[i]),
-                             self.pad_i[i].eq(buf.i)]
-            m.submodules.cs = cs = io.Buffer("o", pads.cs)
-            m.d.comb += cs.o.eq(self.pad_cs)
+                o_q, t_q, pin_i = Signal(), Signal(), Signal()
+                for name, d, q in (("o", eng.pins.o[i], o_q), ("t", ~eng.pins.oe[i], t_q)):
+                    m.submodules[f"dq{i}_{name}"] = Instance(
+                        "OFS1P3DX", i_SCLK=ClockSignal("fsck"), i_SP=Const(1), i_CD=Const(0),
+                        i_D=d, o_Q=q)
+                m.submodules[f"dq{i}_bb"] = Instance("BB", i_I=o_q, i_T=t_q, o_O=pin_i,
+                                                     io_B=pads.dq.io[i])
+                m.d.fcap += q_c[i].eq(pin_i)
+            m.submodules.cs = cs = io.FFBuffer("o", pads.cs, o_domain="fsck")
+            m.d.comb += cs.o.eq(eng.pins.cs)
+            m.d.fcapn += q_cn.eq(q_c)
+            m.d.fsck += [eng.pins.i.eq(Mux(eng.xfer, q_cn, q_c)),
+                         self.pad_ck_en.eq(eng.pins.ck_en)]
             # CE changes on fsck edges = MCLK falling, so the gated clock has no runt.
             gated = Signal()
             m.submodules.mclk_gate = Instance("DCCA", i_CLKI=self.mclk, i_CE=self.pad_ck_en,
@@ -730,4 +748,12 @@ class Flash(wiring.Component):
                              fill_id.eq(fill_id + 1)]
                 m.d.comb += xip_go.eq(1)
 
+        # TEMPORARY (#593 debug): for the JTAG stager while the CPU is silent.
+        fills, xerrs = Signal(8), Signal(8)
+        with m.If(xip_go):
+            m.d.sync += fills.eq(fills + 1)
+        with m.If(err_set[ERR_XIP_WRITE] | err_set[ERR_XIP_BLOCKED] | err_set[ERR_XIP_FILL]):
+            m.d.sync += xerrs.eq(xerrs + 1)
+        m.d.comb += self.debug.eq(Cat(ready_s, cal_valid_s, cal_x4_s, pending, errors, xerrs,
+                                      cal_s[0:13], cal_s[16:32]))
         return m

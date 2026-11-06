@@ -972,6 +972,9 @@ class AwtoSoc(Elaboratable):
             fabric_status.fault_unclaimed.eq(bus_fault.unclaimed_count),
             fabric_status.fault_timeouts.eq(bus_fault.timeout_count),
             fabric_status.fault_worst.eq(bus_fault.worst_wait),
+            # TEMPORARY (#593 debug)
+            stager.debug.eq(Cat(flash.debug, bus_fault.timeout_count,
+                                stager.cpu_reset | ~flash.boot_ready)),
         ]
 
         # USB CDC-ACM, on the AUX port.

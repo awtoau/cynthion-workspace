@@ -163,6 +163,18 @@ class Sink:
             "frames":    (value >> 59) & 0x1f,
         }
 
+    def debug_word(self):
+        """TEMPORARY (#593 debug): status bits 64..127."""
+        value, _ = self._frame(bytes([CMD_NOP]) + b"\x00" * 15, capture=True)
+        d = value >> 64
+        return {
+            "ready": d & 1, "cal_valid": (d >> 1) & 1, "cal_x4": (d >> 2) & 1,
+            "pending": (d >> 3) & 1, "errors": (d >> 4) & 0x7f, "xip_errs": (d >> 11) & 0xff,
+            "cal_step": (d >> 19) & 0xff, "cal_lat": (d >> 27) & 0xf,
+            "cal_xfer": (d >> 31) & 1, "width_x1": (d >> 32) & 0xff,
+            "width_x4": (d >> 40) & 0xff, "bus_timeouts": (d >> 48) & 0xff,
+            "cpu_reset": (d >> 56) & 1,
+        }
     def set_reset(self, hold):
         self._frame(bytes([CMD_RESET]) + struct.pack("<I", 1 if hold else 0))
 
@@ -467,6 +479,7 @@ def main():
             return 0
 
         if args.status:
+            emit("debug: " + ", ".join(f"{k} {v:#x}" for k, v in sink.debug_word().items()))
             if link:
                 link.close()
             return 0

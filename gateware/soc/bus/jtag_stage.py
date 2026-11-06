@@ -192,6 +192,8 @@ class JTAGStager(Elaboratable):
         self.ack  = Signal()
 
         self.cpu_reset = Signal()
+        # TEMPORARY (#593 debug): shifted out after the 64-bit status, bits 64..127.
+        self.debug = Signal(64)
 
     def elaborate(self, platform):
         m = Module()
@@ -283,9 +285,11 @@ class JTAGStager(Elaboratable):
         m.submodules.busy_cdc = FFSynchronizer(busy, busy_jtck, o_domain="jtck")
 
         frames = Signal(5)
+        debug_jtck = Signal(64)
+        m.submodules.debug_cdc = FFSynchronizer(self.debug, debug_jtck, o_domain="jtck")
         status = Cat(Const(SIGNATURE, 16), staged, overflow, busy_jtck, cpu_hold,
-                     command, frames)
-        tdo_sr = Signal(64)
+                     command, frames, debug_jtck)
+        tdo_sr = Signal(128)
         m.d.comb += self.tdo.eq(tdo_sr[0])
 
         # The output path runs on `active`, not `shifting`.
