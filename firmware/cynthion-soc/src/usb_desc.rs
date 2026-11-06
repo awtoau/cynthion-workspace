@@ -78,6 +78,14 @@ mod tests {
         assert_eq!(bulk_pair(read), Some(BulkPair { ep_in: 4, ep_out: 4 }));
     }
 
+    /// FS bulk below 64 (USB 2.0 5.8.3 allows 8/16/32/64): the packet size is the descriptor's.
+    #[test]
+    fn bulk_mps_is_wmaxpacketsize() {
+        let c = config(&[&[endpoint(0x81, 2, 32), endpoint(0x02, 2, 16)]]);
+        let pair = bulk_pair(&c).unwrap();
+        assert_eq!((pair.ep_in, pair.mps_in, pair.ep_out, pair.mps_out), (1, 32, 2, 16));
+    }
+
     #[test]
     fn total_length_from_the_header() {
         let c = config(&[&[endpoint(0x81, 2, 64), endpoint(0x01, 2, 64)]]);
