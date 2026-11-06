@@ -19,16 +19,17 @@ Engines, all on the LUNA device bench (`usb_host/model.py`; the PHY takes a byte
   the edits claim "any read latency"; both must meet the same contract.
 
 Contract, every engine against `upstream`:
-- every cycle identical up to the stray-write scenarios: UTMI TX (the wire), `status`,
+- every cycle identical up to the TX-writes-during-transfer scenarios: UTMI TX, `status`,
   `tx_pending`, `txs.ready`;
 - the RX byte stream identical in order (`rxs.valid` may arrive later: read latency);
 - absolute: OUT 1 and 512 on the wire byte for byte with no gap; start the cycle after the
   last write; last write in the start cycle (4 of 5 sent, 5th drained); OUT ZLP; IN 512
   drained at 1, 1/2, 1/7 and after the packet; TX writes during a transfer; flush mid-fill;
-  RX overflow at depth 500 with 500 bytes drained; 16 OUTs with random TX writes complete.
+  RX overflow at depth 500 with 500 bytes drained.
 - Deliberate deviation, not held against `upstream`: stray TX writes every 3 cycles across
-  IPD_DRAIN_TX's exit cycle (3 phases) end the drain within 5 cycles of the last write.
-  Upstream's exit (`ipd == max-1` and empty, else `ipd` wraps) extends it by ~1024 cycles.
+  IPD_DRAIN_TX's exit cycle (3 phases) end the drain within 5 cycles of the last write, and
+  16 OUTs with TX writes on 30% of cycles all complete. Upstream's exit (`ipd == max-1` and
+  empty, else `ipd` wraps) adds ~1024 cycles per miss and overruns the transfer budget.
 
 Negative controls (each must fail):
 - `upstream+SyncFIFOBuffered`: the plain FIFO swap without the engine edits; the per-cycle
@@ -77,10 +78,10 @@ IN_DRAIN_CYCLES = 4_000     # 512 bytes at 1/7 is 3584 cycles
 OUT_DRAIN_CYCLES = 16
 # A FIFO with room takes a byte every cycle; a full one never frees outside a transfer.
 PUT_WAIT_CYCLES = 1
-# IPD_DRAIN_TX after a stray TX write at W: readable by W+1+latency (<= 2 here), read, idle
-# seen the cycle after: W+5. An ipd wrap (the old exit) is ~1024.
+# Stray TX write at W, read latency L (1 for SyncFIFOBuffered, 2 for Latency2): read at
+# W+1+L, empty at W+2+L, idle sampled at W+4+L. Bound for L <= 2: 6. An ipd wrap is ~1024.
 STRAY_WRITE_PERIOD = 3
-STRAY_DRAIN_BOUND = 5
+STRAY_DRAIN_BOUND = 6
 NOBODY = 0x55               # no device answers here: OUT data reaches the wire, then TIMEOUT
 PID_DATA = (0xC3, 0x4B)
 
@@ -120,6 +121,9 @@ def upstream_sie():
         if attr.startswith("_SOF"):
             setattr(module.USBSOFController, attr, getattr(sie_module.USBSOFController, attr))
     return module
+
+
+RANDOM_STAGE = "16 OUTs with random TX writes"
 
 
 class HarnessStall(Exception):
@@ -235,10 +239,10 @@ def run_engine(engine, depth, rng_seed, ref_module):
     rng = random.Random(rng_seed)
     m, host, device, restore = make_bench(engine, depth, ref_module)
     ctrl, host_utmi, dev_utmi = host.ctrl, host.utmi, device.utmi
-    trace, wire, sofs, data_ends, res = [], [], [], [], {"rx": []}
+    trace, wire, res = [], [], {"rx": []}
 
     async def sampler(ctx):
-        cycle, in_packet, first = 0, False, None
+        cycle = 0
         while True:
             _, _, *v = await ctx.tick().sample(
                 ctrl.tx_pending, ctrl.txs.ready, ctrl.status.as_value(), host_utmi.tx_valid,
@@ -246,13 +250,6 @@ def run_engine(engine, depth, rng_seed, ref_module):
             pend, trdy, status, txv, txd, dval, dact, ddat = v
             trace.append((pend, trdy, status, txv, txd if txv else None))
             wire.append((cycle, dval, dact, ddat))
-            if dval and not in_packet:
-                first = int(ddat)
-                if first == 0xA5:
-                    sofs.append(cycle)
-            if in_packet and not dact and first in PID_DATA:
-                data_ends.append(cycle)
-            in_packet = bool(dact) and (in_packet or bool(dval))
             cycle += 1
 
     async def put(ctx, payload, start_with_last=False):
@@ -298,7 +295,8 @@ def run_engine(engine, depth, rng_seed, ref_module):
             if ctx.get(ctrl.rxs.valid) and r:
                 received.append(int(ctx.get(ctrl.rxs.payload)))
             write = ((bool(writes_every) and cycle % writes_every == 0)
-                     or rng.random() < write_prob or (write_at is not None and write_at(len(wire))))
+                     or rng.random() < write_prob or (write_at is not None
+                         and write_at(len(wire), ctx.get(ctrl.status.response).value)))
             ctx.set(ctrl.txs.valid, write)
             ctx.set(ctrl.txs.payload, rng.randrange(256))
             tx_bytes += ctx.get(host_utmi.tx_valid)
@@ -373,37 +371,33 @@ def run_engine(engine, depth, rng_seed, ref_module):
         got, resp, done, _ = await transact(ctx, TransferType.IN, 0, BULK_IN_ENDPOINT,
                                             ready=lambda c: 0, drain=lambda c: 1)
         res["in"]["after"] = (got, resp, done)
+        # From here TX bytes are written during transfers: upstream's IPD exit can wrap (the
+        # deliberate deviation), so the per-cycle contract stops here.
+        res["contract_end"] = len(trace)
         payload = [rng.randrange(256) for _ in range(64)]
         _, _, done, mark = await transact(ctx, TransferType.OUT, NOBODY, 1, payload=payload,
                                           writes_every=37)
         res["writes_during"] = (payload, data_packets(mark), done)
-        res["contract_end"] = len(trace)
         res["stage"] = "stray writes across the IPD exit"
-        # Stray TX writes every STRAY_WRITE_PERIOD cycles across IPD_DRAIN_TX's exit cycle.
-        # A TIMEOUT OUT ends at a fixed offset from the SOF before it, so a reference run
-        # without writes finds that cycle; each phase then puts writes across it.
-        await transact(ctx, TransferType.OUT, NOBODY, 1, payload=[1] * 8)
-        end = res["idle_at"] - sofs[-1]
+        # Stray TX writes every STRAY_WRITE_PERIOD cycles across IPD_DRAIN_TX's first exit
+        # cycle: response turns TIMEOUT on entry, the exit test is ipd_max-1 cycles later.
+        exit_at = sie_module.USBSIE._XFER_IPD_HS - 1
         res["stray"] = []
         for phase in range(STRAY_WRITE_PERIOD):
-            offsets = [end - 6 + STRAY_WRITE_PERIOD * k + phase for k in range(4)]
-            sent, writes = len(data_ends), []
+            offsets = [exit_at - 6 + STRAY_WRITE_PERIOD * k + phase for k in range(4)]
+            entered, writes = [], []
 
-            def write_at(now, offsets=offsets, sent=sent, writes=writes):
-                hit = len(data_ends) > sent and now - sofs[-1] in offsets
+            def write_at(now, response, offsets=offsets, entered=entered, writes=writes):
+                if not entered and response == TransferResponse.TIMEOUT.value:
+                    entered.append(now)
+                hit = bool(entered) and now - entered[0] in offsets
                 if hit:
                     writes.append(now)
                 return hit
             *_, done, _ = await transact(ctx, TransferType.OUT, NOBODY, 1, payload=[1] * 8,
                                          write_at=write_at)
             res["stray"].append((done, len(writes), res["idle_at"] - max(writes, default=0)))
-        res["stage"] = "16 OUTs with random TX writes"
-        res["race_done"] = 0
-        for _ in range(16):
-            payload = [rng.randrange(256) for _ in range(rng.randrange(1, 64))]
-            *_, done, _ = await transact(ctx, TransferType.OUT, NOBODY, 1, payload=payload,
-                                         write_prob=0.3)
-            res["race_done"] += bool(done)
+        res["stage"] = "flush"
         ctx.set(ctrl.tx_flush, 1)
         for _ in range(depth + 8):
             await ctx.tick()
@@ -420,6 +414,21 @@ def run_engine(engine, depth, rng_seed, ref_module):
         payload = [rng.randrange(256) for _ in range(3)]
         _, _, done, mark = await transact(ctx, TransferType.OUT, NOBODY, 1, payload=payload)
         res["after_flush"] = (payload, data_packets(mark), done)
+        # Last but one: upstream's exit (ipd wrap) can overrun the budget and stall here.
+        res["stage"] = RANDOM_STAGE
+        res["race_done"] = 0
+        for _ in range(16):
+            payload = [rng.randrange(256) for _ in range(rng.randrange(1, 64))]
+            *_, done, _ = await transact(ctx, TransferType.OUT, NOBODY, 1, payload=payload,
+                                         write_prob=0.3)
+            res["race_done"] += bool(done)
+        # TX bytes left by the last stray write, then a bus reset mid-OUT (trace only).
+        res["stage"] = "bus reset mid-OUT"
+        ctx.set(ctrl.tx_flush, 1)
+        for _ in range(depth + 8):
+            await ctx.tick()
+        ctx.set(ctrl.tx_flush, 0)
+        await ctx.tick()
         await transact(ctx, TransferType.OUT, NOBODY, 1,
                        payload=[rng.randrange(256) for _ in range(depth)], bus_reset_after=100)
         for _ in range(2 * TRANSACTION_CYCLES):
@@ -509,7 +518,8 @@ def absolute_checks(res, depth, *, stray=True):
 
     After a stall, the scenarios that ran are still checked; the rest are absent.
     """
-    out = [("testbench ran to the end", "stall" not in res, res.get("stall", ""))]
+    stalled = "stall" in res and (stray or res.get("stage") != RANDOM_STAGE)
+    out = [("testbench ran to the end", not stalled, res.get("stall", ""))]
     if "writes_during" not in res:
         return out
 
@@ -553,28 +563,27 @@ def absolute_checks(res, depth, *, stray=True):
         out.append((f"stray TX writes across the IPD_DRAIN_TX exit ({STRAY_WRITE_PERIOD} phases): "
                     f"idle within {STRAY_DRAIN_BOUND} cycles of the last write, no ipd wrap",
                     not bad, f"(done, writes, idle - last write) {res['stray']}"))
-    if "flushed_pending" not in res:
+    if "after_flush" not in res:
         return out
-    out.append(("16 OUTs with random TX writes during each: all complete", res["race_done"] == 16,
-                f"{res['race_done']} of 16"))
     out.append(("TX flush mid-fill empties the FIFO (tx_pending 0)", res["flushed_pending"] == 0,
                 f"tx_pending {res['flushed_pending']}"))
     payload, packets, done = res["after_flush"]
     ok, why = packet_ok(payload, packets)
     out.append(("OUT 3 after the flush: exactly those 3 bytes", ok and done, why))
+    if stray and "race_done" in res:
+        out.append(("16 OUTs with random TX writes during each: all complete",
+                    res["race_done"] == 16, f"{res['race_done']} of 16"))
     return out
 
 
 def contract(run, ref):
     """None if `run` meets the per-cycle contract against `ref`, else why not."""
     (trace, res), (ref_trace, ref_res) = run, ref
-    if "stall" in res:
-        return res["stall"]
     end = ref_res["contract_end"]
+    if len(trace) < end:
+        return f"run ended at cycle {len(trace)}, before {end}: {res.get('stall', '')}"
     trace, ref_trace = trace[:end], ref_trace[:end]
     diff = next((i for i, (a, b) in enumerate(zip(trace, ref_trace)) if a != b), None)
-    if diff is None and len(trace) != len(ref_trace):
-        diff = min(len(trace), len(ref_trace))
     if diff is not None:
         got = trace[diff] if diff < len(trace) else "-"
         want = ref_trace[diff] if diff < len(ref_trace) else "-"
@@ -591,8 +600,10 @@ def section_engine(checks, seed, negative):
     runs = {}
     for name in names:
         runs[name] = run_engine({**ENGINES, **NEGATIVES}[name], depth, seed, ref_module)
+        res = runs[name][1]
         checks.note(f"ran {name}: {len(runs[name][0])} cycles, bare engine idle after a bus "
-                    f"reset mid-OUT: {runs[name][1]['idle_after_reset']}")
+                    f"reset mid-OUT: {res.get('idle_after_reset', '-')}; stray (done, writes, "
+                    f"idle - last write): {res.get('stray')} {res.get('stall', '')}")
     ref = runs["upstream"]
     for name in ENGINES:
         # The stray-write drain is the deliberate deviation from upstream (UPSTREAM_EDITS).
@@ -600,8 +611,9 @@ def section_engine(checks, seed, negative):
             checks.check(f"engine {name}: {what}", ok, detail)
         if name != "upstream":
             why = contract(runs[name], ref)
-            checks.check(f"engine {name} == upstream every cycle up to the stray-write scenarios "
-                         f"({ref[1]['contract_end']} cycles: wire, status, tx_pending, txs.ready) "
+            checks.check(f"engine {name} == upstream every cycle up to the TX-writes-during-"
+                         f"transfer scenarios ({ref[1]['contract_end']} cycles: wire, status, "
+                         "tx_pending, txs.ready) "
                          "and the same RX bytes",
                          why is None, why or "")
     if negative:
