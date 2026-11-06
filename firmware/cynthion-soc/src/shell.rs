@@ -156,7 +156,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("sideband", "FPGA_ADV: one-wire UART to the SAMD11, on T6"),
     ("time", "uptime, from mtime"),
     ("time set <epoch>", "tell the board the wall clock; no RTC, lost on reset"),
-    ("usb", "each port as one thing: rail, switch, cable, phy"),
+    ("usb", "each port as one thing: rail, switch, cable, phy; power it with `vbus`"),
     ("usb aux", "the usb console; this text leaves through it"),
     ("usb control", "the host port, and apollo's"),
     ("usb target_a", "the USB-A side of the passthrough"),
@@ -176,11 +176,10 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("usb3343", "the USB PHYs"),
     ("usb3343 status", "identity, line state and the data-line walk"),
     ("usb3343 reset", "pulse TARGET's RESETB, and prove it reached"),
-    ("vbus", "the VBUS switches"),
-    ("vbus status", "which switches are closed, and what is sourcing"),
+    ("vbus", "the VBUS switches; `usb <port> status` shows each rail"),
+    ("vbus status", "which switches are closed (same as `vbus`)"),
     ("vbus off", "open every switch"),
-    ("vbus control", "source from CONTROL"),
-    ("vbus both", "source from both"),
+    ("vbus control|aux|target_c", "source the shared rail from one port (TARGET_A is fed by control or aux)"),
     ("vbus charge [1.5|3]", "advertise a host current on TARGET"),
 ];
 
