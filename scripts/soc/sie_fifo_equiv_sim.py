@@ -98,6 +98,9 @@ UPSTREAM_EDITS = [
     ("with m.If(rx_fifo.r_level == 0):", "with m.If(~rx_fifo.r_rdy):"),
     ("with m.If((ipd == (ipd_max-1)) & (tx_fifo.r_level == 0)):",
      "with m.If((ipd == (ipd_max-1)) & ~tx_fifo.r_rdy):"),
+    ("with m.If(ipd != ipd_max-1):  # awto #619: hold, no wrap while TX bytes drain\n"
+     "                    m.d.usb += ipd.eq(ipd+1)",
+     "m.d.usb += ipd.eq(ipd+1)"),
     ("from ..guh_lower import *", "from usb_host.guh_lower import *"),
     ("from .types import *", "from usb_host.guh.types import *"),
     ("from .reset import *", "from usb_host.guh.reset import *"),

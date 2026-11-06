@@ -669,7 +669,8 @@ class USBSIE(wiring.Component):
                 ipd_max = Mux(detected_speed == USBHostSpeed.HIGH,
                               self._XFER_IPD_HS, self._XFER_IPD_FS)
                 ipd = Signal(range(self._XFER_IPD_FS), init=0)
-                m.d.usb += ipd.eq(ipd+1)
+                with m.If(ipd != ipd_max-1):  # awto #619: hold, no wrap while TX bytes drain
+                    m.d.usb += ipd.eq(ipd+1)
                 m.d.comb += tx_fifo.r_en.eq(tx_fifo.r_rdy)
                 with m.If((ipd == (ipd_max-1)) & (tx_fifo.r_level == 0)):
                     m.d.usb += ipd.eq(0)
