@@ -38,10 +38,9 @@ Why elastic buffering at the transport rather than a deep FIFO in the UART:
 from amaranth               import Module, ResetSignal, Signal
 from amaranth.lib           import wiring, stream
 from amaranth.lib.cdc       import AsyncFFSynchronizer
-from amaranth.lib.fifo      import AsyncFIFOBuffered
 from amaranth.lib.wiring    import In, Out
 
-from peripherals.bram_fifo  import BramSyncFIFOBuffered
+from peripherals.bram_fifo  import BramAsyncFIFOBuffered, BramSyncFIFOBuffered
 
 
 __all__ = ["StreamBuffer"]
@@ -96,9 +95,9 @@ class StreamBuffer(wiring.Component):
                 from amaranth import DomainRenamer
                 fifo = DomainRenamer(self._i_domain)(fifo)
         else:
-            fifo = AsyncFIFOBuffered(width=self._width, depth=self._depth,
-                                     w_domain=self._i_domain,
-                                     r_domain=self._o_domain)
+            fifo = BramAsyncFIFOBuffered(width=self._width, depth=self._depth,
+                                         w_domain=self._i_domain,
+                                         r_domain=self._o_domain)
         m.submodules.fifo = fifo
 
         # `w_stream` and `r_stream` are `amaranth.lib.fifo`'s own stream views of
