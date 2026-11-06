@@ -437,14 +437,17 @@ impl Host {
         let want = length.min(inbuf.len());
         // No data stage when wLength is 0, whatever the direction bit: the status stage is IN.
         if setup[0] & 0x80 != 0 && length != 0 {
-            while n < want {
-                let got = self.stage(r, TY_IN, 0, toggle, &[], &mut inbuf[n..want],
-                                     "control data in", DATA_US)?;
-                n += got;
+            // Every packet lands in `spill` so its true length decides when the stage ends, even
+            // past the caller's buffer; the data stage completes before the status stage (8.5.3).
+            let (mut done, mut last) = (0, mps);
+            while done < length && last == mps {
+                let mut spill = [0u8; 64];
+                last = self.stage(r, TY_IN, 0, toggle, &[], &mut spill, "control data in", DATA_US)?;
+                let keep = last.min(want.saturating_sub(n));
+                inbuf[n..n + keep].copy_from_slice(&spill[..keep]);
+                n += keep;
+                done += last;
                 toggle ^= 1;
-                if got < mps {
-                    break;
-                }
             }
             self.stage(r, TY_OUT, 0, 1, &[], &mut [], "control status", STATUS_US)?;
         } else {
