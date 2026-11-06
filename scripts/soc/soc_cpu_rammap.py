@@ -51,7 +51,7 @@ def force(source, names, style="block"):
 
 
 def run(source, label, names):
-    verilog = OUT / f"{label}.v"
+    verilog = OUT / f"{label}.forced.v"
     verilog.write_text(force(source, names))
     log = OUT / f"{label}.yosys.log"
     subprocess.run(["yosys", "-q", "-l", str(log), "-p",
