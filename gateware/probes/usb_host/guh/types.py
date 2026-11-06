@@ -8,8 +8,8 @@ Shared type definitions for USB Host components.
 from amaranth import *
 from amaranth.lib import enum
 
-from luna.gateware.interface.utmi import UTMIOperatingMode, UTMITerminationSelect
-from luna.gateware.usb.usb2 import USBSpeed as LUNAUSBSpeed
+from ..guh_lower import UTMIOperatingMode, UTMITerminationSelect
+from ..guh_lower import USBSpeed as LUNAUSBSpeed
 
 
 class UTMIOperatingModeEnum(enum.Enum, shape=unsigned(2)):

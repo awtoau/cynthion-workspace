@@ -11,9 +11,7 @@ from amaranth.lib import data, enum, fifo, stream, wiring
 from amaranth.lib.cdc import ResetInserter
 from amaranth.lib.wiring import In, Out
 
-from luna.gateware.interface.ulpi import UTMITranslator
-from luna.gateware.interface.utmi import *
-from luna.gateware.usb.usb2.packet import *
+from ..guh_lower import *
 
 from .types import *
 from .reset import *

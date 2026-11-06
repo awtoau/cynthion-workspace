@@ -21,8 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 LOG_DIR = ROOT / "tmp" / "logs"
-# `gateware/soc` imports the GUH host engine from `gateware/probes/usb_host/guh`, which imports luna.
-SOC_EXTRA_DIRS = (("probes", "usb_host", "guh"),)
+# Outside `gateware/soc` but built into it: the GUH host engine and our USB low layers (#612).
+SOC_EXTRA_DIRS = (("probes", "usb_host", "guh"), ("usbcore",))
 PACKAGES = ("luna", "luna_soc")
 REMOVED = ("Record", "DIR_FANIN", "DIR_FANOUT", "DIR_NONE", "amaranth.hdl.rec")
 

@@ -40,4 +40,8 @@ than an archaeology exercise. Anything we need that they do not do goes in a
 module beside this package -- `model.py` today, the CSR shim next -- or upstream.
 Simulation needs the timing constants scaled; `model.py` does that by patching
 the class attributes at run time rather than by editing the source.
+
+Exception (#612 S1): the luna imports in `sie.py`, `reset.py` and `types.py` now
+read `from ..guh_lower import ...`, which provides luna's names on our
+`gateware/usbcore/` layers. A pin bump re-applies those lines.
 """

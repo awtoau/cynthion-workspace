@@ -89,6 +89,7 @@ SIMS = [
     "usb_host_sie_sim",
     "usb_host_shim_sim",
     "usb_target_sim",
+    "usbcore_equiv_sim",
     "capture_codec_sim",
     "capture_framer_sim",
 ]
