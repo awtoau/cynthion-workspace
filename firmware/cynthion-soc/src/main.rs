@@ -142,6 +142,7 @@ mod target;
 mod timer;
 mod typec;
 mod uart;
+mod usb_desc;
 mod usb_host;
 mod wire;
 mod ulpi;

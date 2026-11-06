@@ -11,6 +11,7 @@ use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::clock;
+use crate::usb_desc;
 
 const ROLE: usize = 0x00;
 const CTRL: usize = 0x01;
@@ -738,21 +739,12 @@ impl Host {
 
     /// Find the first bulk IN and OUT endpoints; stored in `ep_in` / `ep_out` (numbers).
     pub fn find_endpoints(&mut self) -> Result<(), Error> {
-        let mut c = [0u8; 64];
-        let n = self.control(&setup_packet(0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, 64), &[], &mut c)?;
-        let (mut at, mut found_in, mut found_out) = (0, false, false);
-        while at + 7 <= n && c[at] >= 2 {
-            if c[at + 1] == 5 && c[at + 3] & 3 == 2 {
-                let number = c[at + 2] & 15;
-                if c[at + 2] & 0x80 != 0 && !found_in {
-                    (self.ep_in, found_in) = (number, true);
-                } else if c[at + 2] & 0x80 == 0 && !found_out {
-                    (self.ep_out, found_out) = (number, true);
-                }
-            }
-            at += c[at] as usize;
-        }
-        if found_in && found_out { Ok(()) } else { Err(Error::Bad("no bulk IN/OUT pair")) }
+        let mut c = [0u8; usb_desc::CONFIG_MAX];
+        let n = self.control(&setup_packet(0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, c.len() as u16), &[],
+                             &mut c)?;
+        let pair = usb_desc::bulk_pair(&c[..n]).ok_or(Error::Bad("no bulk IN/OUT pair"))?;
+        (self.ep_in, self.ep_out) = (pair.ep_in, pair.ep_out);
+        Ok(())
     }
 
     /// The whole AOA handshake from host role with the link up: enumerate, 51,

@@ -39,3 +39,6 @@ pub mod parse;
 
 #[path = "../../cynthion-soc/src/shell/rejoin.rs"]
 pub mod rejoin;
+
+#[path = "../../cynthion-soc/src/usb_desc.rs"]
+pub mod usb_desc;
