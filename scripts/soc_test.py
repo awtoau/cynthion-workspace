@@ -398,6 +398,8 @@ class BoardSession:
                     chunk = self.socket.recv(4096)
                     if not chunk:
                         break
+                elif not self.serial.is_open:
+                    break
                 else:
                     # Block for one byte, then take everything already waiting.
                     # `read(256)` sits out the port's whole 0.2 s timeout for a
@@ -405,6 +407,8 @@ class BoardSession:
                     chunk = self.serial.read(max(1, self.serial.in_waiting))
             except (TimeoutError, OSError):
                 continue
+            except TypeError:       # pyserial: close() raced the read (fd is None)
+                break
             if chunk:
                 with self.cond:
                     self.buf.extend(chunk)
