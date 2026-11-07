@@ -9,7 +9,7 @@ Method: `gh api` contents/readme reads and `gh search code|issues`. No clones we
 | Item | Status |
 |---|---|
 | pdsink/pdsink `docs/` | Only `docs/README.md` (a usage guide) and `images/`. No compliance notes or PPS/EPR quirk docs exist here. |
-| Ralim/IronOS PD source (`source/Core/Drivers/USBPD.cpp`) | Not read. Only issue #1599 and #1904 bodies and comments were read. |
+| Ralim/IronOS PD source (`source/Core/Drivers/USBPD.cpp`) | Not read. Only issue [#1599](https://github.com/awtoau/cynthion-workspace/issues/1599) and [#1904](https://github.com/awtoau/cynthion-workspace/issues/1904) bodies and comments were read. |
 | puzrin/reflow_micro PD | Only README.md:25 ("Powered from a 100-140 W USB PD charger"). `doc/` was listed but not grepped. |
 | Apple 2.4A/1.0A divider levels, Apple charger ID | Not found in any repo read. |
 | Samsung Galaxy S-series phone PPS/APDO behaviour | Not found. Only Samsung charger models appear (EP-TA845, EP-T6530, a 25 W unit). |
@@ -26,8 +26,8 @@ Method: `gh api` contents/readme reads and `gh search code|issues`. No clones we
 | Samsung EP-T6530 (65 W) | Pinecil v2 / TS101 reboots once tip heats above ~100 C. Stable in DFU mode. | Open. Reported as fixed by "PD tweaks" in dev builds; not confirmed. | https://github.com/Ralim/IronOS/issues/1668 ; https://github.com/Ralim/IronOS/issues/2104 (comment by CakeIsYummy21) |
 | Samsung 25 W PD charger (bundled with TS80P) | Charger picks QC instead of PD. TC66C charger reboots the iron every few seconds. | Open. | https://github.com/Ralim/IronOS/issues/1009 (comment by DjordjeMandic) |
 | Anker 735 GaNPrime 65 W; Anker 140 W power bank | TS101 on v2.23 RC3 reboots permanently. Reboots right after PD debug "state 6". v2.22 works. | Open. Ralim: "Anker chargers have had other issues before." | https://github.com/Ralim/IronOS/issues/2104 |
-| Apple A1947 61 W | Advertises 20.3V3A / 15V3A / 9V3A / 5.2V3A. Works with a Pinecil v2 that overshoots to 20 V on a 3 A charger when the tip is 6.2 ohm. | Open (no firmware workaround in thread). | https://github.com/Ralim/IronOS/issues/1904 ; #1668 (Apple charger "works good") |
-| Apple charger (unspecified) | Works with the same Samsung-reboot setup in #1668. | None needed. | https://github.com/Ralim/IronOS/issues/1668 |
+| Apple A1947 61 W | Advertises 20.3V3A / 15V3A / 9V3A / 5.2V3A. Works with a Pinecil v2 that overshoots to 20 V on a 3 A charger when the tip is 6.2 ohm. | Open (no firmware workaround in thread). | https://github.com/Ralim/IronOS/issues/1904 ; [#1668](https://github.com/awtoau/cynthion-workspace/issues/1668) (Apple charger "works good") |
+| Apple charger (unspecified) | Works with the same Samsung-reboot setup in [#1668](https://github.com/awtoau/cynthion-workspace/issues/1668). | None needed. | https://github.com/Ralim/IronOS/issues/1668 |
 | MacBook M2 Pro | TS101 cycles PD debug states 3 then 6, then reboots. | Open. | https://github.com/Ralim/IronOS/issues/1887 |
 | Baseus CCGAN10CUS 100 W | PD intermittently stays at 5 V with the Pinecil v2. | Tested a PPS-fix firmware (see Samsung EP-TA845 row). | https://github.com/Ralim/IronOS/issues/1599 |
 | Nedis 65 W travel charger | v2.22 firmware reaches only 16 V; v2.21 reached 20 V. | Open. | https://github.com/Ralim/IronOS/issues/1810 |

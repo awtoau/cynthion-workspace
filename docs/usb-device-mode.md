@@ -139,7 +139,7 @@ Measured AUX figures, luna gateware, 512-byte bulk, AUX on a direct root port, 2
 
 ### Block RAM
 
-Hard constraint. [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md): 56 `DP16KD` blocks; whole SoC uses 54/56 (build #456, main 948d481, board-tested 2026-11-06), so 2 spare.
+Hard constraint. [`chips/ecp5/bram-budget.md`](chips/ecp5/bram-budget.md): 56 `DP16KD` blocks; whole SoC uses 54/56 (build [#456](https://github.com/awtoau/cynthion-workspace/issues/456), main 948d481, board-tested 2026-11-06), so 2 spare.
 
 - Cost: one DP16KD (2 KiB = 4 x 512 B packets) per mapped pipe; 8 pipes = 8 blocks. EP0 FIFO in block RAM too (FIFOs belong in block RAM).
 - Pipes shared between legs: one FIFO serves both TARGET EPn and AUX EPn (both in fabric), so no second copy per leg.
