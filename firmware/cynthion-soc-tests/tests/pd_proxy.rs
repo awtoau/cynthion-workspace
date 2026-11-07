@@ -370,3 +370,11 @@ fn timers_survive_millisecond_counter_wrap() {
     assert!(b.advance(T_SINK_WAIT_CAP_MS - 1).is_empty());
     assert_eq!(b.advance(1), vec![Action::AuxHardReset, Action::Disarm]);
 }
+
+#[test]
+fn requests_while_aux_is_resetting_get_wait() {
+    let mut b = Bench::new();
+    b.bridged();
+    b.ev(Event::PhoneHardReset);
+    assert_eq!(b.ev(Event::PhoneRequest(rdo(1, 500, 500))), vec![Action::PhoneWait]);
+}

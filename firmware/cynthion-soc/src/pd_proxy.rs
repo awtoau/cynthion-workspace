@@ -517,7 +517,12 @@ impl Proxy {
     fn phone_request(&mut self, now: u32, request: u32, out: &mut Out) {
         match self.phase {
             Phase::Bridged => {}
-            Phase::Resetting | Phase::Discharging | Phase::Idle | Phase::Refused => return,
+            // The phone retries after tSinkRequest (100 ms) once AUX is back.
+            Phase::Resetting => {
+                out.push(Action::PhoneWait);
+                return;
+            }
+            Phase::Discharging | Phase::Idle | Phase::Refused => return,
             _ => {
                 out.push(Action::PhoneWait);
                 return;
