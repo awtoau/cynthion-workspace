@@ -242,7 +242,7 @@ Per control transfer, one round trip when firmware holds the whole IN reply and 
 | bus events | `RESET`/`BUS_STATE` -> udc-core | reports, bumps `rst_seq`, coalesces | reset/chirp/speed, suspend detect, VBUS |
 | stale/abort | drops late EP0 data, `-ECONNRESET` on new `SETUP` | drops + counts, `NAK STALE`, `STATS` | `stale` counter exists in `Ep0Device` |
 
-Conformance checks (each party can run its half against the software model in `scripts/linux/cudc_aux_model.py`):
+Conformance checks (each party can run its half against the software model in [`scripts/linux/cudc_aux_model.py`](../scripts/linux/cudc_aux_model.py)):
 
 - Descriptor + `HELLO` handshake; unknown type -> `NAK BAD_TYPE`.
 - Stale `CTRL_DATA_IN`/`STATUS` dropped, `stale_ctl` +1; stale `EP_*` after a bus reset dropped, `stale_ep` +1.
