@@ -274,7 +274,9 @@ The board defends itself; firmware defends the attached device. 20 V passthrough
   - Symbol `Transistor_FET:SiA449DJ` has 3 pins (D, G, S): a single device.
   - Part number `SIA483ADJ-T1-GE3` differs from the symbol name; Vishay's `DJ` suffix is used on duals in this package.
   - The Vishay `SIA483ADJ` datasheet is not in `sources/`; it settles it.
-- Until settled, treat an open switch as "not driven", not "isolated"; no firmware or self-test may rely on an open switch blocking current.
+- **Settled (datasheet):** SiA483ADJ is a single P-channel device, 30 V, body diode V_SD 0.85 V typ / 1.2 V max at 10 A ([`sia483adj.pdf`](https://www.vishay.com/docs/77080/sia483adj.pdf), `~/vendors/vishay/`, 9 pp). An open switch conducts source-to-drain through the body diode; it isolates only the other direction.
+  - Which direction leaks onto TARGET A for AUX at 9 V depends on how Q is oriented in the schematic; not read yet, so assume AUX leaks (about 8.2 V) until it is.
+- Until orientation is read, treat an open switch as "not driven", not "isolated"; no firmware or self-test may rely on an open switch blocking current.
 
 ### What is safe to command
 
