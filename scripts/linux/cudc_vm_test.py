@@ -46,8 +46,8 @@ SENTINEL = "CUDC_VM_TEST RESULT: "
 STALL_S = 60        # dev-box rule: no output line for 60 s = hung (awto-dan#53)
 # Backstop per step: 3x measured cold worst case (awto-dan#53), rounded up to whole seconds;
 # measurements in docs/usb-device-mode.md#increment-3-status. Expiry: kill, log last line.
-BUILD_LIMIT_S = 2
-VM_LIMIT_S = 7
+BUILD_LIMIT_S = 10
+VM_LIMIT_S = 18
 
 _log = None
 

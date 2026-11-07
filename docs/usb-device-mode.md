@@ -169,8 +169,33 @@ Skeleton with the Cynthion **stubbed**: [`linux/cynthion_udc/`](../linux/cynthio
 - Stub backend: in-kernel fake host. Pullup -> HS attach -> reset, GET_DESCRIPTOR(device, 64), reset, SET_ADDRESS (local, never reaches the gadget), GET_DESCRIPTOR device / config 9 / config full, SET_CONFIGURATION, SET_INTERFACE for bulk alts; then bulk IN -> OUT loopback per interface.
 - Test: [`scripts/linux/cudc_vm_test.py`](../scripts/linux/cudc_vm_test.py), virtme-ng VM only.
 - Result 2026-11-06, kernel 7.2.15-300.fc45, vng 1.41, 6 runs: PASS. ACM, NCM, ACM+NCM each reach state `configured`; ACM 2000 B tty loopback and NCM raw-frame loopback return in <= 0.4 ms; unbind + rmmod clean; dmesg has only the unsigned-module taint lines.
-- Timings behind the test's limits (same runs): module build <= 0.5 s cold, whole VM run <= 2.2 s.
-- Not covered by the stub: no AUX link or URBs; GET_STATUS / SET_FEATURE / CLEAR_FEATURE not issued; no halt, dequeue, wedge, suspend/resume, remote wakeup, VBUS or FS paths exercised; no string descriptors or class requests; loopback is a byte stream (no packet boundaries, ZLPs or toggles); no dummy_hcd descriptor comparison.
+- Timings behind the test's limits: module build <= 0.5 s cold (2.0 s at loadavg 30); whole VM run <= 2.2 s with the three loopback cases, <= 5.7 s with all cases (6 runs, loadavg ~30).
+- Stub covers (second pass, [#612](https://github.com/awtoau/cynthion-workspace/issues/612)): GET_STATUS / SET_FEATURE / CLEAR_FEATURE answered locally (incl. ENDPOINT_HALT, wedge stays halted, TEST_MODE, remote wakeup bit); string descriptors and class requests (CDC-ACM line coding, mass-storage reset); packet-level data path (512-multiples with and without ZLP, short packets, EP0 `req->zero` ZLP, data toggle across NAK, toggle reset on halt clear); halt, dequeue, wedge; suspend / resume / remote wakeup (refused unless enabled); VBUS off/on re-enumeration; function STALL on EP0; delayed status. Host control and contract: [`linux/cynthion_udc/README.md`](../linux/cynthion_udc/README.md#stub-host-control-debugfs-ctl).
+- dummy_hcd reference: ACM, NCM, ACM+NCM present identical device and configuration descriptors on the stub and on dummy_hcd, except `bEndpointAddress` numbers (the stub has ep1-4 in/out, dummy_hcd 15 endpoints); directions and positions match.
+- Still not covered: AUX link / URBs (backend is in-kernel); FS fallback; isochronous; real bus timing (the stub has no inter-packet delays).
+
+### Increments 1 and 2: sim status
+
+Device engine: [`gateware/usbcore/device.py`](../gateware/usbcore/device.py) (`Ep0Device`), our L1 codecs plus EP0 and a CPU command port. luna stays a sim oracle only (the harness runs the same case table against luna's model device and against this engine).
+
+- Engine: bus-reset detect, device chirp K, three host K-J pairs -> HS else FS; EP0 SETUP/IN/OUT/status with 64 B in/out buffers; STALL; SET_ADDRESS applied after the status ACK. Other endpoints get no response.
+- CPU port: `seq` bumps on every SETUP token and bus reset; every command carries `cmd_seq`, a stale one is dropped and counted (`stale`). Increment 1 = firmware answers from a table; increment 2 = firmware relays the SETUP and answers with what the PC stub returns.
+- Directed sim, [`scripts/soc/usb_device_ep0_sim.py`](../scripts/soc/usb_device_ep0_sim.py): speed negotiation, handshakes, toggles, retransmit, STALL, address, OUT data, stale seq, new SETUP aborts the armed transfer; `--negative` proves the stale checks can fail.
+- Closed loop, [`scripts/soc/usb_target_sim.py`](../scripts/soc/usb_target_sim.py) `own_*` groups: GUH host engine + shim + PHY model against `OwnDevice` ([`own_device.py`](../gateware/probes/usb_host/own_device.py)) with the firmware stand-in [`usb_own_device.py`](../scripts/soc/usb_own_device.py). `own_relay_*` adds a modelled AUX control channel and a stub (delay in clock cycles only; framing not modelled). `--sabotage` serves a wrong descriptor byte and must FAIL.
+- Not built: CSR wrapper and firmware, PING, SOF/suspend, EP1-4 bulk FIFOs, the AUX device side. The sim cannot say anything about milliseconds.
+
+Cells ([`scripts/soc/usb_device_area.py`](../scripts/soc/usb_device_area.py), yosys `synth_ecp5`, engine alone, no place and route):
+
+| block | LUT4 | CCU2C | FF | DPR16X4 | DP16KD |
+|---|---|---|---|---|---|
+| `Ep0Device` (whole, incl. the codecs below) | 598 | 73 | 322 | 16 | 0 |
+| token detector | 50 | 0 | 46 | 0 | 0 |
+| data receiver | 49 | 0 | 45 | 0 | 0 |
+| data generator | 119 | 0 | 33 | 0 | 0 |
+| handshake detector + generator | 23 | 0 | 16 | 0 | 0 |
+
+- The two 64 B buffers are distributed RAM (16 x DPR16X4), no block RAM. One DP16KD for both buffers is the alternative; the SoC has 2 spare ([`soc-size-review.md`](soc-size-review.md)).
+- Not counted: CSR wrapper, `usb`/`sync` crossing, EPn FIFOs. Against 24288 LUT4 the engine is about 2.5 % (LUT4 + 2 x CCU2C); the SoC is routing-bound at 92 % ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)), so whether it fits depends on the host engine leaving a device-mode build (open question 6).
 
 ## Open questions
 

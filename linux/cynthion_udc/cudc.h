@@ -52,6 +52,7 @@ struct cudc_backend_ops {
 	void (*dequeue)(struct cudc *u, struct cudc_ep *ep, struct cudc_request *req);
 	int  (*set_halt)(struct cudc *u, struct cudc_ep *ep, bool halt, bool wedge);
 	void (*setup_reply)(struct cudc *u);		/* ep0: data or status request queued */
+	int  (*wakeup)(struct cudc *u);			/* remote wakeup; backend refuses unless enabled */
 };
 
 struct cudc {
@@ -64,6 +65,7 @@ struct cudc {
 	bool			callbacks;		/* udc_async_callbacks */
 	bool			pulled_up;
 	u16			devstatus;		/* GET_STATUS(device) bits */
+	enum usb_device_state	resume_state;		/* state to return to after resume */
 };
 
 struct cudc *cudc_create(struct device *parent, const struct cudc_backend_ops *ops, void *backend);
@@ -73,6 +75,9 @@ void cudc_destroy(struct cudc *u);
 void cudc_bus_reset(struct cudc *u, enum usb_device_speed speed);
 int cudc_setup(struct cudc *u, const struct usb_ctrlrequest *ctrl);
 void cudc_set_address(struct cudc *u, u8 addr);
+void cudc_suspend(struct cudc *u);
+void cudc_resume(struct cudc *u);
+void cudc_vbus(struct cudc *u, bool on);
 
 /*
  * Request access for the backend: peek + touch req->buf + take, all under u->lock

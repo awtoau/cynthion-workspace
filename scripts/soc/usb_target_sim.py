@@ -43,6 +43,8 @@ from usb_host.model import (  # noqa: E402
     WireFault, scale_device_hs_fallback_for_simulation, scale_timing_for_simulation)
 from usb_host.target_device import TargetDevice  # noqa: E402
 from usb_host.aoa_phone import AoaPhone, PID_AOA, PID_AOA_ADB  # noqa: E402
+from usb_host.own_device import OwnDevice  # noqa: E402
+import usb_own_device as own  # noqa: E402
 from peripherals.usb_host import (  # noqa: E402
     REG_CTRL, REG_ADDR, REG_EP, REG_EVENTS, REG_LINK, REG_RESP, REG_RXLEN_LO, REG_RXLEN_HI,
     REG_RX_TAG, REG_RX_DATA, REG_TX_DATA, REG_RXPID, CTRL_BUS_RESET, CTRL_START, EV_DONE,
@@ -55,6 +57,7 @@ DATA_PID = (0xC3, 0x4B)     # DATA0, DATA1 as RXPID reads them
 
 # Poll budgets: each is an upper bound with a known expected duration (reads are 2 sync ticks).
 DONE_POLLS = 800            # one transaction < 12k usb cycles (shim_sim: DONE_POLLS)
+OWN_CASE_STALL_CYCLES = 425_000   # own engine: longest case measured 338_429 usb cycles (own_ctrl_std); x1.26
 CASE_STALL_CYCLES = 250_000   # longest case measured 182_419 usb cycles (reset_x3, #592); x1.37; sim time, not wall, so load cannot trip it
 RX_SPINS_PER_BYTE = 8       # RX_TAG polls per byte while the 128-entry FIFO refills from the SIE
 RX_DRAIN_MAX = 640          # firmware RX_DRAIN_MAX: SIE FIFO 512 + shim RX 128
@@ -74,6 +77,8 @@ def set_fault(fault, ctx, mode):
 class SimBackend(Backend):
     name = "sim"
 
+    own = False
+
     def __init__(self, ctx, bench, pc, fault, prof, phy_writes, clock):
         self.ctx, self.bench, self.pc, self.fault, self.prof = ctx, bench, pc, fault, prof
         self.clock = clock
@@ -86,7 +91,7 @@ class SimBackend(Backend):
         return self.clock[0]
 
     def case_stalled(self, started):
-        return self.clock[0] - started > CASE_STALL_CYCLES
+        return self.clock[0] - started > (OWN_CASE_STALL_CYCLES if self.own else CASE_STALL_CYCLES)
 
     def forget(self):
         self.addr, self.mps0, self.tog_in, self.tog_out = 0, 8, 0, 0
@@ -370,12 +375,33 @@ GROUPS = {
     "aoa": ("aoa_phone", ("aoa",), False),
     "aoa_seq": ("aoa_phone", ("aoa_seq",), True),
     "fuzz": ("model", ("fuzz",), True),
+    # Our own device engine (usbcore.device) in place of the LUNA model, firmware stand-in on its CPU port.
+    "own_ctrl_desc": ("model", ("ctrl_desc",), False),
+    "own_ctrl_string": ("model", ("ctrl_string",), False),
+    "own_ctrl_std": ("model", ("ctrl_std",), False),
+    "own_address": ("model", ("address",), False),
+    # Increment 2: the same cases with every SETUP relayed over a modelled AUX control channel to a stub.
+    "own_relay_std": ("model", ("ctrl_std",), False),
+    "own_relay_address": ("model", ("address",), False),
 }
 
+RELAY_LINK_CYCLES = 100     # one way, usb cycles: stands for one AUX bulk transfer (~100 us at HS polling)
 
-def make_bench(prof):
+
+def make_firmware(name, dev):
+    if name.startswith("own_relay"):
+        return own.RelayFirmware(dev.engine, own.Stub(), link=RELAY_LINK_CYCLES)
+    return own.TableFirmware(dev.engine, latency=40, sabotage=SABOTAGE)
+
+
+SABOTAGE = False        # --sabotage: the own firmware serves a wrong byte; the own_* groups must FAIL
+
+
+def make_bench(prof, own_device=False):
     fault = WireFault()
-    if prof.name == "aoa_phone":
+    if own_device:
+        dev = OwnDevice()
+    elif prof.name == "aoa_phone":
         dev = AoaPhone(detach_cycles=1500)
     else:
         dev = TargetDevice(full_speed_only=prof.name == "model_fs")
@@ -384,6 +410,7 @@ def make_bench(prof):
 
 def run_group(name, args):
     profile, case_groups, resets = GROUPS[name]
+    own_device = name.startswith("own_")
     if resets:
         scale_device_hs_fallback_for_simulation()
     prof = tc.get_profile(profile)
@@ -395,7 +422,8 @@ def run_group(name, args):
         cases = tc.fuzz_cases(args.seed, args.fuzz, prof)
     cases = tc.select(cases, prof, args.only, case_groups)
     started_group = time.monotonic()
-    bench, fault, dev = make_bench(prof)
+    bench, fault, dev = make_bench(prof, own_device)
+    firmware = make_firmware(name, dev) if own_device else None
     results, phy_writes = [], []
     worst = [0]
     clock = [0]                             # usb cycles since reset: the case guard's time base
@@ -413,6 +441,7 @@ def run_group(name, args):
     async def testbench(ctx):
         pc = shim.Csr(ctx, bench.port.bus)
         backend = SimBackend(ctx, bench, pc, fault, prof, phy_writes, clock)
+        backend.own = own_device
         up = await shim.host_up(pc)
         if up is None:
             results.append((None, "FAIL", "host never reached reset_done"))
@@ -429,7 +458,10 @@ def run_group(name, args):
                 ctx.set(dev.present, 1) if prof.name != "aoa_phone" else None
                 backend.invalidate()
 
-    shim.run(bench, testbench, extra=(watch_phy,), platform=shim.BoardPlatform())
+    extra = (watch_phy,) + ((firmware.run,) if firmware else ())
+    shim.run(bench, testbench, extra=extra, platform=shim.BoardPlatform())
+    if firmware:
+        emit(f"  {name}: own engine answered {len(getattr(firmware, 'log', None) or firmware.messages) } SETUPs/messages")
     checks = Checks(emit)
     emit(f"  {name}: profile {profile}, {len(cases)} cases, {time.monotonic() - started_group:.0f} s, "
          f"longest case {worst[0]} usb cycles")
@@ -460,7 +492,11 @@ def main():
     parser.add_argument("--fuzz", type=int, default=8, help="fuzz cases in group `fuzz`")
     parser.add_argument("--only", nargs="*", default=[], help="substrings of case names")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--sabotage", action="store_true",
+                        help="own_* groups: serve a wrong descriptor byte (negative control: must FAIL)")
     args = parser.parse_args()
+    global SABOTAGE
+    SABOTAGE = args.sabotage
     scale_timing_for_simulation()
     chosen = [g for g in GROUPS if not args.groups or g in args.groups]
     if args.list:
@@ -475,7 +511,8 @@ def main():
     if len(chosen) == 1:
         return run_group(chosen[0], args)
     # Amaranth's builder is not thread-safe: one process per group (as usb_host_shim_sim).
-    extra = ["--seed", str(args.seed), "--fuzz", str(args.fuzz)] + (["--only", *args.only] if args.only else [])
+    extra = ["--seed", str(args.seed), "--fuzz", str(args.fuzz)] + (["--only", *args.only] if args.only else []) \
+        + (["--sabotage"] if args.sabotage else [])
     procs = [(g, subprocess.Popen([sys.executable, __file__, g, *extra], stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True)) for g in chosen]
     status = 0
