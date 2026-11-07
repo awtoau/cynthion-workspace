@@ -15,6 +15,15 @@ use crate::pd_src::{Engine, Event, Out, State};
 use crate::uart::Uart;
 use crate::{power, timer, vbus};
 
+/// `log!` only while [`Pd::live`].
+macro_rules! say {
+    ($pd:expr, $uart:expr, $($arg:tt)*) => {
+        if $pd.live {
+            crate::log!($uart, $($arg)*);
+        }
+    };
+}
+
 const LOG: usize = 16;
 /// Attach poll, ms: the part settles in tens of ms; this is I2C load while armed
 /// with nothing plugged in, so no faster than a person can plug.
@@ -38,6 +47,10 @@ pub struct Pd {
     cc: u8,
     next_poll: u32,
     pending_vbus: Option<bool>,
+    /// Print each message and state change as it happens. Off by default: a
+    /// console nobody is reading backs up and stalls the main loop, and with it
+    /// the PD timers (measured: 150 ms resends became 5 s). The ring has them.
+    pub live: bool,
     log: [Entry; LOG],
     logged: u32,
     pub sent: u32,
@@ -61,6 +74,7 @@ impl Pd {
             cc: 0,
             next_poll: 0,
             pending_vbus: None,
+            live: false,
             log: [Entry { at: 0, dir: 0, message: Message::EMPTY }; LOG],
             logged: 0,
             sent: 0,
@@ -81,6 +95,10 @@ impl Pd {
         self.engine.event(timer::millis(), Event::Disarm);
     }
 
+    pub fn set_probe(&mut self, level: u8) {
+        self.engine.set_probe(level);
+    }
+
     pub fn disarm(&mut self) {
         self.armed = false;
         self.cc = 0;
@@ -89,13 +107,19 @@ impl Pd {
 
     fn record(&mut self, dir: u8, message: &Message, uart: &mut Uart) {
         let now = timer::millis();
+        if message.is_control() && message.kind() == crate::pd_msg::GOOD_CRC {
+            return;
+        }
         self.log[self.logged as usize % LOG] = Entry { at: now, dir, message: *message };
         self.logged = self.logged.wrapping_add(1);
-        crate::log!(
-            uart,
+        if !self.live {
+            return;
+        }
+        say!(
+            self, uart,
             "pd target_c {} {}",
             if dir == b'<' { "rx" } else { "tx" },
-            Decoded { message, caps: self.engine.caps() }
+            Decoded { message, caps: self.engine.all_caps() }
         );
     }
 
@@ -105,7 +129,7 @@ impl Pd {
         let out = self.engine.event(timer::millis(), event);
         self.apply(uart, bus, out);
         if self.engine.state != before {
-            crate::log!(uart, "pd target_c {} -> {}", before.name(), self.engine.state.name());
+            say!(self, uart, "pd target_c {} -> {}", before.name(), self.engine.state.name());
         }
     }
 
@@ -116,7 +140,7 @@ impl Pd {
                 Ok(()) => self.sent += 1,
                 Err(error) => {
                     self.send_errors += 1;
-                    crate::log!(uart, "pd target_c send failed: {}", error.as_str());
+                    say!(self, uart, "pd target_c send failed: {}", error.as_str());
                     let retry = self.engine.event(timer::millis(), Event::TxFailed);
                     // One level only: a failed send of the escalation is left to
                     // the engine's guard timer.
@@ -130,7 +154,7 @@ impl Pd {
             }
         }
         if out.hard_reset {
-            crate::log!(uart, "pd target_c hard reset signalling");
+            say!(self, uart, "pd target_c hard reset signalling");
             let _ = fusb302::pd_hard_reset(bus);
         }
         if out.vbus.is_some() {
@@ -147,14 +171,14 @@ impl Pd {
             self.feed(uart, bus, Event::TxSent);
         }
         if cause.retry_failed() {
-            crate::log!(uart, "pd target_c no GoodCRC after retries");
+            say!(self, uart, "pd target_c no GoodCRC after retries");
             self.feed(uart, bus, Event::TxFailed);
         }
         if cause.hard_reset_sent() {
             self.feed(uart, bus, Event::HardResetSent);
         }
         if cause.hard_reset_received() {
-            crate::log!(uart, "pd target_c hard reset received");
+            say!(self, uart, "pd target_c hard reset received");
             let _ = fusb302::pd_reset(bus);
             self.feed(uart, bus, Event::HardResetRx);
         }
@@ -168,7 +192,7 @@ impl Pd {
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    crate::log!(uart, "pd target_c rx failed: {}", error.as_str());
+                    say!(self, uart, "pd target_c rx failed: {}", error.as_str());
                     break;
                 }
             }
@@ -190,10 +214,10 @@ impl Pd {
                 match fusb302::pd_start(bus, cc) {
                     Ok(()) => {
                         self.cc = cc;
-                        crate::log!(uart, "pd target_c sink on cc{}", cc);
+                        say!(self, uart, "pd target_c sink on cc{}", cc);
                         self.feed(uart, bus, Event::Arm);
                     }
-                    Err(error) => crate::log!(uart, "pd target_c start: {}", error.as_str()),
+                    Err(error) => say!(self, uart, "pd target_c start: {}", error.as_str()),
                 }
             }
             return;
@@ -211,12 +235,12 @@ impl Pd {
             Some(false) => {
                 vbus::open_all();
                 monitor.vbus_disarm(bus);
-                crate::log!(uart, "pd target_c vbus off");
+                say!(self, uart, "pd target_c vbus off");
             }
             Some(true) => match vbus::charge_target_c(monitor, Some(&mut *bus)) {
-                Ok(mv) => crate::log!(uart, "pd target_c vbus on {} mV", mv),
+                Ok(mv) => say!(self, uart, "pd target_c vbus on {} mV", mv),
                 Err(_) => {
-                    crate::log!(uart, "pd target_c vbus on refused");
+                    say!(self, uart, "pd target_c vbus on refused");
                     self.disarm();
                 }
             },
@@ -230,7 +254,7 @@ impl Pd {
         let out = self.engine.event(timer::millis(), Event::Tick);
         self.apply(uart, bus, out);
         if self.engine.state != before {
-            crate::log!(uart, "pd target_c {} -> {}", before.name(), self.engine.state.name());
+            say!(self, uart, "pd target_c {} -> {}", before.name(), self.engine.state.name());
         }
     }
 
@@ -280,7 +304,7 @@ impl Pd {
                 entry.at / 1000,
                 entry.at % 1000,
                 entry.dir as char,
-                Decoded { message: &entry.message, caps: self.engine.caps() }
+                Decoded { message: &entry.message, caps: self.engine.all_caps() }
             );
         }
     }

@@ -152,7 +152,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("pac1954 hispeed [on|off]", "SLOW bit 0: the 3.4 MHz Pulse Gobbler filter"),
     ("pac1954 reset", "DESTRUCTIVE: PWRDN#, which loses the accumulators"),
     ("pd", "USB PD source on TARGET-C"),
-    ("pd target_c [status|caps|log]", "state and contract; offered PDOs; last messages"),
+    ("pd target_c [log|live|probe]", "state; PDOs offered; messages; chip regs"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),

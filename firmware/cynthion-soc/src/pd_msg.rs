@@ -7,9 +7,12 @@
 
 use core::fmt;
 
+/// Header revision field for PD 3.x.
+pub const REV_3: u16 = 2;
 pub const MAX_OBJECTS: usize = 7;
 /// Header bits 7:6, `01` = revision 2.0: the chip's auto-GoodCRC can only say
 /// 1.0 or 2.0 (SWITCHES1.SPECREV), and the two must agree.
+#[allow(dead_code)]
 const SPEC_REV: u16 = 1;
 
 // Control message types (header bits 4:0, no data objects).
@@ -45,13 +48,19 @@ pub struct Message {
 impl Message {
     pub const EMPTY: Message = Message { header: 0, data: [0; MAX_OBJECTS] };
 
-    /// A message from the source (power role source, data role DFP).
+    /// A message from the source (power role source, data role DFP), revision 2.0.
+    #[allow(dead_code)] // host tests; the engine passes its own revision
     pub fn source(kind: u8, id: u8, objects: &[u32]) -> Message {
+        Message::source_rev(kind, id, objects, SPEC_REV)
+    }
+
+    /// As [`Message::source`] with the header's SpecRev field (1 = 2.0, 2 = 3.x).
+    pub fn source_rev(kind: u8, id: u8, objects: &[u32], rev: u16) -> Message {
         let mut data = [0; MAX_OBJECTS];
         data[..objects.len()].copy_from_slice(objects);
         let header = (kind as u16 & 0x1f)
             | (1 << 5) // data role DFP
-            | (SPEC_REV << 6)
+            | (rev << 6)
             | (1 << 8) // power role source
             | ((id as u16 & 7) << 9)
             | ((objects.len() as u16) << 12);
@@ -146,6 +155,11 @@ pub fn decode_rx(bytes: &[u8]) -> Result<Message, RxError> {
 /// capable, set; every other flag clear.
 pub const fn fixed_pdo(mv: u32, ma: u32) -> u32 {
     (1 << 26) | ((mv / 50) << 10) | (ma / 10)
+}
+
+/// Programmable (PPS) APDO: voltage range in mV, current in mA.
+pub const fn pps_pdo(min_mv: u32, max_mv: u32, ma: u32) -> u32 {
+    (0b11 << 30) | ((max_mv / 100) << 17) | ((min_mv / 100) << 8) | (ma / 50)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

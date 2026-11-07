@@ -391,6 +391,8 @@ pub fn target_vbus(bus: &mut Bus) -> Result<bool, bus::Error> {
 pub fn pd_start(bus: &mut Bus, cc: u8) -> Result<(), bus::Error> {
     let port = Port::Target;
     let (pull_and_measure, tx) = if cc == 1 { (0x44, 1) } else { (0x88, 2) };
+    // Toggling off: while it is on the part's own logic owns SWITCHES0.
+    write(bus, port, REG_CONTROL2, 0)?;
     write(bus, port, REG_POWER, POWER_PD)?;
     write(bus, port, REG_SWITCHES0, pull_and_measure)?;
     write(bus, port, REG_SWITCHES1, SWITCHES1_SOURCE | tx)?;
@@ -409,6 +411,17 @@ pub fn pd_send(bus: &mut Bus, message: &crate::pd_msg::Message) -> Result<(), bu
     let mut frame = [0u8; crate::pd_msg::TX_MAX];
     let length = crate::pd_msg::encode_tx(message, &mut frame);
     bus.write_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &frame[..length])
+}
+
+/// Registers 0x01..=0x0f and 0x3c..=0x42 in order, for `pd target_c regs`.
+/// Reads nothing that clears (the INTERRUPT registers are 0x3e, 0x3f, 0x42).
+pub fn pd_registers(bus: &mut Bus, out: &mut [u8; 26]) -> Result<(), bus::Error> {
+    bus.read_registers(Port::Target.bus(), ADDRESS, 0x01, &mut out[..15])?;
+    out[15] = read(bus, Port::Target, 0x3c)?;
+    out[16] = read(bus, Port::Target, 0x3d)?;
+    out[17] = read(bus, Port::Target, 0x40)?;
+    out[18] = read(bus, Port::Target, 0x41)?;
+    Ok(())
 }
 
 pub fn pd_hard_reset(bus: &mut Bus) -> Result<(), bus::Error> {

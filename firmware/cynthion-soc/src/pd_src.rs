@@ -107,7 +107,12 @@ pub struct Engine {
     deadline: u32,
     tx_id: u8,
     rx_id: Option<u8>,
-    caps: [u32; 1],
+    caps: [u32; 3],
+    /// How many of `caps` are advertised; only the first is ever backed by power.
+    ncaps: usize,
+    rev: u16,
+    /// Extra fixed-PDO flag bits (probe level 2).
+    flags: u32,
     caps_count: u8,
     hard_resets: u8,
     next_ok: State,
@@ -123,7 +128,10 @@ impl Engine {
             deadline: 0,
             tx_id: 0,
             rx_id: None,
-            caps: [fixed_pdo(5000, 900)],
+            caps: [fixed_pdo(5000, 900), fixed_pdo(9000, 2000), pps_pdo(3300, 11000, 3000)],
+            ncaps: 1,
+            rev: 1,
+            flags: 0,
             caps_count: 0,
             hard_resets: 0,
             next_ok: State::Off,
@@ -132,13 +140,34 @@ impl Engine {
         }
     }
 
-    pub fn caps(&self) -> &[u32] {
+    /// Every PDO ever offered this session, for decoding logged Requests.
+    pub fn all_caps(&self) -> &[u32] {
         &self.caps
+    }
+
+    pub fn caps(&self) -> &[u32] {
+        &self.caps[..self.ncaps]
+    }
+
+    /// Diagnostic: also advertise 9 V and a PPS range, on a PD 3.x header, to see
+    /// what the sink asks for. Only the first PDO is backed: a Request for any
+    /// other is Rejected, so power never leaves 5 V.
+    pub fn set_probe(&mut self, level: u8) {
+        let on = level != 0;
+        self.ncaps = if on { 3 } else { 1 };
+        self.rev = if on { REV_3 } else { 1 };
+        // Level 2: the flags Samsung's own chargers set (unconstrained power,
+        // dual-role data) and a 25 W-class pair, in case the sink filters on them.
+        self.caps[1] = fixed_pdo(9000, if level >= 2 { 2770 } else { 2000 });
+        self.caps[2] = pps_pdo(3300, 11000, if level >= 2 { 2250 } else { 3000 });
+        self.flags = if level >= 2 { (1 << 27) | (1 << 25) } else { 0 };
+        self.caps[1] |= self.flags;
+        self.caps[0] = fixed_pdo(5000, (self.caps[0] & 0x3ff) * 10) | self.flags;
     }
 
     /// Advertise `ma` at 5 V. Takes effect on the next Source_Capabilities.
     pub fn set_current(&mut self, ma: u32) {
-        self.caps[0] = fixed_pdo(5000, ma);
+        self.caps[0] = fixed_pdo(5000, ma) | self.flags;
     }
 
     fn due(&self, now: u32) -> bool {
@@ -164,7 +193,7 @@ impl Engine {
     }
 
     fn send(&mut self, now: u32, out: &mut Out, kind: u8, objects: &[u32], ok: State, fail: State) {
-        out.send = Some(Message::source(kind, self.tx_id, objects));
+        out.send = Some(Message::source_rev(kind, self.tx_id, objects, self.rev));
         self.next_ok = ok;
         self.next_fail = fail;
         self.state = State::Sending;
@@ -173,8 +202,8 @@ impl Engine {
 
     fn send_caps(&mut self, now: u32, out: &mut Out) {
         self.caps_count += 1;
-        let caps = self.caps;
-        self.send(now, out, SOURCE_CAP, &caps, State::WaitRequest, State::Discovery);
+        let (caps, n) = (self.caps, self.ncaps);
+        self.send(now, out, SOURCE_CAP, &caps[..n], State::WaitRequest, State::Discovery);
     }
 
     fn hard_reset(&mut self, now: u32, out: &mut Out) {
@@ -197,10 +226,13 @@ impl Engine {
 
     fn negotiate(&mut self, now: u32, out: &mut Out, rdo: u32) {
         let rdo = Rdo(rdo);
-        if request_ok(rdo, &self.caps) {
+        if request_ok(rdo, &self.caps[..1]) {
             self.contract = Some(rdo);
             self.send(now, out, ACCEPT, &[], State::Transition, State::SoftResetWait);
         } else {
+            // Probe over: fall back to the one backed 5 V PDO so the sink settles.
+            self.ncaps = 1;
+            self.rev = 1;
             let again = if self.contract.is_some() { State::Ready } else { State::NeedCaps };
             self.send(now, out, REJECT, &[], again, State::SoftResetWait);
         }
@@ -318,8 +350,8 @@ impl Engine {
             }
             (State::SoftResetWait, true, ACCEPT) => self.enter(State::NeedCaps, now),
             (State::Ready, true, GET_SOURCE_CAP) => {
-                let caps = self.caps;
-                self.send(now, out, SOURCE_CAP, &caps, State::Ready, State::SoftResetWait);
+                let (caps, n) = (self.caps, self.ncaps);
+                self.send(now, out, SOURCE_CAP, &caps[..n], State::Ready, State::SoftResetWait);
             }
             (State::Ready, true, PING) => {}
             // Anything else: Reject (Not_Supported is a rev 3.0 message).

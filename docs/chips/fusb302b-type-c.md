@@ -408,6 +408,33 @@ The register definitions are on FUSB302B datasheet pages 21, 23 and 24.
 cable orientation is detected rather than assumed. Bare `vbus charge` uses
 Default current; the higher levels require explicit arguments.
 
+### USB PD source on TARGET-C ([#633](https://github.com/awtoau/cynthion-workspace/issues/633))
+
+- Code: `src/pd_msg.rs` (fields, FIFO framing), `src/pd_src.rs` (policy engine, host-tested), `src/pd.rs` (glue), `src/fusb302.rs` (`pd_*` register functions).
+- Armed by `usb target_c power on [1.5|3]`; the source toggle picks the CC pin, `pd_start` switches that pin to PD.
+- Shell: `pd target_c` (status), `log` (last 16 messages, timestamped, decoded), `caps`, `live` (print as they happen), `regs`, `probe [1|2|off]`.
+- Spec: `~/vendors/usb-if/sources/USB_PD_R3_1_V1.6_2022-10.pdf` (868 pp, manifest in `~/vendors/usb-if/README.md`). Chip: datasheet pp. 21-33.
+- Cross-checked against Linux `drivers/usb/typec/tcpm/fusb302.c` (GPL-2.0+; token sequence, N_RETRIES, toggle off before PD). Nothing copied.
+
+Register settings for PD (all measured working against an S20):
+
+| register | value | why |
+|---|---|---|
+| `POWER` | `0x0f` | internal oscillator on; PD cannot send without it |
+| `CONTROL2` | `0` | **toggle off**; with `TOGGLE` set the TX FIFO fills and never transmits (`STATUS1.TX_FULL`) |
+| `SWITCHES0` | `0x44` / `0x88` | Rp + measure on the settled CC pin only |
+| `SWITCHES1` | `0xb4 \| TXCCn` | source, DFP, SPECREV 2.0, `AUTO_CRC` (chip GoodCRC can say 1.0/2.0 only) |
+| `CONTROL3` | `0x05` | `AUTO_RETRY`, 2 retries (nRetryCount) |
+| `MASK`/`MASKA`/`MASKB` | `0x7f`/`0xe2`/`0xfe` | VBUSOK; HARDRST, TXSENT, HARDSENT, RETRYFAIL; GCRCSENT |
+
+Policy timers (PD R3.1 V1.6 Table 6-63 / 7-22), named in `pd_src.rs`: tTypeCSendSourceCap 150 ms, tSenderResponse 33 ms, tSrcTransition 30 ms, tPSHardReset 30 ms, tSrcRecover 800 ms, send guard 10 ms, nCapsCount 50, nHardResetCount 2.
+
+Gotchas:
+
+- A received GoodCRC also lands in the RX FIFO; it is dropped from the log.
+- Live console output with nobody reading stalls the main loop (150 ms resends became 5 s); hence `live` is off by default.
+- `usb target_c power on 3` (Rp 3 A) leaves `TOGSS` at 0 with the S20 attached, so PD never starts. 1.5 A and Default settle.
+
 ### The interrupt, and where the level-sensitive trap is actually handled
 
 Each `int` line has its own source. Clearing a controller means reading three
