@@ -532,7 +532,7 @@ def table():
          S("reset", E()), S("enumerate", E(length=4), addr=DEV_ADDR)],
         needs=ADDRESSED, after=ADDRESSED, profiles=("model_fs",),
         about="power cycle the target; sim approximates VBUS loss as detach/attach (no VBUS model); "
-              "board: `vbus off` opens ALL switches, run with --allow-vbus")
+              "board: `usb <port> power off|on`, run with --allow-vbus")
     add("suspend_resume", "events_misc", [],
         sim="engine has no suspend/resume control: SOFs only stop by leaving host role",
         board="same", about="SOF gap > 3 ms suspends; resume signalling absent")
@@ -768,6 +768,10 @@ class Backend:
             self.level = CONFIGURED
 
 
+class PowerNotReady(Exception):
+    """The target port is unpowered and the run was not allowed to power it."""
+
+
 class BoardBackend(Backend):
     """The same ops as `usb <port> ...` lines. Written from the firmware source; not run."""
 
@@ -841,8 +845,39 @@ class BoardBackend(Backend):
         if not self.allow_vbus:
             return Result("error", text="--allow-vbus not given")
         self.level = NONE
-        t = self.say("vbus off" if state == "off" else "vbus charge")
-        return Result("ack", text=t)
+        t = self.say(f"usb {self.port} power {'off' if state == 'off' else 'on'}")
+        return Result("ack" if t.strip().startswith(state) else "error", text=t)
+
+    def power_state(self):
+        """(on, reply): the register's view from `usb <port> power`; on is None if unparsable."""
+        t = self.say(f"usb {self.port} power")
+        m = re.match(r"(on|off)\s+c\d a\d t\d", t.strip())
+        return (m.group(1) == "on" if m else None), t
+
+    def ensure_power(self, allow):
+        """The port is powered before `role host`. Returns the prior state (True = was on).
+
+        Unpowered and `allow` unset fails loudly with the command that fixes it (#625).
+        """
+        on, text = self.power_state()
+        if on is None:
+            raise PowerNotReady(f"`usb {self.port} power` gave {text!r}")
+        if not on:
+            if not allow:
+                raise PowerNotReady(f"{self.port} is not powered; pass --power or run "
+                                    f"`usb {self.port} power on`")
+            t = self.say(f"usb {self.port} power on")
+            if not t.strip().startswith("on "):
+                raise PowerNotReady(f"`usb {self.port} power on` refused: {t.strip()!r}")
+        return on
+
+    def restore_power(self, was_on):
+        """Leave the port as `ensure_power` found it."""
+        on, _ = self.power_state()
+        if on and not was_on:
+            self.say(f"usb {self.port} power off")
+        elif on is False and was_on:
+            self.say(f"usb {self.port} power on")
 
     def do_await_connect(self):
         for _ in range(CONNECT_POLLS):
@@ -933,6 +968,30 @@ def selftest():
         b.level = CONFIGURED
         status, _ = loop.run_until_complete(run_case(b, unhandled, get_profile(name), print))
         expect(f"NAK refusal on {name}", (status, b.level if status == "PASS" else None), want)
+    # #625: power gate before `role host`.
+    for name, reply, allow, want in (
+            ("on", "on  c1 a0 t0", False, (True, [])),
+            ("off, not allowed", "off  c0 a0 t0", False, "POWER"),
+            ("garbled", "?", True, "POWER")):
+        link = FakeLink({"power": reply})
+        b = BoardBackend(link, "target_a", get_profile("generic"), print)
+        try:
+            got = (b.ensure_power(allow), link.sent[1:])
+        except PowerNotReady:
+            got = "POWER"
+        expect(f"ensure_power {name}", got, want)
+    link = FakeLink({"power": "off  c0 a0 t0"})
+    b = BoardBackend(link, "target_a", get_profile("generic"), print)
+    # canned reply cannot turn on, so the refusal is what is reported
+    try:
+        b.ensure_power(True)
+        expect("ensure_power refused", "no exception", "PowerNotReady")
+    except PowerNotReady:
+        expect("ensure_power on line", link.sent, ["usb target_a power", "usb target_a power on"])
+    link = FakeLink({"power": "on  c1 a0 t0"})
+    b = BoardBackend(link, "target_a", get_profile("generic"), print)
+    b.restore_power(False)
+    expect("restore turns off what it turned on", link.sent[-1], "usb target_a power off")
     emit = print
     for line in bad:
         emit("FAIL " + line)
@@ -971,6 +1030,8 @@ def main():
     parser.add_argument("--group", nargs="*", default=[])
     parser.add_argument("--allow-vbus", action="store_true",
                         help="permit `vbus off` (opens every switch) for the power-cycle case")
+    parser.add_argument("--power", action="store_true",
+                        help="power the port (`usb <port> power on`) if it is off, and restore it after")
     parser.add_argument("--console", help="tty node instead of the USB console")
     args = parser.parse_args()
     if args.selftest:
@@ -997,19 +1058,28 @@ def main():
     link.settle(0.05)
     link.read_until_prompt(2.0)
     backend = BoardBackend(link, args.port, prof, emit, args.allow_vbus)
-    backend.say(f"usb {args.port} role host", 4.0)
+    try:
+        was_on = backend.ensure_power(args.power)
+    except PowerNotReady as e:
+        emit(f"POWER: {e}")
+        link.close()
+        return 2
+    try:
+        backend.say(f"usb {args.port} role host", 4.0)
 
-    counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "UNSUPPORTED": 0, "SKIP": 0}
-    loop = asyncio.new_event_loop()
-    for case in cases:
-        status, detail = loop.run_until_complete(run_case(backend, case, prof, emit))
-        counts[status] += 1
-        if status == "FAIL":        # as the sim: bus reset before the next case, so one wedge
-            backend.invalidate()    # (the Pixel's EP0 after NAKed requests, #572) does not cascade
-        if status != "SKIP":
-            emit(f"  {status:11} {case.name}  {detail}")
-        if status == "FAIL" and case.group == "fuzz":
-            emit(f"      replay: --seed {args.seed} --only {case.name}")
+        counts = {"PASS": 0, "FAIL": 0, "XFAIL": 0, "UNSUPPORTED": 0, "SKIP": 0}
+        loop = asyncio.new_event_loop()
+        for case in cases:
+            status, detail = loop.run_until_complete(run_case(backend, case, prof, emit))
+            counts[status] += 1
+            if status == "FAIL":        # as the sim: bus reset before the next case, so one wedge
+                backend.invalidate()    # (the Pixel's EP0 after NAKed requests, #572) does not cascade
+            if status != "SKIP":
+                emit(f"  {status:11} {case.name}  {detail}")
+            if status == "FAIL" and case.group == "fuzz":
+                emit(f"      replay: --seed {args.seed} --only {case.name}")
+    finally:
+        backend.restore_power(was_on)
     link.close()
     emit(f"{counts}")
     return 1 if counts["FAIL"] else 0
