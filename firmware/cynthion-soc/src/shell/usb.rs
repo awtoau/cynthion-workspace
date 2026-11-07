@@ -6,7 +6,7 @@
 //! what a cable plugs into and what a person is actually asking about:
 //!
 //!     usb aux            everything about AUX -- rail, switch, cc, phy
-//!     usb target_c disable   make it inert -- no power, no ALERT, no PD
+//!     usb target_a power on  drive the port (CONTROL, else AUX)
 //!
 //! **The inverse index of `board`.** `board` walks the tree once and shows every
 //! port shallowly; this shows one port completely. Same drivers, same numbers,
@@ -92,46 +92,11 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
                 let _ = writeln!(uart, "no host engine on {}", PORTS[index].0);
             }
         }
-        _ => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
-            Some((name, what, missing)) => planned(uart, index, name, what, missing),
-            None => {
-                let _ = writeln!(uart, "usage: usb {} [status|power|disable|enable|role|reset|desc|\
+        _ => {
+            let _ = writeln!(uart, "usage: usb {} [status|power|role|reset|desc|\
 enum|ctrl|setup|in|out|tx|rx|addr|aoa|pump|echo]", PORTS[index].0);
-            }
-        },
+        }
     }
-}
-
-/// The verbs that are NOT built yet, and what each one is waiting on.
-///
-/// Registered rather than omitted, and each says which driver gap blocks it.
-/// A verb that is missing from the table is indistinguishable from one that was
-/// never planned, and `usage:` lines are where intent goes to be forgotten.
-///
-/// **None of them touch hardware.** A half-done `off` is worse than none: the
-/// first version opened EVERY VBUS switch, because there is no per-switch open
-/// in the driver -- so a command scoped to one port silently cut the other two.
-const VERBS: [(&str, &str, &str); 2] = [
-    // DISABLED, not "off". Off is an action and says nothing about what is
-    // still live; disabled is a state, and the state wanted here is inert --
-    // the port draws nothing, sources nothing, raises no ALERT and answers no
-    // PD. Three separate mechanisms, and "off" reads as only the first.
-    ("disable", "inert: no power in or out, no ALERT, no PD response",
-     "three gaps -- no per-switch open in `vbus.rs`, no per-channel limit \
-disarm in `power.rs`, no write path to the FUSB302B's SWITCHES0/POWER"),
-    ("enable", "the inverse: rail live, ALERT armed, CC pulls attached",
-     "same three, and `vbus.rs` refuses source combinations by policy"),
-];
-
-/// A verb that exists in the vocabulary and not yet in the firmware.
-///
-/// It names the gap. "not implemented" tells a reader to go and find out what
-/// is missing; this tells them, so the next person to pick it up starts from the
-/// driver rather than from the shell.
-fn planned(uart: &mut Uart, index: usize, verb: &str, what: &str, missing: &str) {
-    let _ = writeln!(uart, "usb {} {} -- NOT IMPLEMENTED", PORTS[index].0, verb);
-    let _ = writeln!(uart, "  intent    {}", what);
-    let _ = writeln!(uart, "  blocked   {}", missing);
 }
 
 /// Everything this SoC can see about one port.

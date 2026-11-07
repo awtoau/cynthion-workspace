@@ -927,6 +927,8 @@ def main():
                         f"`usb target_c {verb}` is registered and reports no engine")
         command("usb target_c bogus", [b"usage: usb target_c [status|"],
                 "an unknown `usb <port>` verb prints the usage line")
+        command("usb target_a disable", [b"usage: usb target_a [status|power|"],
+                "the `disable` stub is gone: it falls to the usage line (#625)")
         command("usb target_a power sideways", [b"usage: usb target_a power [status|on|off]"],
                 "`power` with a bad word prints its usage (#625)")
         command("usb target_a power", [b"c0 a0 t0"],
