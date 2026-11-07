@@ -102,9 +102,10 @@ CC_UNMEASURED = 0xFF
 
 VBUS_REASONS = {1: "too_high", 2: "too_low", 3: "uv", 4: "ov", 5: "unreadable",
                 6: "not_sampling", 7: "not_output", 8: "other_source_closed",
-                9: "cc_failed", 10: "no_board"}
-POWER_REASONS = {1: "no_sample", 2: "no_board", 3: "read_failed"}
-UNAVAILABLE_NO_BOARD = 2
+                9: "cc_failed"}
+# status UNAVAILABLE, any op
+UNAVAILABLE_REASONS = {1: "no_board", 2: "no_sample", 3: "read_failed"}
+VBUS_NONE = 0xFF                # vbus.set `source` when nothing was closed
 
 SELFTEST_ITEMS = ["alu", "muldiv", "comp", "atomic", "ram", "clock", "uart",
                   "gateware", "flash", "phy", "rail"]
@@ -367,7 +368,7 @@ def _golden_cases() -> list[tuple[str, bytes, bytes]]:
     add("vbus.status", 6, (), (0x84, 0b100, 0b0010))
     add("vbus.set", 7, (1, VBUS_ON, 1500), (0, 5001, 0))
     add("led.get", 8, (), (0b001001, 0b100000, 1))
-    add("led.set", 9, (3, LED_ON), (0b001001, 0))
+    add("led.set", 9, (3, LED_ON), (0b001001, 0b100000))
     add("typec.status", 10, (),
         (1, 0x3, 1, 0x91, 1, 1, 0, 1, 2, 4,
          1, 0x91, 0, CC_UNMEASURED, CC_UNMEASURED, 0, 0, 0))

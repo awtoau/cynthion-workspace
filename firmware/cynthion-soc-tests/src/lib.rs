@@ -49,3 +49,10 @@ pub mod pd_decode;
 #[path = "../../cynthion-soc/src/pd_verbs.rs"]
 pub mod pd_verbs;
 
+// The CRC the op frames use, exactly as `cynthion-soc` and `cynthion-boot` build it.
+#[path = "../../cynthion-soc/src/hyperram.rs"]
+pub mod hyperram;
+
+#[path = "ops_pure.rs"]
+pub mod ops;
+
