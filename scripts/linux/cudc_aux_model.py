@@ -122,8 +122,9 @@ class Xfer:
 
 
 class AuxModel(VirtualDevice):
-    def __init__(self, log, hold_events=False):
+    def __init__(self, log, hold_events=False, mutate=()):
         super().__init__()
+        self.mutate = set(mutate)       # test-the-test: deliberately broken model rules
         self.log = log
         self.m = threading.RLock()
         self.cv = threading.Condition(self.m)
@@ -157,16 +158,18 @@ class AuxModel(VirtualDevice):
         self.hold_events = hold_events  # test knob: delay SETUP/RESET events on the wire
         self.held = []
         self.enum_done = threading.Event()
-        self._kmsg = os.open("/dev/kmsg", os.O_WRONLY)
+        self.lines = []
+        self.all_lines = []
 
     # ---------------- logging ----------------
 
     def kmsg(self, text):
+        """Host-side log line (kept in `lines` for the test; /dev/kmsg writes are rate limited)."""
         self.log(f"model host: {text}")
-        try:
-            os.write(self._kmsg, f"<6>model host: {text}\n".encode())
-        except OSError:
-            pass
+        with self.m:
+            self.lines.append(f"model host: {text}")
+            self.all_lines.append(f"model host: {text}")
+            self.cv.notify_all()
 
     def violation(self, text):
         self.violations.append(text)
@@ -225,6 +228,8 @@ class AuxModel(VirtualDevice):
             return urb.ep == 2
 
     def _console_pump(self):
+        if "console" in self.mutate:
+            self.console_data = b""
         while self.console_data and self.console_in:
             urb = self.console_in.pop(0)
             n = min(urb.length, len(self.console_data))
@@ -317,8 +322,9 @@ class AuxModel(VirtualDevice):
             self.send(T["ACK"], 0, payload=struct.pack("<BBH", typ, ep, seq))
         else:
             self.send(T["NAK"], 0, payload=struct.pack("<BBHB", typ, ep, seq, code))
-            if code != E["STALE"]:
+            if code in (E["BAD_TYPE"], E["BAD_LEN"], E["BAD_EP"], E["UNSUPPORTED"], E["STATE"]):
                 self.stats["bad_msg"] += 1
+            self.cv.notify_all()
 
     def _command(self, urb):
         d = urb.data
@@ -371,7 +377,7 @@ class AuxModel(VirtualDevice):
 
     def _ctl_cmd(self, typ, ep, seq, pl, now):
         x = self.xfer
-        if seq != self.ctl_seq:
+        if seq != self.ctl_seq and "stale_ctl" not in self.mutate:
             self.stats["stale_ctl"] += 1
             return self._reply(False, typ, ep, seq, E["STALE"])
         if x is None or x.done or x.seq != seq:
@@ -392,7 +398,7 @@ class AuxModel(VirtualDevice):
 
     def _ep_cmd(self, name, typ, ep, seq, pl):
         e = self.eps.get(ep)
-        if seq != self.rst_seq:
+        if seq != self.rst_seq and "stale_ep" not in self.mutate:
             self.stats["stale_ep"] += 1
             return self._reply(False, typ, ep, seq, E["STALE"])
         if e is None:

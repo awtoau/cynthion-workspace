@@ -17,7 +17,6 @@ remote host ==TARGET== [Ep0Device | EPn FIFOs] --gateware-- [AUX device] ==AUX==
 - Control plane (EP0 transfers, endpoint config, bus events) = firmware, through the **control channel** (framed messages).
 - Data plane (TARGET EPn) = gateware only: TARGET EPn FIFO <-> AUX pipe; the CPU never touches data.
 - Device mode is a separate bitstream ([#612](https://github.com/awtoau/cynthion-workspace/issues/612) decision); the AUX composite is fixed.
-- **No shell, no policy logic on the Cynthion (Dan, 2026-11-07).** Linux owns USB PD (stock `tcpm` + `fusb302` over an I2C adapter), power policy and the UDC. The firmware relay is not planned: wherever this document says "firmware", read **link engine = gateware** (it answers the frames directly; a soft CPU, if any, only helps it). Section 14 adds the non-USB frames (CSR, interrupts, console stream, heartbeat).
 
 ## 2. AUX descriptors
 
@@ -232,7 +231,7 @@ Per control transfer, one round trip when firmware holds the whole IN reply and 
 
 ## 12. Who does what
 
-| duty | kernel backend | firmware relay (= link engine in gateware since 2026-11-07, section 1) | gateware FIFOs and engine |
+| duty | kernel backend | firmware relay | gateware |
 |---|---|---|---|
 | AUX descriptors (section 2) | binds by triple | owns the descriptor set, `HELLO` | endpoint FIFOs for control `0x03`/`0x83` + 8 pipes |
 | `HELLO` | sends first, waits `T_HELLO` | replies, resets all link state on every `HELLO` | n/a |
@@ -251,67 +250,23 @@ Conformance checks (each party can run its half against the software model in [`
 - IN pipe: 1024-byte transfer gives packets 512, 512; with `ZERO` a third zero-length packet.
 - OUT pipe: packets 512, 100 end a 1024-byte URB early with 612 bytes.
 
-## 14. Version 1 extensions: CSR, interrupts, console stream, heartbeat
+## 14. Reserved: generic CSR access and interrupt events (optional, not in the first build)
 
-All on the control channel (same framing, section 4; same ordering: one FIFO per direction). Endpoint-FIFO frames and everything above are unchanged.
+Reserved so Linux can reach SoC registers later without a framing change (Dan, 2026-11-07: scope stays the USB gadget relay; no I2C adapter, PD, console stream or dead-man is designed here). A version 1 Cynthion answers these types with `NAK UNSUPPORTED`; the kernel backend does not send them.
 
 | code | name | dir | `ep` | `seq` | payload |
 |---|---|---|---|---|---|
 | `0x20` | `CSR_READ` | P>C | 0 | request id | `{u32 addr, u16 count}`: `count` 32-bit words from byte address `addr` (word aligned, auto-increment) |
 | `0x21` | `CSR_WRITE` | P>C | 0 | request id | `{u32 addr}` + `n` x `u32` (burst, auto-increment) |
-| `0x22` | `CSR_TXN` | P>C | 0 | request id | one or more ops, executed in order, atomically (below) |
-| `0x23` | `CSR_REPLY` | C>P | 0 | request id (echo) | `{u8 status, u8 reserved, u16 ops_done}` + read data of all read ops in order |
-| `0x24` | `IRQ` | C>P | 0 | 0 | `{u32 pending}`: level snapshot of the interrupt sources (below) |
-| `0x25` | `CONSOLE` | both | stream id | 0 | 1..512 raw bytes (stream 0 = SoC debug UART) |
-| `0x26` | `HEARTBEAT` | P>C | 0 | counter | `{u16 period_ms}`: the PC's promised period |
-| `0x27` | `HEARTBEAT_ACK` | C>P | 0 | counter (echo) | `{u8 state}`: 0 armed, 1 dead-man tripped (link must `HELLO` again) |
+| `0x22` | `CSR_TXN` | P>C | 0 | request id | ordered ops, executed back to back without interleaving other CSR frames: `{u8 op, u8 flags, u16 count, u32 addr}` + write data; `op` 0 write, 1 read |
+| `0x23` | `CSR_REPLY` | C>P | 0 | request id (echo) | `{u8 status, u8 reserved, u16 ops_done}` + read data in order |
+| `0x24` | `IRQ` | C>P | 0 | 0 | `{u32 pending}`: level snapshot of interrupt sources, sent on change (coalesced, latest wins) |
 
-- **CSR space**: the SoC CSR bus, 32-bit registers, little-endian words, byte addresses. A single frame touches at most 1024 words. Registers/maps are generated from the SoC (`soc-csr-bridge.md`); the link knows no register names.
-- **Request id**: `seq` of a CSR frame is chosen by the PC; the reply echoes it. Replies come in request order (the engine is in order), so the id is for matching and diagnostics, not reordering. It is NOT an epoch: CSR frames are never stale-dropped (a CSR access is valid across SETUPs and resets).
-- **`CSR_TXN` ops** (concatenated): `{u8 op, u8 flags, u16 count, u32 addr}` then, for write ops, `count` x `u32`:
-
-| `op` | name | meaning |
-|---|---|---|
-| 0 | `WRITE` | write `count` words, auto-increment |
-| 1 | `READ` | read `count` words (appended to the reply) |
-| 2 | `POLL` | read one word until `(value & mask) == match` or `limit` reads; data = `{u32 mask, u32 match, u16 limit, u16 reserved}`; the final value is appended to the reply; `limit` exhausted -> `ERR_TIMEOUT` |
-
-- **Atomic**: the engine runs a `CSR_TXN` back to back; no other CSR frame, no console byte that touches CSR, interleaves. It stops at the first error: `ops_done` = ops completed, `status` = the error. This makes a whole I2C-master transaction (mux select, address/len, data, start, wait done, read data) **one frame, one round trip**.
-- **Holes and errors** (`CSR_REPLY.status`): 0 `OK`; 1 `ERR_HOLE` (address with no register; a read of a hole returns no data); 2 `ERR_ALIGN`; 3 `ERR_TIMEOUT` (`POLL` limit, or the bus did not answer); 4 `ERR_LEN` (frame/words limit); 5 `ERR_PERM` (write to a read-only register). A reply with an error still carries the data of the reads done before it.
-- `CSR_READ`/`CSR_WRITE` are `CSR_TXN` with one op; the engine may share the implementation. A `CSR_WRITE` is acknowledged with a `CSR_REPLY` (no posted writes): ordering and errors stay observable.
-- **`IRQ`**: `pending` bit = source asserted (level). Sent when the mask changes (coalesced: the last value wins, never lost: the latest snapshot is resent after `HELLO` and when the PC reads the interrupt-controller pending register). The PC clears a source by acting on it (e.g. reading the FUSB302B interrupt registers drops INT_N) and masks it with a CSR write to the intc. Sources (version 1, fixed): bit0 `INT_N` FUSB302B #0, bit1 `INT_N` FUSB302B #1, bit2 PAC alert, bit3 I2C master done, bit4..bit31 intc sources the SoC wires (names in the generated map).
-- **`CONSOLE`**: raw byte stream, not framed beyond the header; USB NAK is the flow control (the engine holds its TX stream; the PC keeps IN URBs outstanding while a reader exists). PC>C bytes go to the SoC UART RX. Replaces any shell: nothing parses it on the Cynthion. The AUX CDC-ACM console of section 3 stays; this stream is for the SoC's own UART.
-- **Heartbeat / dead-man**: the PC sends `HEARTBEAT` every `period_ms`; the engine acks. If no `HEARTBEAT` arrives for `T_DEADMAN` the gateware enters the safe state on its own: TARGET detached (pullup off), power outputs at their no-source defaults, `HEARTBEAT_ACK.state = 1` on the next frame; it leaves the safe state only after a new `HELLO`. Any other frame does NOT refresh the dead-man (a wedged PC loop that still pushes data must not keep power policy alive).
-
-Timers added to section 9:
-
-| id | owner | waits for | value | source | multiplier | on expiry |
-|---|---|---|---|---|---|---|
-| `T_HB` | PC driver | period between `HEARTBEAT`s | 100 ms | chosen: far above the ~1 ms round trip, far below a human-visible hang | n/a | n/a |
-| `T_DEADMAN` | gateware | any `HEARTBEAT` | 350 ms = 3.5 x `T_HB` | two lost/late beats plus Linux timer jitter (UNMEASURED, expected <= 20 ms) | 3.5 x period | safe state, count `deadman_trips` (extend `STATS` when implemented) |
-| `T_CSR` | PC driver | `CSR_REPLY` | 50 ms | same bound as `T_CMD` | 1.0 x limit | fail the access with `-ETIMEDOUT`, log op + elapsed |
-| `T_POLL` | gateware | `POLL` limit | set per op by the PC | the PC derives it from the bus arithmetic (bit time x bits x bytes) | 1.25 x the transaction time | `ERR_TIMEOUT` |
-
-### 14.1 `cynthion_i2c` (next module after the UDC backend)
-
-- Out-of-tree Linux module `cynthion_i2c` (GPL-2.0), in `linux/cynthion_i2c/`.
-- **Attachment**: the AUX interface has one driver (`cudc_aux`, owner of the link). It registers `auxiliary_device`s (`cynthion_i2c.<n>`) and exports the link API (send frame, CSR transaction, IRQ notifier). `cynthion_i2c` is an `auxiliary_driver`; two USB drivers never share an interface.
-- **Adapters**: one `i2c_adapter` per board I2C bus behind the mux (bus -> mux channel table comes from the generated map). Mux select is part of every transaction, so adapters never share state.
-- **IRQ**: an `irq_domain` with one hwirq per `IRQ` source (FUSB302B #0/#1 -> `fusb302` `interrupts`). Level, `IRQF_ONESHOT`: mask/unmask are CSR writes done in `irq_bus_lock`/`irq_bus_sync_unlock` (slow bus); the `IRQ` frame wakes the domain.
-- **Batching rule**: one `i2c_transfer(msgs[], n)` = exactly one `CSR_TXN` = one link round trip. The txn contains per message: set address/length, write data, start, `POLL` done, read data (and the mux select once at the front). Never one frame per byte or per message. `master_xfer_atomic` is not provided. SMBus helpers ride on `i2c_transfer`, so each is one frame.
-- Max: a transaction of up to 4096 B of frame payload; larger transfers are split by the adapter quirks (`max_write_len`/`max_read_len`) so each `i2c_transfer` still maps to one frame.
-
-Per-access latency budget (MODEL/UNMEASURED; the board fills the rest):
-
-| stage | budget | basis |
-|---|---|---|
-| `CSR_TXN` URB -> gateware | <= 125 us | one microframe poll |
-| execute on the engine | I2C bus time | 9 bits per byte at the bus clock; 400 kHz = 22.5 us per byte, plus address/start/stop |
-| `CSR_REPLY` -> URB completion -> adapter wake | <= 125 us + ~0.2 ms Linux | microframe + softirq/wakeup (the 0.2 ms from the UDC path, UNMEASURED for this path) |
-| one `i2c_transfer` of 3 bytes at 400 kHz | <= 1.0 ms (expected 0.6) | sum of the above |
-| `tcpm` message handling (<= 6 `i2c_transfer`) | <= 6 ms | against `tSenderResponse` 24-30 ms (USB PD 3.x): 4 x margin; `GoodCRC` is the FUSB302B's own hardware |
-
-- I2C clock: the rows **rated max | board allows | actually run | why the gap** are owed by the gateware agent for each bus (FUSB302B, PAC); run at the rated max unless a recorded reason says otherwise (CLAUDE.md rule).
+- 32-bit registers, little-endian, byte addresses; a frame touches at most 1024 words. Register names are not known to the link.
+- Request id is chosen by the PC and echoed; replies are in request order. It is not an epoch: CSR frames are never stale-dropped.
+- `CSR_REPLY.status`: 0 `OK`, 1 `ERR_HOLE` (no register at that address), 2 `ERR_ALIGN`, 3 `ERR_TIMEOUT`, 4 `ERR_LEN`, 5 `ERR_PERM`. Execution stops at the first error; `ops_done` says how far it got, reads before the error are returned.
+- `CSR_TXN` makes a batch of dependent register accesses one frame and one round trip.
+- Source bit assignments of `IRQ.pending` come with the SoC's generated map when this is built.
 
 ## 13. Examples
 
