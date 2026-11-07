@@ -24,8 +24,8 @@ import subprocess
 import sys
 import termios
 import threading
-import traceback
 import time
+import traceback
 import tty
 from pathlib import Path
 

@@ -281,6 +281,13 @@ static struct cudc *gadget_to_cudc(struct usb_gadget *g)
 	return container_of(g, struct cudc, gadget);
 }
 
+static int cudc_wakeup(struct usb_gadget *g)
+{
+	struct cudc *u = gadget_to_cudc(g);
+
+	return u->ops->wakeup ? u->ops->wakeup(u) : -EOPNOTSUPP;
+}
+
 static int cudc_get_frame(struct usb_gadget *g)
 {
 	return -EOPNOTSUPP;
@@ -358,6 +365,7 @@ static void cudc_udc_async_callbacks(struct usb_gadget *g, bool enable)
 
 static const struct usb_gadget_ops cudc_gadget_ops = {
 	.get_frame		= cudc_get_frame,
+	.wakeup			= cudc_wakeup,
 	.set_selfpowered	= cudc_set_selfpowered,
 	.pullup			= cudc_pullup,
 	.udc_start		= cudc_udc_start,
@@ -418,6 +426,42 @@ void cudc_set_address(struct cudc *u, u8 addr)
 {
 	dev_dbg(udc_dev(u), "address %u\n", addr);
 	usb_gadget_set_state(&u->gadget, addr ? USB_STATE_ADDRESS : USB_STATE_DEFAULT);
+}
+
+void cudc_suspend(struct cudc *u)
+{
+	struct usb_gadget_driver *d = callback_driver(u);
+	unsigned long flags;
+
+	if (u->gadget.state < USB_STATE_DEFAULT || u->gadget.state == USB_STATE_SUSPENDED)
+		return;
+	u->resume_state = u->gadget.state;
+	usb_gadget_set_state(&u->gadget, USB_STATE_SUSPENDED);
+	if (!d || !d->suspend)
+		return;
+	local_irq_save(flags);
+	d->suspend(&u->gadget);
+	local_irq_restore(flags);
+}
+
+void cudc_resume(struct cudc *u)
+{
+	struct usb_gadget_driver *d = callback_driver(u);
+	unsigned long flags;
+
+	if (u->gadget.state != USB_STATE_SUSPENDED)
+		return;
+	usb_gadget_set_state(&u->gadget, u->resume_state);
+	if (!d || !d->resume)
+		return;
+	local_irq_save(flags);
+	d->resume(&u->gadget);
+	local_irq_restore(flags);
+}
+
+void cudc_vbus(struct cudc *u, bool on)
+{
+	usb_udc_vbus_handler(&u->gadget, on);
 }
 
 /* ---- registration ---- */

@@ -169,8 +169,10 @@ Skeleton with the Cynthion **stubbed**: [`linux/cynthion_udc/`](../linux/cynthio
 - Stub backend: in-kernel fake host. Pullup -> HS attach -> reset, GET_DESCRIPTOR(device, 64), reset, SET_ADDRESS (local, never reaches the gadget), GET_DESCRIPTOR device / config 9 / config full, SET_CONFIGURATION, SET_INTERFACE for bulk alts; then bulk IN -> OUT loopback per interface.
 - Test: [`scripts/linux/cudc_vm_test.py`](../scripts/linux/cudc_vm_test.py), virtme-ng VM only.
 - Result 2026-11-06, kernel 7.2.15-300.fc45, vng 1.41, 6 runs: PASS. ACM, NCM, ACM+NCM each reach state `configured`; ACM 2000 B tty loopback and NCM raw-frame loopback return in <= 0.4 ms; unbind + rmmod clean; dmesg has only the unsigned-module taint lines.
-- Timings behind the test's limits (same runs): module build <= 0.5 s cold, whole VM run <= 2.2 s.
-- Not covered by the stub: no AUX link or URBs; GET_STATUS / SET_FEATURE / CLEAR_FEATURE not issued; no halt, dequeue, wedge, suspend/resume, remote wakeup, VBUS or FS paths exercised; no string descriptors or class requests; loopback is a byte stream (no packet boundaries, ZLPs or toggles); no dummy_hcd descriptor comparison.
+- Timings behind the test's limits: module build <= 0.5 s cold (2.0 s at loadavg 30); whole VM run <= 2.2 s with the three loopback cases, <= 5.7 s with all cases (6 runs, loadavg ~30).
+- Stub covers (second pass, [#612](https://github.com/awtoau/cynthion-workspace/issues/612)): GET_STATUS / SET_FEATURE / CLEAR_FEATURE answered locally (incl. ENDPOINT_HALT, wedge stays halted, TEST_MODE, remote wakeup bit); string descriptors and class requests (CDC-ACM line coding, mass-storage reset); packet-level data path (512-multiples with and without ZLP, short packets, EP0 `req->zero` ZLP, data toggle across NAK, toggle reset on halt clear); halt, dequeue, wedge; suspend / resume / remote wakeup (refused unless enabled); VBUS off/on re-enumeration; function STALL on EP0; delayed status. Host control and contract: [`linux/cynthion_udc/README.md`](../linux/cynthion_udc/README.md#stub-host-control-debugfs-ctl).
+- dummy_hcd reference: ACM, NCM, ACM+NCM present identical device and configuration descriptors on the stub and on dummy_hcd, except `bEndpointAddress` numbers (the stub has ep1-4 in/out, dummy_hcd 15 endpoints); directions and positions match.
+- Still not covered: AUX link / URBs (backend is in-kernel); FS fallback; isochronous; real bus timing (the stub has no inter-packet delays).
 
 ## Open questions
 
