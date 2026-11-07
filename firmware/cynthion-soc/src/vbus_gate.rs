@@ -17,7 +17,7 @@ pub const FLOOR_MV: u32 = 4_400;
 
 /// The accepted rail window for one close: 88% to 110% of the nominal volts
 /// (5 V gives exactly [`FLOOR_MV`]..[`LIMIT_MV`]).
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Window {
     pub floor_mv: u32,
     pub limit_mv: u32,
@@ -25,6 +25,16 @@ pub struct Window {
 
 impl Window {
     pub const V5: Window = Window { floor_mv: FLOOR_MV, limit_mv: LIMIT_MV };
+
+    /// Both ends of a change from `from_mv` to `to_mv`: low floor, high limit.
+    pub const fn spanning(from_mv: u32, to_mv: u32) -> Window {
+        let a = Window::for_nominal(from_mv);
+        let b = Window::for_nominal(to_mv);
+        Window {
+            floor_mv: if a.floor_mv < b.floor_mv { a.floor_mv } else { b.floor_mv },
+            limit_mv: if a.limit_mv > b.limit_mv { a.limit_mv } else { b.limit_mv },
+        }
+    }
 
     pub const fn for_nominal(nominal_mv: u32) -> Window {
         Window { floor_mv: nominal_mv / 100 * 88, limit_mv: nominal_mv / 100 * 110 }

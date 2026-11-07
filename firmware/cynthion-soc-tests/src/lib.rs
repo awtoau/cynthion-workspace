@@ -49,3 +49,6 @@ pub mod pd_decode;
 #[path = "../../cynthion-soc/src/pd_verbs.rs"]
 pub mod pd_verbs;
 
+
+#[path = "../../cynthion-soc/src/pd_proxy.rs"]
+pub mod pd_proxy;
