@@ -1033,6 +1033,8 @@ def main():
     parser.add_argument("--power", action="store_true",
                         help="power the port (`usb <port> power on`) if it is off, and restore it after")
     parser.add_argument("--console", help="tty node instead of the USB console")
+    parser.add_argument("--via-arbiter", action="store_true",
+                        help="one board.py job per command; the tty stays the arbiter's")
     args = parser.parse_args()
     if args.selftest:
         return selftest()
@@ -1049,10 +1051,10 @@ def main():
     if not args.board:
         parser.error("pass --board (sim: scripts/soc/usb_target_sim.py)")
 
-    from soc_shell import Link
+    from soc_shell import ArbiterLink, Link
     from devlog import emit
     cases = select(cases + fuzz_cases(args.seed, args.fuzz, prof), prof, args.only, args.group)
-    link = Link.open(args.console)
+    link = ArbiterLink() if args.via_arbiter else Link.open(args.console)
     emit(f"console: {link.how}  port {args.port}  profile {prof.name}  fuzz seed {args.seed}")
     link.write(b"\r")
     link.settle(0.05)

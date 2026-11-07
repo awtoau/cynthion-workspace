@@ -121,17 +121,6 @@ DEFAULT_COMMAND_S = 2.0
 # deadline and the preempt flag, then reads again.
 READ_TICK_S = 0.05
 
-# How long a prompt that follows the echo with NO output yet must stay quiet
-# before the command counts as finished (#632).
-#
-# Waits for: the first output byte of a command that prints late. The editor
-# redraws (prompt, echo) on Enter and the command runs afterwards, so a prompt
-# is not the end of a reply. Commands that print are complete at the prompt that
-# follows their output; this bound only applies to commands that print nothing.
-# Expected: redraw-to-first-byte under 0.12 s for the slowest command; x2 plus
-# margin. On expiry: the command is taken as having printed nothing.
-ECHO_QUIET_S = 0.25
-
 # How long a client waits for a server it just started to accept a connection.
 #
 # Waits for: the listening socket. Expected: this module's imports plus a bind,
@@ -318,25 +307,6 @@ def identify(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def reply_complete(reply: bytes, command: str, quiet_s: float, prompt: bytes) -> bool:
-    """Is `reply` the whole answer to `command`? (#632)
-
-    The editor prints prompt, then the echoed command, then runs it. So the reply
-    is complete at a trailing prompt that comes AFTER the echo and AFTER some
-    output; a trailing prompt with the echo and no output yet is complete only
-    once the wire has been quiet `ECHO_QUIET_S`.
-    """
-    tail = reply.rstrip()
-    if not tail.endswith(prompt):
-        return False
-    first_prompt = reply.find(prompt)
-    echo = reply.find(command.encode(), first_prompt + 1)
-    if echo < 0:
-        return False
-    output = reply[echo + len(command):len(tail) - len(prompt)].strip()
-    return bool(output) or quiet_s >= ECHO_QUIET_S
-
-
 class Board:
     """The tty, Apollo JTAG, and what is configured.
 
@@ -444,8 +414,7 @@ class Board:
             if chunk:
                 reply += chunk
                 last_byte = time.monotonic()
-            if reply_complete(reply, command, time.monotonic() - last_byte,
-                              soc_shell.PROMPT):
+            if soc_shell.reply_complete(reply, command, time.monotonic() - last_byte):
                 return reply, "ok", time.monotonic() - started
         return reply, "timeout", time.monotonic() - started
 

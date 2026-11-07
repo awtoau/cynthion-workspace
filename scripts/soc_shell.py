@@ -61,6 +61,7 @@ something types, and this is what types.
 """
 
 import argparse
+import re
 import socket
 import subprocess
 import sys
@@ -106,6 +107,38 @@ PROMPT = b">"
 # comfortably above the gap and small enough that a 64-step sweep pays 2 s.
 # On expiry: the prompt is accepted and the reply returned.
 SETTLE_S = 0.030
+
+
+EDITOR_REDRAW = b"\x1b[2K"
+
+# Waits for: the first output byte of a command that prints late (#632).
+# Expected: redraw-to-first-byte under 0.12 s for the slowest command; x2 plus margin.
+# On expiry: the command is taken as having printed nothing.
+ECHO_QUIET_S = 0.25
+
+
+def reply_complete(raw: bytes, command: str | None = None, quiet_s: float = 0.0) -> bool:
+    """True when `raw` ends a command's reply (#632).
+
+    - Editor redraw on Enter: ESC[2K, prompt, typed text; output and the final prompt follow.
+    - So after the last redraw there must be a newline (the output start) and a closing prompt.
+    - No redraw in `raw` (bare CR, banner): the prompt alone ends it.
+    - With `command`: the echo must follow the first prompt, and either output follows
+      it or the wire has been quiet `ECHO_QUIET_S` (a command that prints nothing).
+    """
+    tail = raw.rstrip()
+    if not tail.endswith(PROMPT):
+        return False
+    cut = raw.rfind(EDITOR_REDRAW)
+    if cut >= 0 and b"\n" not in raw[cut:]:
+        return False
+    if command is None:
+        return True
+    echo = raw.find(command.encode(), raw.find(PROMPT) + 1)
+    if echo < 0:
+        return False
+    output = raw[echo + len(command):len(tail) - len(PROMPT)].strip()
+    return bool(output) or quiet_s >= ECHO_QUIET_S
 
 
 def other_readers(node):
@@ -250,7 +283,7 @@ class Link:
                 #
                 # Whether that prompt landed at a chunk boundary was a matter of
                 # timing, which is why this was intermittent rather than broken.
-                if reply.rstrip().endswith(PROMPT):
+                if reply_complete(reply):
                     more = self._settle(deadline)
                     if not more:
                         return reply
@@ -403,3 +436,56 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+class ArbiterLink:
+    """A Link whose commands go through the board arbiter, one job each (the tty stays the arbiter's).
+
+    - Job commands are [cmd, "help"]: the reply is the step whose redraw echoes `cmd` (#632).
+    - `run_job` returns the job record (board.py --json); tests inject it.
+    """
+
+    how = "board arbiter"
+    FILLERS = ("time", "time", "time")
+
+    def __init__(self, run_job=None):
+        self.run_job = run_job or self._board_py
+        self.command = ""
+
+    @staticmethod
+    def _board_py(commands, budget_s):
+        import json
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "board" / "board.py"
+        done = subprocess.run([sys.executable, str(script), "--json", "shell",
+                               "--budget", str(budget_s), *commands],
+                              capture_output=True, text=True)
+        return json.loads(done.stdout)
+
+    def write(self, data):
+        self.command = data.decode().strip()
+
+    def settle(self, seconds):
+        pass
+
+    def read_available(self):
+        return b""
+
+    def close(self):
+        pass
+
+    def read_until_prompt(self, budget_s=REPLY_S + 2):
+        if not self.command:
+            return PROMPT
+        record = self.run_job([self.command, *self.FILLERS], budget_s)
+        joined = "".join(step["reply"] for step in record.get("transcript", []))
+        echo = re.compile(r">\s*" + re.escape(self.command) + r"\r?\n(.*?)(?:\d+\.\d+ \S+>|\Z)",
+                          re.S)
+        found = echo.search(joined)
+        if found:
+            return found.group(0).encode()
+        emit(f"  no reply echoing {self.command!r} (job {record.get('status')}, "
+             f"{record.get('error')})")
+        return b""

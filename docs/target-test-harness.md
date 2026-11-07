@@ -14,6 +14,8 @@
 ## Use
 - Sim: `./scripts/soc/usb_target_sim.py [group...] [--only name...] [--seed N --fuzz K] [-v]`.
 - Board: `./scripts/soc/usb_target_cases.py --board --port target_a --profile generic|aoa_phone [--fuzz K --seed N] [--power] [--allow-vbus]`.
+- `--via-arbiter`: each shell line is its own [board.py](../scripts/board/board.py) job (`soc_shell.ArbiterLink`); the tty stays the arbiter's. The reply is the text after the redraw that echoes the command ([#632](https://github.com/awtoau/cynthion-workspace/issues/632)).
+- `--port target_c` addresses the same data bus as `target_a` (shared `target_phy`, [hardware.md](hardware.md)); a phone cabled to TARGET-C enumerates through it. AOA loop: `scripts/soc/aoa_repeat.py --port target_c`.
 - Power ([#625](https://github.com/awtoau/cynthion-workspace/issues/625)): before `role host` the board run reads `usb <port> power`. Off and no `--power`: exit 2 with the command that fixes it. `--power`: `usb <port> power on` (CONTROL, else AUX), restored to the prior state when the run ends. `--allow-vbus`: the power-cycle case (`usb <port> power off|on`).
 - Table: `./scripts/soc/usb_target_cases.py --list` (support per backend and the reason).
 

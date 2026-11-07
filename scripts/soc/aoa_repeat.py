@@ -24,6 +24,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "gateware"))
+PORT = "target_a"
 LOG = ROOT / "tmp" / "logs" / "aoa_repeat.log"
 # The awto-dji bench worktree with `dev.py ctl`; override with AWTO_DJI_CTL.
 CTL_REPO = Path(os.environ.get("AWTO_DJI_CTL", ROOT.parent / "awto-dji-wt-ctl"))
@@ -86,10 +89,21 @@ def say(line, log):
     log.flush()
 
 
+# Per-command reply bound: aoa = 8 s re-attach wait (ATTACH_US) x 1.5; echo up to 4096 B is under 1 s; rest 3 s.
+# On expiry the arbiter job fails and `shell` returns what it has (the cycle then fails on the missing text).
+def budget_for(command):
+    return 12.0 if command.endswith(" aoa") else 5.0 if " echo " in command else 3.0
+
+
 def shell(commands):
-    run = subprocess.run([sys.executable, str(ROOT / "scripts/soc_shell.py"), *commands],
-                         cwd=ROOT, capture_output=True, text=True, timeout=SHELL_LIMIT_S)
-    return run.stdout
+    """Each command as its own arbiter job (the tty stays the arbiter's); text = echo + reply per command."""
+    from soc_shell import ArbiterLink
+    out = ""
+    for command in commands:
+        link = ArbiterLink()
+        link.write(command.replace("usb target_a", f"usb {PORT}").encode())
+        out += command + "\n" + link.read_until_prompt(budget_for(command)).decode("ascii", "replace") + "\n"
+    return out
 
 
 def ctl(phone, *args):
@@ -119,7 +133,7 @@ def app_state(phone, log, label):
 def echo_ok(text, size):
     block = text.split(f"usb target_a echo 1 {size} 1", 1)[-1]
     return bool(re.search(rf"echo out {size} in {size} bytes", block)) \
-        and "stopped:" not in block.split("aux>")[1] and "mismatch" not in block
+        and "stopped:" not in block and "mismatch" not in block
 
 
 def wait_for_new_accessory(phone, gen_before):
@@ -198,11 +212,15 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cycles", type=int, default=10)
     parser.add_argument("--sizes", type=int, nargs="+", default=[1, 64, 512, 4096])
+    parser.add_argument("--port", default="target_a", choices=("target_a", "target_c"),
+                        help="shell port name; target_a and target_c share one data bus")
     parser.add_argument("--phone", default="192.168.25.125")
     parser.add_argument("--app-log", default=str(DEFAULT_APP_LOG))
     parser.add_argument("--keep-going", action="store_true",
                         help="do not stop at the first failing cycle (default: stop, fix, rerun)")
     args = parser.parse_args()
+    global PORT
+    PORT = args.port
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
     passed = 0
