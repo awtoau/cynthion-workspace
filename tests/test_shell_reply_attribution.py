@@ -75,3 +75,23 @@ def test_redraw_prompt_alone_is_not_complete():
 
 def test_bare_prompt_without_editor_redraw_still_completes():
     assert soc_shell.reply_complete(b"\r\n> ")
+
+
+def test_arbiter_link_picks_the_step_echoing_its_command():
+    def lagged_job(commands, _budget):
+        # old server: step N holds the output of the command before it
+        steps = [{"command": commands[0], "reply": "x\x1b[2K1 aux> help\r\nlist\r\n1 aux>"},
+                 {"command": commands[1],
+                  "reply": f"help\x1b[2K2 aux> {commands[0]}\r\nout of {commands[0]}\r\n2 aux>"}]
+        return {"status": "passed", "transcript": steps}
+
+    def fixed_job(commands, _budget):
+        steps = [{"command": commands[0],
+                  "reply": f"{commands[0]}\x1b[2K1 aux> {commands[0]}\r\nout of {commands[0]}\r\n1 aux>"},
+                 {"command": commands[1], "reply": "help\x1b[2K2 aux> help\r\nlist\r\n2 aux>"}]
+        return {"status": "passed", "transcript": steps}
+
+    for job in (lagged_job, fixed_job):
+        link = soc_shell.ArbiterLink(run_job=job)
+        link.write(b"usb target_c power status\r")
+        assert b"out of usb target_c power status" in link.read_until_prompt(1.0)

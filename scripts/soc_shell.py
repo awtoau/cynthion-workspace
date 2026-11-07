@@ -61,6 +61,7 @@ something types, and this is what types.
 """
 
 import argparse
+import re
 import socket
 import subprocess
 import sys
@@ -419,3 +420,54 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+class ArbiterLink:
+    """A Link whose commands go through the board arbiter, one job each (the tty stays the arbiter's).
+
+    - Job commands are [cmd, "help"]: the reply is the step whose redraw echoes `cmd` (#632).
+    - `run_job` returns the job record (board.py --json); tests inject it.
+    """
+
+    how = "board arbiter"
+    FILLER = "help"
+
+    def __init__(self, run_job=None):
+        self.run_job = run_job or self._board_py
+        self.command = ""
+
+    @staticmethod
+    def _board_py(commands, budget_s):
+        import json
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "board" / "board.py"
+        done = subprocess.run([sys.executable, str(script), "--json", "shell",
+                               "--budget", str(budget_s), *commands],
+                              capture_output=True, text=True)
+        return json.loads(done.stdout)
+
+    def write(self, data):
+        self.command = data.decode().strip()
+
+    def settle(self, seconds):
+        pass
+
+    def read_available(self):
+        return b""
+
+    def close(self):
+        pass
+
+    def read_until_prompt(self, budget_s=REPLY_S + 2):
+        if not self.command:
+            return PROMPT
+        record = self.run_job([self.command, self.FILLER], budget_s)
+        echo = re.compile(r">\s*" + re.escape(self.command) + r"\r?\n")
+        for step in record.get("transcript", []):
+            if echo.search(step["reply"]):
+                return step["reply"].encode()
+        emit(f"  no reply echoing {self.command!r} (job {record.get('status')}, "
+             f"{record.get('error')})")
+        return b""
