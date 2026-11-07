@@ -6,6 +6,8 @@
 //! - Raw sends (queries, destructive verbs) run INSIDE the session: `engine.run()` is
 //!   dropped at a clean await, the PHY is used directly, then `run()` resumes.
 //! - Time is the 1 kHz tick `timer::millis()`.
+//! - Two ports (TARGET_C source, AUX sink), one `Core` each; `CUR` names the one in use and
+//!   is set by every `Pd` method before it touches state.
 
 use core::cell::UnsafeCell;
 use core::future::{poll_fn, Future};
@@ -18,7 +20,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time_driver::Driver as TimeDriverTrait;
 use embedded_hal_async::i2c::{ErrorType, I2c, Operation};
 use fusb302b::{Fusb302b, InterruptPin, Sop};
-use usbpd::protocol_layer::message::data::request::PowerSource;
+use usbpd::protocol_layer::message::data::request::{FixedVariableSupply, PowerSource};
 use usbpd::protocol_layer::message::data::source_capabilities::{
     FixedSupply, PowerDataObject, SourceCapabilities,
 };
@@ -26,15 +28,20 @@ use usbpd::source::device_policy_manager::{
     CapabilityResponse, DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager,
     SourceDpm,
 };
+use usbpd::sink::device_policy_manager::{
+    DevicePolicyManager as SinkPolicy, DrpDevicePolicyManager as SinkDrp,
+    EprDevicePolicyManager as SinkEpr, Event as SinkEvent, SinkDpm,
+};
+use usbpd::sink::policy_engine::Sink;
 use usbpd::source::policy_engine::Source;
 use usbpd::timers::Timer;
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
-use crate::bus::{self, Bus, BUS_TARGET_C, LINE_TARGET_INT};
+use crate::bus::{self, Bus, BUS_AUX_C, BUS_TARGET_C, LINE_AUX_INT, LINE_TARGET_INT};
 use crate::pd_decode::{self as dec, Frame};
 use crate::timer;
 
-pub const LOG: usize = 24;
+pub const LOG: usize = 16;
 pub const REPLIES: usize = 4;
 /// Frames in flight: header (2) + 7 objects.
 const WIRE: usize = 2 + dec::MAX_PAYLOAD;
@@ -42,6 +49,21 @@ const WIRE: usize = 2 + dec::MAX_PAYLOAD;
 struct Cell<T>(UnsafeCell<T>);
 // SAFETY: one hart; every access is from the main loop (never a handler).
 unsafe impl<T> Sync for Cell<T> {}
+
+/// Port index: 0 TARGET_C (source), 1 AUX (sink).
+pub const TARGET: usize = 0;
+pub const AUX: usize = 1;
+static CUR: Cell<usize> = Cell(UnsafeCell::new(TARGET));
+
+fn select_port(port: usize) {
+    // SAFETY: see `Cell`.
+    unsafe { *CUR.0.get() = port };
+}
+
+fn cur() -> usize {
+    // SAFETY: see `Cell`.
+    unsafe { *CUR.0.get() }
+}
 
 static BUS: Cell<*mut Bus> = Cell(UnsafeCell::new(ptr::null_mut()));
 static WRAPS: Cell<(u32, u32)> = Cell(UnsafeCell::new((0, 0)));
@@ -110,19 +132,20 @@ impl I2c for BusI2c {
         operations: &mut [Operation<'_>],
     ) -> Result<(), Self::Error> {
         let bus = bus_ref().ok_or(I2cError(bus::Error::Nack))?;
+        let id = if cur() == AUX { BUS_AUX_C } else { BUS_TARGET_C };
         let mut register = None;
         for operation in operations {
             match operation {
                 Operation::Write(data) => match data.split_first() {
                     Some((&reg, [])) => register = Some(reg),
                     Some((&reg, rest)) => bus
-                        .write_registers(BUS_TARGET_C, address, reg, rest)
+                        .write_registers(id, address, reg, rest)
                         .map_err(I2cError)?,
                     None => {}
                 },
                 Operation::Read(data) => {
                     let reg = register.take().unwrap_or(0);
-                    bus.read_registers(BUS_TARGET_C, address, reg, data)
+                    bus.read_registers(id, address, reg, data)
                         .map_err(I2cError)?;
                 }
             }
@@ -137,7 +160,9 @@ pub struct IntPin;
 impl InterruptPin for IntPin {
     async fn wait_for_interrupt(&mut self) {
         poll_fn(|_| match bus_ref() {
-            Some(bus) if bus.lines() & (1 << LINE_TARGET_INT) != 0 => Poll::Ready(()),
+            Some(bus) if bus.lines() & (1 << if cur() == AUX { LINE_AUX_INT } else { LINE_TARGET_INT }) != 0 => {
+                Poll::Ready(())
+            }
             _ => Poll::Pending,
         })
         .await
@@ -227,7 +252,36 @@ struct Core {
     hard_resets: u32,
     restart: bool,
     raw: Raw,
+    /// Proxy mode: the proxy decides requests, PS_RDY and capabilities (#633).
+    proxy: bool,
+    ev: [(u8, u32); EVENTS],
+    ev_len: usize,
+    caps: [u32; 7],
+    caps_n: usize,
+    offer: [u32; 7],
+    offer_n: usize,
+    decision: u8,
+    psrdy_ok: bool,
+    reset_wait: bool,
+    hr_cmd: bool,
+    /// AUX: the voltage the next Request asks for, and a Request posted by the proxy.
+    want_mv: u32,
+    aux_req: Option<u32>,
 }
+
+pub const EVENTS: usize = 6;
+/// Proxy events a core queues for the glue (`take_event`).
+pub const EV_CAPS: u8 = 1;
+pub const EV_ACCEPT: u8 = 2;
+pub const EV_REJECT: u8 = 3;
+pub const EV_WAIT: u8 = 4;
+pub const EV_PS_RDY: u8 = 5;
+pub const EV_HARD_RESET: u8 = 6;
+pub const EV_REQUEST: u8 = 7;
+
+pub const DECIDE_ACCEPT: u8 = 1;
+pub const DECIDE_REJECT: u8 = 2;
+pub const DECIDE_WAIT: u8 = 3;
 
 const VBUS_NONE: u8 = 0;
 const VBUS_OFF: u8 = 1;
@@ -235,7 +289,7 @@ const VBUS_ON: u8 = 2;
 
 const EMPTY_ENTRY: Entry = Entry { at: 0, dir: 0, frame: Frame::EMPTY };
 
-static CORE: Cell<Core> = Cell(UnsafeCell::new(Core {
+const CORE_INIT: Core = Core {
     phy: None,
     milliamps: 0,
     wire_id: 0,
@@ -252,6 +306,19 @@ static CORE: Cell<Core> = Cell(UnsafeCell::new(Core {
     vbus_cmd: VBUS_NONE,
     hard_resets: 0,
     restart: false,
+    proxy: false,
+    ev: [(0, 0); EVENTS],
+    ev_len: 0,
+    caps: [0; 7],
+    caps_n: 0,
+    offer: [0; 7],
+    offer_n: 0,
+    decision: 0,
+    psrdy_ok: false,
+    reset_wait: false,
+    hr_cmd: false,
+    want_mv: 5_000,
+    aux_req: None,
     raw: Raw {
         state: RawState::Idle,
         op: Op::Send,
@@ -270,12 +337,15 @@ static CORE: Cell<Core> = Cell(UnsafeCell::new(Core {
         n_replies: 0,
         note: "",
     },
-}));
+};
+
+static CORE_T: Cell<Core> = Cell(UnsafeCell::new(CORE_INIT));
+static CORE_A: Cell<Core> = Cell(UnsafeCell::new(CORE_INIT));
 
 fn core<'a>() -> &'a mut Core {
     // SAFETY: see `Cell`. Borrows are short and never held across an await that
     // another borrow could overlap: the PE and the raw path never run together.
-    unsafe { &mut *CORE.0.get() }
+    unsafe { &mut *if cur() == AUX { CORE_A.0.get() } else { CORE_T.0.get() } }
 }
 
 fn phy<'a>() -> &'a mut Phy {
@@ -288,6 +358,9 @@ fn log_frame(dir: u8, frame: Frame) {
     c.last_frame_ms = now;
     c.log[c.logged as usize % LOG] = Entry { at: now, dir, frame };
     c.logged = c.logged.wrapping_add(1);
+    if c.proxy {
+        note_event(c, dir, &frame);
+    }
     if dir == b'<' {
         c.received += 1;
         c.rev = frame.rev().clamp(1, 2);
@@ -295,6 +368,44 @@ fn log_frame(dir: u8, frame: Frame) {
         if frame.is(13) {
             c.wire_id = 0;
         }
+    }
+}
+
+fn push_event(c: &mut Core, code: u8, value: u32) {
+    if c.ev_len < EVENTS {
+        c.ev[c.ev_len] = (code, value);
+        c.ev_len += 1;
+    }
+}
+
+/// Frames the proxy reacts to, from the shared log point (SOP only, received).
+fn note_event(c: &mut Core, dir: u8, frame: &Frame) {
+    if dir != b'<' || frame.sop != dec::SOP {
+        return;
+    }
+    if c.sink_role() {
+        match (frame.is_control(), frame.kind()) {
+            (false, dec::SOURCE_CAP) => {
+                c.caps_n = frame.objects().min(7);
+                for n in 0..c.caps_n {
+                    c.caps[n] = frame.object(n);
+                }
+                push_event(c, EV_CAPS, 0);
+            }
+            (true, dec::ACCEPT) => push_event(c, EV_ACCEPT, 0),
+            (true, dec::REJECT) => push_event(c, EV_REJECT, 0),
+            (true, dec::WAIT) => push_event(c, EV_WAIT, 0),
+            (true, 6) => push_event(c, EV_PS_RDY, 0),
+            _ => {}
+        }
+    } else if !frame.is_control() && frame.kind() == dec::REQUEST {
+        push_event(c, EV_REQUEST, frame.object(0));
+    }
+}
+
+impl Core {
+    fn sink_role(&self) -> bool {
+        core::ptr::eq(self, CORE_A.0.get())
     }
 }
 
@@ -325,6 +436,9 @@ impl Driver for Shared {
                 Ok(frame) => frame,
                 Err(DriverRxError::HardReset) => {
                     core().wire_id = 0;
+                    if core().proxy {
+                        push_event(core(), EV_HARD_RESET, 0);
+                    }
                     return Err(DriverRxError::HardReset);
                 }
                 Err(error) => return Err(error),
@@ -380,6 +494,12 @@ pub struct Dpm;
 
 fn capabilities(milliamps: u16) -> SourceCapabilities {
     let mut pdos = heapless9::Vec::new();
+    if core().proxy && core().offer_n > 0 {
+        for n in 0..core().offer_n {
+            let _ = pdos.push(PowerDataObject::FixedSupply(FixedSupply(core().offer[n])));
+        }
+        return SourceCapabilities::new_with_pdos(pdos);
+    }
     let supply = FixedSupply::v_safe_5v(milliamps / 10).with_usb_communications_capable(true);
     let _ = pdos.push(PowerDataObject::FixedSupply(supply));
     SourceCapabilities::new_with_pdos(pdos)
@@ -405,6 +525,15 @@ impl DevicePolicyManager for Dpm {
 
     async fn evaluate_request(&mut self, request: &PowerSource) -> CapabilityResponse {
         core().ready = false;
+        if core().proxy {
+            core().decision = 0;
+            poll_fn(|_| if core().decision != 0 { Poll::Ready(()) } else { Poll::Pending }).await;
+            return match core().decision {
+                DECIDE_ACCEPT => CapabilityResponse::Accept,
+                DECIDE_WAIT => CapabilityResponse::Wait,
+                _ => CapabilityResponse::Reject,
+            };
+        }
         match request {
             PowerSource::FixedVariableSupply(rdo)
                 if rdo.object_position() == 1
@@ -419,7 +548,17 @@ impl DevicePolicyManager for Dpm {
 
     // vSafe5V is the only supply: a contract changes no rail. PS_RDY still waits
     // tSrcTransition (25-35 ms, Table 6-68); 30 ms as the midpoint.
-    async fn transition_power(&mut self, _request: &PowerSource) -> Result<(), ()> {
+    async fn transition_power(&mut self, request: &PowerSource) -> Result<(), ()> {
+        if core().proxy {
+            // PS_RDY waits for the proxy (AUX's PS_RDY, or tSrcTransition for the same voltage).
+            if let PowerSource::FixedVariableSupply(rdo) = request {
+                core().contract = Some((rdo.object_position(), rdo.raw_operating_current() * 10));
+            }
+            core().psrdy_ok = false;
+            poll_fn(|_| if core().psrdy_ok { Poll::Ready(()) } else { Poll::Pending }).await;
+            core().psrdy_ok = false;
+            return Ok(());
+        }
         embassy_time::Timer::after_millis(30).await;
         Ok(())
     }
@@ -431,6 +570,12 @@ impl DevicePolicyManager for Dpm {
         c.contract = None;
         c.wire_id = 0;
         c.hard_resets += 1;
+        if c.proxy {
+            // The rail is AUX's: its source cycles VBUS; the proxy says when it is back.
+            c.reset_wait = true;
+            poll_fn(|_| if core().reset_wait { Poll::Pending } else { Poll::Ready(()) }).await;
+            return Ok(());
+        }
         vbus_command(VBUS_OFF).await;
         embassy_time::Timer::after_millis(800).await;
         vbus_command(VBUS_ON).await;
@@ -449,6 +594,43 @@ impl SourceDpm for Dpm {}
 
 type Engine = Source<Shared, SysTimer, Dpm>;
 
+/// AUX sink policy: stays at the voltage the proxy asked for; the proxy posts changes.
+pub struct AuxDpm;
+
+impl SinkPolicy for AuxDpm {
+    async fn request(&mut self, _caps: &SourceCapabilities) -> PowerSource {
+        let c = core();
+        let wanted = c.want_mv;
+        let at = (0..c.caps_n)
+            .find(|&n| c.caps[n] >> 30 == 0 && crate::pd_proxy::pdo_mv(c.caps[n]) == wanted)
+            .unwrap_or(0);
+        let ma = crate::pd_proxy::pdo_ma(c.caps[at]);
+        PowerSource::FixedVariableSupply(FixedVariableSupply(crate::pd_proxy::rdo(at as u32 + 1, ma, ma)))
+    }
+
+    async fn hard_reset(&mut self) {
+        core().wire_id = 0;
+        core().ready = false;
+    }
+
+    // The Ready state awaits this; the proxy posts a Request when the rail has to move.
+    async fn get_event(&mut self, _caps: &SourceCapabilities) -> SinkEvent {
+        core().ready = true;
+        poll_fn(|_| match core().aux_req.take() {
+            Some(rdo) => Poll::Ready(SinkEvent::RequestPower(PowerSource::FixedVariableSupply(
+                FixedVariableSupply(rdo),
+            ))),
+            None => Poll::Pending,
+        })
+        .await
+    }
+}
+impl SinkEpr for AuxDpm {}
+impl SinkDrp for AuxDpm {}
+impl SinkDpm for AuxDpm {}
+
+type SinkEngine = Sink<Shared, SysTimer, AuxDpm>;
+
 // ---- raw exchanges ----
 
 /// Quiet window before a raw send, ms: the engine is mid-exchange if a frame moved
@@ -458,6 +640,9 @@ const QUIET_MS: u32 = 35;
 fn raw_pending() -> impl Future<Output = ()> {
     poll_fn(|_| {
         let c = core();
+        if c.restart || c.hr_cmd {
+            return Poll::Ready(());
+        }
         if c.raw.state != RawState::Pending {
             return Poll::Pending;
         }
@@ -745,7 +930,17 @@ async fn session(milliamps: u16) -> &'static str {
                 }
                 Either::First(Err(_)) => return "engine error",
                 Either::Second(()) => {
-                    execute().await;
+                    if core().hr_cmd {
+                        core().hr_cmd = false;
+                        let _ = phy().transmit_hard_reset().await;
+                        let c = core();
+                        c.wire_id = 0;
+                        c.contract = None;
+                        c.hard_resets += 1;
+                        c.restart = true;
+                    } else if core().raw.state == RawState::Pending {
+                        execute().await;
+                    }
                     if core().restart {
                         break;
                     }
@@ -755,13 +950,51 @@ async fn session(milliamps: u16) -> &'static str {
     }
 }
 
-const SLOT: usize = 3584;
+/// AUX: attach as a sink (Rd, source detect) and run the sink engine until it ends.
+async fn session_sink() -> &'static str {
+    match Fusb302b::init_with_interrupt_pin(BusI2c, IntPin).await {
+        Ok(phy) => core().phy = Some(phy),
+        Err(_) => return "sink attach failed (no source on CC)",
+    }
+    loop {
+        core().restart = false;
+        core().ready = false;
+        let mut engine: SinkEngine = Sink::new(Shared, AuxDpm);
+        loop {
+            match select(engine.run(), restart_flag()).await {
+                Either::First(Ok(_)) => return "engine exited",
+                Either::First(Err(_)) => return "engine error",
+                Either::Second(()) => {
+                    if core().hr_cmd {
+                        core().hr_cmd = false;
+                        let _ = phy().transmit_hard_reset().await;
+                        core().wire_id = 0;
+                        core().hard_resets += 1;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn restart_flag() -> impl Future<Output = ()> {
+    poll_fn(|_| if core().restart || core().hr_cmd { Poll::Ready(()) } else { Poll::Pending })
+}
+
+const SLOT: usize = 2936;
+
+const SLOT_AUX: usize = 3128;
 
 #[repr(align(8))]
-struct Slot(UnsafeCell<MaybeUninit<[u8; SLOT]>>);
+struct Slot<const N: usize>(UnsafeCell<MaybeUninit<[u8; N]>>);
 // SAFETY: see `Cell`.
-unsafe impl Sync for Slot {}
-static SLOT_BYTES: Slot = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+unsafe impl<const N: usize> Sync for Slot<N> {}
+// `.uninit`: not counted by memory.x's `_min_stack` assert (RTIC resources live there too).
+#[link_section = ".uninit.pd_slot"]
+static SLOT_BYTES: Slot<SLOT> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+#[link_section = ".uninit.pd_slot_aux"]
+static SLOT_BYTES_AUX: Slot<SLOT_AUX> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 
 fn noop_waker() -> Waker {
     fn clone(_: *const ()) -> RawWaker {
@@ -776,6 +1009,7 @@ fn noop_waker() -> Waker {
 type Held = *mut dyn Future<Output = &'static str>;
 
 pub struct Pd {
+    port: usize,
     future: Option<SendHeld>,
     /// Why the last session ended.
     pub ended: &'static str,
@@ -786,8 +1020,110 @@ struct SendHeld(Held);
 unsafe impl Send for SendHeld {}
 
 impl Pd {
-    pub const fn new() -> Pd {
-        Pd { future: None, ended: "" }
+    pub const fn new(port: usize) -> Pd {
+        Pd { port, future: None, ended: "" }
+    }
+
+    /// AUX sink session (proxy mode, Rd on, PD toward whatever is on AUX).
+    pub fn start_sink(&mut self) -> usize {
+        select_port(self.port);
+        let future = session_sink();
+        let used = size_of_val(&future);
+        assert!(used <= SLOT_AUX, "sink session future exceeds SLOT_AUX");
+        self.future = None;
+        let c = core();
+        c.phy = None;
+        c.proxy = true;
+        c.ev_len = 0;
+        c.caps_n = 0;
+        c.want_mv = 5_000;
+        c.aux_req = None;
+        c.restart = false;
+        c.hr_cmd = false;
+        c.wire_id = 0;
+        // SAFETY: only written here, after the previous occupant was dropped.
+        let place = unsafe {
+            let at = SLOT_BYTES_AUX.0.get() as *mut _;
+            ptr::write(at, future);
+            at as Held
+        };
+        self.future = Some(SendHeld(place));
+        used
+    }
+
+    /// Proxy mode for this port's core: the proxy answers, offers and releases PS_RDY.
+    pub fn set_proxy(&mut self, on: bool) {
+        select_port(self.port);
+        let c = core();
+        c.proxy = on;
+        c.ev_len = 0;
+        c.reset_wait = false;
+        c.psrdy_ok = false;
+        c.decision = 0;
+    }
+
+    pub fn take_event(&mut self) -> Option<(u8, u32)> {
+        select_port(self.port);
+        let c = core();
+        if c.ev_len == 0 {
+            return None;
+        }
+        let first = c.ev[0];
+        c.ev.copy_within(1..c.ev_len, 0);
+        c.ev_len -= 1;
+        Some(first)
+    }
+
+    pub fn caps(&self) -> &'static [u32] {
+        select_port(self.port);
+        let c = core();
+        &c.caps[..c.caps_n]
+    }
+
+    pub fn set_offer(&mut self, offer: &[u32]) {
+        select_port(self.port);
+        let c = core();
+        c.offer_n = offer.len().min(7);
+        c.offer[..c.offer_n].copy_from_slice(&offer[..c.offer_n]);
+    }
+
+    /// Send the stored offer again: the engine restarts and sends Source_Capabilities.
+    pub fn reoffer(&mut self) {
+        select_port(self.port);
+        core().restart = true;
+    }
+
+    pub fn decide(&mut self, decision: u8) {
+        select_port(self.port);
+        core().decision = decision;
+    }
+
+    pub fn release_ps_rdy(&mut self) {
+        select_port(self.port);
+        core().psrdy_ok = true;
+    }
+
+    pub fn reset_done(&mut self) {
+        select_port(self.port);
+        core().reset_wait = false;
+    }
+
+    /// Send a Hard Reset on this port and restart its engine.
+    pub fn hard_reset(&mut self) {
+        select_port(self.port);
+        core().hr_cmd = true;
+    }
+
+    /// AUX: the voltage a (re)Request asks for (the contract the proxy holds).
+    pub fn want_mv(&mut self, mv: u32) {
+        select_port(self.port);
+        core().want_mv = mv;
+    }
+
+    /// AUX: post a Request (RDO) from Ready.
+    pub fn request(&mut self, rdo: u32) {
+        select_port(self.port);
+        core().aux_req = Some(rdo);
     }
 
     pub fn running(&self) -> bool {
@@ -796,6 +1132,7 @@ impl Pd {
 
     /// Start a session offering `milliamps` at 5 V. Returns the future's size.
     pub fn start(&mut self, milliamps: u16) -> usize {
+        select_port(self.port);
         let future = session(milliamps);
         const { assert!(align_of::<usize>() <= 8) };
         let used = size_of_val(&future);
@@ -818,6 +1155,7 @@ impl Pd {
     }
 
     pub fn stop(&mut self) {
+        select_port(self.port);
         self.future = None;
         let c = core();
         c.phy = None;
@@ -827,6 +1165,7 @@ impl Pd {
 
     /// Poll the session once. A finished session leaves its reason in `ended`.
     pub fn poll(&mut self, bus: &mut Bus) {
+        select_port(self.port);
         let Some(SendHeld(place)) = self.future.as_ref() else {
             return;
         };
@@ -847,6 +1186,7 @@ impl Pd {
 
     /// A VBUS action the engine asked for: `Some(false)` off, `Some(true)` on.
     pub fn take_vbus(&mut self) -> Option<bool> {
+        select_port(self.port);
         match core().vbus_cmd {
             VBUS_OFF => Some(false),
             VBUS_ON => Some(true),
@@ -855,27 +1195,34 @@ impl Pd {
     }
 
     pub fn vbus_done(&mut self) {
+        select_port(self.port);
         core().vbus_cmd = VBUS_NONE;
     }
 
     pub fn contract(&self) -> Option<(u8, u16)> {
+        select_port(self.port);
         core().contract
     }
     pub fn ready(&self) -> bool {
+        select_port(self.port);
         core().ready
     }
     /// `(sent, received, send errors, hard resets)`
     pub fn counters(&self) -> (u32, u32, u32, u32) {
+        select_port(self.port);
         let c = core();
         (c.sent, c.received, c.send_errors, c.hard_resets)
     }
     pub fn logged(&self) -> u32 {
+        select_port(self.port);
         core().logged
     }
     pub fn entry(&self, n: u32) -> Entry {
+        select_port(self.port);
         core().log[n as usize % LOG]
     }
     pub fn caps_pdo(&self) -> u32 {
+        select_port(self.port);
         dec::fixed_pdo(5000, core().milliamps as u32, dec::PDO_USB_COMM)
     }
 
@@ -890,6 +1237,7 @@ impl Pd {
         no_reply: bool,
         want: usize,
     ) -> bool {
+        select_port(self.port);
         let r = &mut core().raw;
         if r.state == RawState::Pending || r.state == RawState::Running {
             return false;
@@ -909,6 +1257,7 @@ impl Pd {
 
     /// The finished exchange, once.
     pub fn take_result(&mut self) -> Option<&'static Raw> {
+        select_port(self.port);
         let r = &mut core().raw;
         if r.state == RawState::Done {
             r.state = RawState::Idle;

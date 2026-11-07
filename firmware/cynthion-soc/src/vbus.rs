@@ -255,6 +255,21 @@ pub fn close_at(
     Ok(millivolts)
 }
 
+/// Proxy path: AUX feeds the node, TARGET_C takes from it, CONTROL stays open.
+///
+/// The caller has checked that no other source is live (`pd_proxy::check_path`).
+pub fn close_proxy(monitor: &mut power::Monitor, bus: Option<&mut Bus>) -> Result<u32, Refusal> {
+    let (millivolts, _) = gate(Source::Aux, Window::V5, monitor, bus)?;
+    NOMINAL_MV.store(5_000, Ordering::Relaxed);
+    write((1 << BIT_ENABLE) | (1 << BIT_AUX) | (1 << BIT_TARGET_C));
+    Ok(millivolts)
+}
+
+/// Arm the AUX channel's limits to `window` while the proxy path is closed.
+pub fn arm_aux(monitor: &mut power::Monitor, bus: &mut Bus, window: Window) {
+    monitor.vbus_restore(bus, Some(Source::Aux.channel()), window);
+}
+
 /// Route CONTROL through the shared rail to TARGET-C.
 ///
 /// TARGET-C must not already be powered by another source. Repeating this while

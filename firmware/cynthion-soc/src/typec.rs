@@ -194,7 +194,7 @@ impl Controllers {
 
             // The PD engine reads and clears TARGET itself; the source stays
             // masked and the engine polls INT_N through the mux lines.
-            if port == Port::Target && self.pd.running() {
+            if (port == Port::Target && self.pd.running()) || (port == Port::Aux && self.pd.bridge_active()) {
                 continue;
             }
 
