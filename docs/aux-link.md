@@ -72,7 +72,7 @@ Direction: **C>P** = Cynthion to PC, **P>C** = PC to Cynthion. Numbers are type 
 
 | code | name | dir | `ep` | `seq` | payload |
 |---|---|---|---|---|---|
-| `0x01` | `HELLO` | both | 0 | 0 | P>C `{u8 version=1, u8 max_speed, u16 reserved}`; C>P `{u8 version=1, u8 aux_speed, u16 max_payload=4096, u8 n_pipes, u8 features, u16 build}` |
+| `0x01` | `HELLO` | both | 0 | 0 | P>C `{u8 version=1, u8 max_speed, u16 reserved}`; C>P `{u8 version=1, u8 aux_speed, u16 max_payload=4096, u8 n_pipes, u8 features, u16 build, u16 fifo_pkts}` |
 | `0x02` | `SETUP` | C>P | 0 | control epoch | 8 B setup packet, as received |
 | `0x03` | `CTRL_DATA_OUT` | C>P | 0 | control epoch | complete OUT data stage (`wLength` bytes <= 4096) |
 | `0x04` | `CTRL_DATA_IN` | P>C | flags | control epoch | IN data stage reply, 0..4096 B (0 = data stage with a ZLP) |
@@ -168,7 +168,8 @@ One pipe per TARGET endpoint (section 2). **No framing**: bytes on the pipe are 
 - **`EP_CONFIG` enable** flushes the FIFO, clears halt/wedge, toggle DATA0, arms the endpoint. **Disable**: TARGET tokens get no response (NAK for the remote host's retries), FIFO flushed. Pipes of unconfigured endpoints NAK on AUX.
 - **`EP_FLUSH`**: with `DISCARD`, drop everything in the FIFO (partial request data). The PC sends `DISCARD` when it dequeues or disables a TARGET-IN request, plain notification when it dequeues a TARGET-OUT request.
 - **Bus reset**: gateware drops all endpoint configuration and flushes all FIFOs; AUX pipes then NAK until the next `EP_CONFIG`. The PC kills its URBs on `RESET`.
-- FIFO depth is a gateware choice (planned 2 KiB per pipe = 4 x 512); the link does not depend on it beyond "room for `maxp`".
+- **Per-endpoint FIFOs are first-class.** Backpressure is credit-by-room: a packet is accepted only if the FIFO has room for `maxp`, otherwise USB NAK on the leg that is full (AUX OUT NAKs the PC, TARGET OUT NAKs the remote host). The room is the credit; no credit messages exist and none are needed.
+- **Depth is advertised, not framed.** `HELLO.fifo_pkts` = packets of `maxp` each pipe holds (planned 4 = 2 KiB per pipe). A deeper buffer backed by HyperRAM ([open question 4](usb-device-mode.md#open-questions)) is the same pipe with a larger `fifo_pkts` (`HELLO.features` bit0 = deep buffer); packets, EOP markers, NAK rules, `EP_FLUSH` and the PC driver are unchanged. The PC never depends on the depth beyond "room for `maxp`".
 - **Per-endpoint mapping limits** (version 1): TARGET `0x01`..`0x04` OUT and `0x81`..`0x84` IN. EP_CONFIG for another address -> `NAK BAD_EP`; for a missing pipe -> `NAK NO_PIPE` (option C fallback keeps the interrupt endpoints on `EP_DATA`).
 
 ## 9. Timers
