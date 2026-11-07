@@ -322,9 +322,9 @@ impl Engine {
                 self.send(now, out, SOURCE_CAP, &caps, State::Ready, State::SoftResetWait);
             }
             (State::Ready, true, PING) => {}
-            // Anything else in an AMS we don't implement: refuse politely.
+            // Anything else: Reject (Not_Supported is a rev 3.0 message).
             (State::Ready, _, _) => {
-                self.send(now, out, NOT_SUPPORTED, &[], State::Ready, State::SoftResetWait)
+                self.send(now, out, REJECT, &[], State::Ready, State::SoftResetWait)
             }
             _ => {}
         }

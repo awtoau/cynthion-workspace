@@ -136,9 +136,9 @@ fn get_source_cap_in_ready_answers_with_caps() {
 }
 
 #[test]
-fn unsupported_message_gets_not_supported() {
+fn unsupported_message_is_rejected() {
     let (mut e, t) = contract();
-    assert_eq!(sent(e.event(t + 1, Event::Rx(control(PR_SWAP, 1)))).kind(), NOT_SUPPORTED);
+    assert_eq!(sent(e.event(t + 1, Event::Rx(control(PR_SWAP, 1)))).kind(), REJECT);
 }
 
 #[test]

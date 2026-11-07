@@ -23,8 +23,8 @@ fn five_volt_three_amp_pdo() {
 #[test]
 fn source_cap_header() {
     let m = Message::source(SOURCE_CAP, 0, &[fixed_pdo(5000, 3000)]);
-    // type 1, DFP, rev 3, source, id 0, one object.
-    assert_eq!(m.header, 0x11a1);
+    // type 1, DFP, rev 2.0, source, id 0, one object.
+    assert_eq!(m.header, 0x1161);
     assert_eq!(m.count(), 1);
     assert!(!m.is_control());
 }
@@ -33,8 +33,8 @@ fn source_cap_header() {
 fn message_id_wraps_in_three_bits() {
     assert_eq!(Message::source(ACCEPT, 7, &[]).id(), 7);
     assert_eq!(Message::source(ACCEPT, 9, &[]).id(), 1);
-    // Accept: type 3, DFP, rev 3, source, id 2.
-    assert_eq!(Message::source(ACCEPT, 2, &[]).header, 0x05a3);
+    // Accept: type 3, DFP, rev 2.0, source, id 2.
+    assert_eq!(Message::source(ACCEPT, 2, &[]).header, 0x0563);
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn tx_framing_matches_the_token_table() {
         &[
             0x12, 0x12, 0x12, 0x13, // SOP: Sync-1 x3, Sync-2
             0x80 | 6, // PACKSYM, 2 header + 4 object bytes
-            0xa1, 0x11, // header 0x11a1 LE
+            0x61, 0x11, // header 0x1161 LE
             0x2c, 0x91, 0x01, 0x04, // PDO 0x0401912c LE
             0xff, 0x14, 0xfe, 0xa1, // JAM_CRC, EOP, TXOFF, TXON
         ]
@@ -113,7 +113,7 @@ fn display_names_and_decodes() {
     let m = Message::source(SOURCE_CAP, 0, &caps);
     let mut s = String::new();
     write!(s, "{}", Decoded { message: &m, caps: &caps }).unwrap();
-    assert_eq!(s, "Source_Capabilities id0 [11a1 0401912c] 1:5000mV/3000mA");
+    assert_eq!(s, "Source_Capabilities id0 [1161 0401912c] 1:5000mV/3000mA");
     let r = Message { header: 0x1082, data: [0x1001_9064 | 1 << 26, 0, 0, 0, 0, 0, 0] };
     s.clear();
     write!(s, "{}", Decoded { message: &r, caps: &caps }).unwrap();
