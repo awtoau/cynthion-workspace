@@ -3,6 +3,8 @@
 # MO is Kbuild's external-module output dir; it reaches the kernel make via MAKEFLAGS.
 KDIR ?= /usr/src/kernels/$(shell uname -r)
 
+CUDC_CFLAGS ?=
+
 all:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 

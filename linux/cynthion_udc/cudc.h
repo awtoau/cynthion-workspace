@@ -23,6 +23,7 @@ struct cudc;
 struct cudc_request {
 	struct usb_request	req;
 	struct list_head	queue;
+	bool			sent;		/* backend private: already handed to the link */
 };
 
 struct cudc_ep {
@@ -53,6 +54,7 @@ struct cudc_backend_ops {
 	int  (*set_halt)(struct cudc *u, struct cudc_ep *ep, bool halt, bool wedge);
 	void (*setup_reply)(struct cudc *u);		/* ep0: data or status request queued */
 	int  (*wakeup)(struct cudc *u);			/* remote wakeup; backend refuses unless enabled */
+	void (*selfpowered)(struct cudc *u, bool on);	/* optional; atomic */
 };
 
 struct cudc {
@@ -78,6 +80,7 @@ void cudc_set_address(struct cudc *u, u8 addr);
 void cudc_suspend(struct cudc *u);
 void cudc_resume(struct cudc *u);
 void cudc_vbus(struct cudc *u, bool on);
+void cudc_ep_halted(struct cudc *u, u8 addr, bool halted);	/* the remote host halted/cleared it */
 
 /*
  * Request access for the backend: peek + touch req->buf + take, all under u->lock
@@ -93,6 +96,10 @@ static inline struct cudc_request *to_cudc_req(struct usb_request *r)
 {
 	return container_of(r, struct cudc_request, req);
 }
+
+/* AUX backend (cudc_aux.c): a usb_driver for the Cynthion's bridge interface */
+int cudc_aux_init(void);
+void cudc_aux_exit(void);
 
 /* stub backend */
 int cudc_stub_init(void);

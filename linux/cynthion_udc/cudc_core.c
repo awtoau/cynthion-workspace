@@ -188,6 +188,7 @@ static int cudc_queue(struct usb_ep *_ep, struct usb_request *_req, gfp_t gfp)
 	}
 	_req->status = -EINPROGRESS;
 	_req->actual = 0;
+	req->sent = false;
 	list_add_tail(&req->queue, &ep->queue);
 	spin_unlock_irqrestore(&u->lock, flags);
 
@@ -302,6 +303,8 @@ static int cudc_set_selfpowered(struct usb_gadget *g, int value)
 		u->devstatus |= BIT(USB_DEVICE_SELF_POWERED);
 	else
 		u->devstatus &= ~BIT(USB_DEVICE_SELF_POWERED);
+	if (u->ops->selfpowered)
+		u->ops->selfpowered(u, !!value);
 	return 0;
 }
 
@@ -464,6 +467,20 @@ void cudc_vbus(struct cudc *u, bool on)
 	usb_udc_vbus_handler(&u->gadget, on);
 }
 
+void cudc_ep_halted(struct cudc *u, u8 addr, bool halted)
+{
+	struct cudc_ep *ep = cudc_ep_by_addr(u, addr);
+	unsigned long flags;
+
+	if (!ep)
+		return;
+	spin_lock_irqsave(&u->lock, flags);
+	ep->halted = halted;
+	if (!halted)
+		ep->wedged = false;
+	spin_unlock_irqrestore(&u->lock, flags);
+}
+
 /* ---- registration ---- */
 
 struct cudc *cudc_create(struct device *parent, const struct cudc_backend_ops *ops, void *backend)
@@ -522,17 +539,32 @@ void cudc_destroy(struct cudc *u)
 	kfree(u);
 }
 
+static bool stub = true;
+module_param(stub, bool, 0444);
+MODULE_PARM_DESC(stub, "register the in-kernel stub backend (tests); the AUX usb_driver is always registered");
+
 static int __init cudc_init(void)
 {
-	return cudc_stub_init();	/* only backend until the AUX usb_driver lands */
+	int ret = cudc_aux_init();
+
+	if (ret)
+		return ret;
+	if (stub) {
+		ret = cudc_stub_init();
+		if (ret)
+			cudc_aux_exit();
+	}
+	return ret;
 }
 module_init(cudc_init);
 
 static void __exit cudc_exit(void)
 {
-	cudc_stub_exit();
+	if (stub)
+		cudc_stub_exit();
+	cudc_aux_exit();
 }
 module_exit(cudc_exit);
 
-MODULE_DESCRIPTION("Cynthion USB device controller (UDC) bridge, stub backend");
+MODULE_DESCRIPTION("Cynthion USB device controller (UDC) bridge: AUX link backend, stub backend for tests");
 MODULE_LICENSE("GPL");
