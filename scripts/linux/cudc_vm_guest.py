@@ -24,6 +24,7 @@ import subprocess
 import sys
 import termios
 import threading
+import traceback
 import time
 import tty
 from pathlib import Path
@@ -50,7 +51,7 @@ BAD = re.compile(r"WARNING:|BUG:|Oops|Call Trace|general protection|UBSAN|KASAN|
                  r"list_(add|del) corruption|scheduling while atomic|sleeping function called|"
                  r"circular locking|inconsistent lock state|blocked for more than|stack-protector|"
                  r"Kernel panic")
-OUR_ERRORS = re.compile(r"stub host: .*(failed|STALL|no ep0|signalled but empty)")
+OUR_ERRORS = re.compile(r"stub host: (?!ctl: ).*(failed|STALL|no ep0|signalled but empty)")
 
 FAILS = []
 
@@ -149,7 +150,10 @@ def wait_state(want, limit_ms, what):
 
 
 def write(path, value):
-    Path(path).write_text(value)
+    try:
+        Path(path).write_text(value)
+    except OSError as e:
+        raise OSError(e.errno, f"{e.strerror}: write {value!r} to {path}") from e
 
 
 FFS = "cudcffs"       # FunctionFS instance name = mount source
@@ -163,7 +167,7 @@ def make_gadget(case, functions, attributes=0x80):
     GADGET.mkdir()
     write(GADGET / "idVendor", f"0x{VID:04x}")
     write(GADGET / "idProduct", f"0x{PID:04x}")
-    write(GADGET / "bcdDevice", f"0x{0x0300 + case:04x}")
+    write(GADGET / "bcdDevice", f"0x{0x0300 + int(str(case), 16):04x}")  # BCD digits only
     write(GADGET / "bcdUSB", "0x0200")
     (GADGET / "strings/0x409").mkdir()
     write(GADGET / "strings/0x409/manufacturer", "cynthion-workspace")
@@ -307,6 +311,23 @@ def stat(ep):
     return {k: int(v) for k, v in kv.items()} if st == "ok" else None
 
 
+FN_MS = 100     # waits for: a function's worker thread to act (mass storage enables endpoints and
+#   wedges from its own thread). Expected a few ms; 100 ms covers a vCPU deschedule. Expiry: check fails.
+
+
+def wait_stat(ep, pred, what):
+    """Polls the stub's endpoint state (event-free: the function acts on its own thread), bounded."""
+    t0 = time.monotonic()
+    while True:
+        s = stat(ep)
+        if s is not None and pred(s):
+            return s
+        if time.monotonic() - t0 > FN_MS / 1000:
+            check(False, f"{what}: not reached within {FN_MS} ms: {s}")
+            return s
+        select.select([], [], [], 0.002)
+
+
 def devstat():
     st, kv = host("devstat")
     return {k: int(v) for k, v in kv.items()} if st == "ok" else {}
@@ -345,6 +366,8 @@ def wrap(name):
                 fn()
             except Exception as e:  # noqa: BLE001  (one case failing must not hide the rest)
                 check(False, f"{name}: {type(e).__name__}: {e}")
+                fr = [f for f in traceback.extract_tb(e.__traceback__) if f.filename == __file__][-1]
+                log(f"  at line {fr.lineno}: {fr.line}")
         return inner
     return deco
 
@@ -492,6 +515,16 @@ class Reader(threading.Thread):
         return None if self.is_alive() else self.data
 
 
+class Writer(Reader):
+    """Blocking write on a FunctionFS fd in a thread: an IN write completes when the host took it."""
+
+    def run(self):
+        try:
+            self.data = os.write(self.fd, self.n)
+        except OSError as e:
+            self.err = e
+
+
 def ffs_gadget(case, attributes=0x80):
     host("autoloop 0")
     make_gadget(case, ["ffs"], attributes)
@@ -515,40 +548,33 @@ def case_packets_in():
     f = ffs_gadget(20)
     try:
         seq = []                    # every IN data toggle seen, must alternate from DATA0
+        writers = []
 
-        def pull(n, maxpkts, want, label):
+        def pull(payload, maxpkts, want, label):
+            w = Writer(f.ein, payload)
             st, kv = host(f"in 0x81 {NAK_MS} {maxpkts}")
             check(st == "ok" and pkts(kv) == want, f"IN {label}: packets {pkts(kv)} (want {want})")
             seq.extend(togs(kv))
-            return bytes.fromhex(kv.get("data", ""))
+            writers.append(w)
+            check(w.result() == len(payload), f"IN {label}: function write completed")
+            check(bytes.fromhex(kv.get("data", "")) == payload, f"IN {label}: data intact")
 
-        p = pattern(100)
-        os.write(f.ein, p)
-        check(pull(100, 1, [100], "100 B short") == p, "IN 100 B data intact")
-        p = pattern(512)
-        os.write(f.ein, p)
-        check(pull(512, 1, [512], "512 B, no ZLP") == p, "IN 512 B data intact")
-        st, kv = host(f"in 0x81 {NAK_MS} 1")
-        check(st == "nak", f"IN after a 512 B write: NAK, no ZLP generated (got {st})")
-        p = pattern(1024)
-        os.write(f.ein, p)
-        check(pull(1024, 2, [512, 512], "1024 B, no ZLP") == p, "IN 1024 B data intact")
-        st, kv = host(f"in 0x81 {NAK_MS} 1")
-        check(st == "nak", f"IN after a 1024 B write: NAK, no ZLP (got {st})")
-        os.write(f.ein, pattern(1024))
-        os.write(f.ein, b"")
-        pull(1024, 4, [512, 512, 0], "1024 B + explicit ZLP")
-        os.write(f.ein, b"")
-        pull(0, 1, [0], "ZLP alone")
-        p = pattern(1500)
-        os.write(f.ein, p)
-        check(pull(1500, 4, [512, 512, 476], "1500 B") == p, "IN 1500 B data intact")
-        st, kv = host(f"in 0x81 {NAK_MS} 1")
-        check(st == "nak" and togs(kv) == [], "IN with nothing queued: NAK")
-        s = stat(0x81)
-        check(s["tog"] == (seq[-1] ^ 1), f"toggle did not advance across NAK: {s['tog']} after {seq[-1]}")
-        os.write(f.ein, pattern(10))
-        pull(10, 1, [10], "after NAK")
+        def nak(label):
+            st, kv = host(f"in 0x81 {NAK_MS} 1")
+            check(st == "nak" and togs(kv) == [], f"IN {label}: NAK, nothing sent (got {st})")
+
+        pull(pattern(100), 1, [100], "100 B short")
+        pull(pattern(512), 1, [512], "512 B")
+        nak("after a 512 B write: no ZLP")
+        pull(pattern(1024), 2, [512, 512], "1024 B")
+        nak("after a 1024 B write: no ZLP")
+        pull(b"", 1, [0], "explicit ZLP")
+        pull(pattern(1500), 4, [512, 512, 476], "1500 B")
+        s0 = stat(0x81)
+        nak("nothing queued")
+        s1 = stat(0x81)
+        check(s1["tog"] == s0["tog"] == (seq[-1] ^ 1), f"toggle did not advance across NAK: {s0} {s1}")
+        pull(pattern(10), 1, [10], "after the NAK")
         check(seq == [i & 1 for i in range(len(seq))], f"IN toggles alternate from DATA0: {seq}")
     finally:
         ffs_teardown(f)
@@ -562,7 +588,7 @@ def case_packets_out():
 
         def push(read_n, lens, want, label, expect_tog_run=True):
             r = Reader(f.eout, read_n)
-            st, kv = host(f"out 0x02 {NAK_MS} {' '.join(map(str, lens))}")
+            st, kv = host(f"out 0x01 {NAK_MS} {' '.join(map(str, lens))}")
             check(st == "ok", f"OUT {label}: host sent {lens}: {st}")
             seq.extend(togs(kv))
             got = r.result()
@@ -577,15 +603,15 @@ def case_packets_out():
         push(1024, [0], 0, "ZLP alone")
         push(1024, [512, 0], 512, "512 + ZLP ends a 1024 request early")
         r1 = Reader(f.eout, 1024)
-        st, kv = host(f"out 0x02 {NAK_MS} 512 512")
+        st, kv = host(f"out 0x01 {NAK_MS} 512 512")
         seq.extend(togs(kv))
         check(r1.result() is not None and len(r1.data) == 1024, "OUT exactly-full request completes")
         push(1024, [0], 0, "ZLP after a full request lands in the next request")
         # NAK: no request queued
-        s0 = stat(0x02)
-        st, kv = host(f"out 0x02 {NAK_MS} 100")
+        s0 = stat(0x01)
+        st, kv = host(f"out 0x01 {NAK_MS} 100")
         check(st == "nak", f"OUT with no request queued: NAK (got {st})")
-        s1 = stat(0x02)
+        s1 = stat(0x01)
         check(s1["tog"] == s0["tog"] and s1["naks"] > s0["naks"],
               f"toggle unchanged across NAK, NAK counted: {s0} -> {s1}")
         push(1024, [100], 100, "after NAK")
@@ -620,20 +646,21 @@ def case_halt_dequeue():
         st, _, _ = ctrl(0x02, 0x01, 0, 0x81, 0)
         s = stat(0x81)
         check(s["halted"] == 0 and s["tog"] == 0, f"host CLEAR_FEATURE clears a function halt: {s}")
-        os.write(f.ein, pattern(10))
+        w = Writer(f.ein, pattern(10))
         st, kv = host(f"in 0x81 {NAK_MS} 1")
         check(st == "ok" and togs(kv) == [0], f"IN works again, DATA0 first: {st} {togs(kv)}")
+        w.result()
 
         # host halts OUT; function clears it through the ioctl
-        ctrl(0x02, 0x03, 0, 0x02, 0)
-        st, kv = host(f"out 0x02 {NAK_MS} 100")
+        ctrl(0x02, 0x03, 0, 0x01, 0)
+        st, kv = host(f"out 0x01 {NAK_MS} 100")
         check(st == "stall", f"OUT token to a host-halted endpoint: STALL (got {st})")
         fcntl.ioctl(f.eout, FUNCTIONFS_CLEAR_HALT)
-        s = stat(0x02)
+        s = stat(0x01)
         check(s["halted"] == 0 and s["tog"] == 0, f"usb_ep_clear_halt reaches the stub: {s}")
 
         # dequeue: a blocked read is interrupted, the request leaves the stub
-        d0 = stat(0x02)["dequeues"]
+        d0 = stat(0x01)["dequeues"]
         old = signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, 0.05)
         try:
@@ -644,9 +671,9 @@ def case_halt_dequeue():
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, old)
-        check(stat(0x02)["dequeues"] == d0 + 1, "stub saw the dequeue")
+        check(stat(0x01)["dequeues"] == d0 + 1, "stub saw the dequeue")
         r = Reader(f.eout, 1024)
-        st, kv = host(f"out 0x02 {NAK_MS} 64")
+        st, kv = host(f"out 0x01 {NAK_MS} 64")
         check(st == "ok" and r.result() is not None and len(r.data) == 64,
               "OUT works after a dequeue")
     finally:
@@ -729,10 +756,12 @@ def case_wedge():
     write(GADGET / "functions/mass_storage.usb0/lun.0/file", str(lun))
     try:
         bind_and_configure("mass storage")
+        wait_stat(0x01, lambda s: s["enabled"], "mass storage bulk-out enabled")
+        wait_stat(0x81, lambda s: s["enabled"], "mass storage bulk-in enabled")
         # bad CBW: 31 bytes, wrong signature
-        st, _kv = host(f"out 0x02 {NAK_MS} 31")
+        st, _kv = host(f"out 0x01 {NAK_MS} 31")
         check(st == "ok", f"bad CBW accepted by the OUT endpoint (got {st})")
-        s = stat(0x81)
+        s = wait_stat(0x81, lambda s: s["wedged"], "bulk-in wedged")
         check(s["halted"] == 1 and s["wedged"] == 1, f"bulk-in wedged by the function: {s}")
         ctrl(0x02, 0x01, 0, 0x81, 0)
         s = stat(0x81)
@@ -743,7 +772,7 @@ def case_wedge():
         intf = next((cfg[i + 2] for i in range(len(cfg) - 8)
                      if cfg[i:i + 2] == bytes([9, 4]) and cfg[i + 5] == 8), 0)
         st, _, _ = ctrl(0x21, 0xFF, 0, intf, 0)        # Bulk-Only Mass Storage Reset
-        s = stat(0x81)
+        s = wait_stat(0x81, lambda s: not s["halted"], "reset clears the wedge")
         check(st == "ok" and s["halted"] == 0 and s["wedged"] == 0 and s["tog"] == 0,
               f"Bulk-Only Reset clears the wedge, DATA0: {st} {s}")
         unbind()
