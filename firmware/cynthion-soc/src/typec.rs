@@ -79,6 +79,7 @@ pub struct Controllers {
     pub serviced: [u32; 2],
     /// USB PD on TARGET-C, once `usb target_c power on` has armed it.
     pub pd: crate::pd::Pd,
+    pub pdl: crate::pd_lib::Pd,
 }
 
 /// What [`Controllers::init`] established.
@@ -97,6 +98,7 @@ impl Controllers {
             last_poll: Instant::ZERO,
             serviced: [0; 2],
             pd: crate::pd::Pd::new(),
+            pdl: crate::pd_lib::Pd::new(),
         }
     }
 

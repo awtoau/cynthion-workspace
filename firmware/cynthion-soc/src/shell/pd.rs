@@ -37,6 +37,10 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             let _ = writeln!(uart, "live {}", devices.type_c.pd.live as u8);
         }
         b"log" => pd.dump_log(uart),
+        b"lib" => {
+            let used = devices.type_c.pdl.start(1500);
+            let _ = writeln!(uart, "lib future {} B", used);
+        }
         b"regs" => {
             if let Some(bus) = devices.bus.as_mut() {
                 let mut r = [0u8; 26];

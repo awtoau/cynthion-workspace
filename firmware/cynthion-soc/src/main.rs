@@ -141,6 +141,7 @@ mod staging;
 mod target;
 mod timer;
 mod pd;
+mod pd_lib;
 mod pd_msg;
 mod pd_src;
 mod typec;
@@ -317,6 +318,7 @@ fn housekeeping(console: &mut Uart, devices: &mut Devices) {
         devices.type_c.service(console, bus);
         devices.type_c.poll(console, bus);
         devices.type_c.pd.tick(console, bus, &mut devices.power);
+        devices.type_c.pdl.poll(bus);
     }
 }
 
