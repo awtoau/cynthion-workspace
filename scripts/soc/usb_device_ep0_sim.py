@@ -41,7 +41,7 @@ from devlog import emit
 from sim_check_harness import Checks
 from usbcore.crc import crc5_reference, crc16_reference
 from usbcore.device import (CMD_IN, CMD_OACK, CMD_STALL, CMD_STATUS, CMD_WAKEUP, EV_RESUME, EV_SUSPEND,
-                            EV_VBUS, Ep0Device, Stage)
+                            EV_VBUS, EV_SETUP, EV_RESET, EV_SOF, EV_FIFO, CMD_EP_ENABLE, ep_code, Ep0Device, Stage)
 from usbcore.pid import PID
 
 USB_PERIOD = 1 / 60e6
@@ -429,7 +429,7 @@ async def reset_to(bus, hs):
     ctx.set(dev.reset_ack, 0)
 
 
-async def clear_events(bus, mask=0xF):
+async def clear_events(bus, mask=0xFF):
     bus.ctx.set(bus.dev.ev_clr, mask)
     await bus.tick()
     bus.ctx.set(bus.dev.ev_clr, 0)
@@ -621,7 +621,38 @@ def section_vbus(checks):
     build(body)
 
 
-SECTIONS = {"speed": section_speed, "control": section_control, "address": section_address,
+def section_events(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        await bus.tick(4)
+        checks.check("events: none after power-up, irq low", bus.get(dev.events) == 0 and bus.get(dev.irq) == 0)
+        await setup(bus, 0, GET_DESC_DEV)
+        checks.check("events: SETUP received sets EV_SETUP", bus.get(dev.events) & EV_SETUP)
+        checks.check("events: irq stays low while masked", bus.get(dev.irq) == 0)
+        ctx.set(dev.ev_mask, EV_SETUP)
+        await bus.tick(2)
+        checks.check("events: unmasked -> irq", bus.get(dev.irq) == 1)
+        await clear_events(bus, EV_SETUP)
+        checks.check("events: ev_clr drops the event and the irq", bus.get(dev.irq) == 0
+                     and not bus.get(dev.events) & EV_SETUP)
+        await bus.send(sof_token(3))
+        await bus.tick(4)
+        checks.check("events: SOF tick", bus.get(dev.events) & EV_SOF)
+        await bus.cpu(CMD_EP_ENABLE, bus.get(dev.seq), ep=ep_code(1, False), arg=64)
+        await clear_events(bus)
+        r = await bus.transact(token(PID.OUT, 0, 1), data_packet(PID.DATA0, b"abc"))
+        checks.check("events: OUT packet committed sets EV_FIFO", r == handshake(PID.ACK)
+                     and bus.get(dev.events) & EV_FIFO, f"{r}")
+        await clear_events(bus)
+        ctx.set(dev.utmi.line_state, SE0)
+        await bus.tick(SCALE["FS_RESET_CYCLES"] + 10)
+        ctx.set(dev.utmi.line_state, J)
+        await bus.tick(4)
+        checks.check("events: bus reset sets EV_RESET", bus.get(dev.events) & EV_RESET)
+    build(body)
+
+
+SECTIONS = {"events": section_events, "speed": section_speed, "control": section_control, "address": section_address,
             "outdata": section_outdata, "stale": section_stale, "sof": section_sof,
             "suspend": section_suspend, "suspend_hs": section_suspend_hs, "vbus": section_vbus}
 

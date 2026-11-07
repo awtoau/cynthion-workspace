@@ -82,7 +82,7 @@ class Ep:
             ctx.set(s.zlp, int(z))
             ctx.set(s.valid, 1)
             for _ in range(limit):
-                _, ready = await ctx.tick("usb").sample(s.ready)
+                *_, ready = await ctx.tick("usb").sample(s.ready)
                 self.bus.cycles += 1
                 if ready:
                     break
@@ -99,7 +99,7 @@ class Ep:
         pkts, cur, idle = [], bytearray(), 0
         ctx.set(s.ready, 1)
         while len(pkts) < count and idle < wait:
-            _, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
+            *_, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
             self.bus.cycles += 1
             if v:
                 idle = 0
@@ -126,7 +126,7 @@ class Ep:
         return r
 
     async def host_in(self):
-        return await self.bus.transact(token(PID.IN, 0, self.num))
+        return await self.bus.transact(token(PID.IN, 0, self.num), wait=maxp(self.hs) + 80)
 
     async def host_ack(self):
         await self.bus.send(bytes([PID.ACK.byte()]))
@@ -640,7 +640,7 @@ def section_large(checks, hs):
         for cycle in range(400_000):
             ready = int((cycle // 700) % 2 == 0)
             ctx.set(s.ready, ready)
-            _, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
+            *_, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
             if v and ready:
                 if z:
                     got_out.append(b"")
@@ -665,7 +665,7 @@ def section_large(checks, hs):
                 ctx.set(s.zlp, 0)
                 ctx.set(s.valid, 1)
                 while True:
-                    _, ready = await ctx.tick("usb").sample(s.ready)
+                    *_, ready = await ctx.tick("usb").sample(s.ready)
                     if ready:
                         break
                 n += 1
@@ -706,9 +706,76 @@ def section_large(checks, hs):
     build(body, extra=(consumer, producer))
 
 
+# ------------------------------------------------------------------ rate
+
+RATE_PACKETS = 12
+RATE = {}               # slots -> (OUT cycles per packet, IN cycles per packet), filled by section_rate
+
+
+def section_rate(checks):
+    """HS, full-rate AUX side: cycles per 512 B packet for 1, 2, 4 buffers per FIFO (sim cycles, no inter-packet gaps)."""
+    M = 512
+    payload = pat(M * RATE_PACKETS, 9)
+    for slots in (1, 2, 4):
+        got = []
+
+        async def consumer(ctx, dev):
+            s = dev.ep_out[1]
+            ctx.set(s.ready, 1)
+            cur = bytearray()
+            while True:
+                *_, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
+                if v:
+                    cur.append(d)
+                    if lst:
+                        got.append(bytes(cur))
+                        cur = bytearray()
+
+        async def producer(ctx, dev):
+            s = dev.ep_in[2]
+            for i, b in enumerate(payload):
+                ctx.set(s.data, b)
+                ctx.set(s.last, int(i == len(payload) - 1))
+                ctx.set(s.zlp, 0)
+                ctx.set(s.valid, 1)
+                while True:
+                    *_, ready = await ctx.tick("usb").sample(s.ready)
+                    if ready:
+                        break
+            ctx.set(s.valid, 0)
+
+        res = {}
+
+        async def body(ctx, dev):
+            bus = Bus(ctx, dev)
+            await start(bus, True)
+            o1, i2 = Ep(bus, 1, False, True), Ep(bus, 2, True, True)
+            await o1.enable()
+            await i2.enable()
+            log = []
+            c0 = bus.cycles
+            ok = await host_send(o1, payload, log)
+            res["out"] = (bus.cycles - c0) / RATE_PACKETS
+            await bus.tick(600)
+            checks.check(f"rate[{slots} slot]: OUT data intact", ok and b"".join(got[:RATE_PACKETS]) == payload, " ".join(log))
+            c0 = bus.cycles
+            pk = await host_receive(i2, log)
+            res["in"] = (bus.cycles - c0) / RATE_PACKETS
+            checks.check(f"rate[{slots} slot]: IN data intact", b"".join(pk) == payload, " ".join(log))
+        build(body, extra=(consumer, producer), fifo_slots=slots)
+        RATE[slots] = (res["out"], res["in"])
+        emit(f"  rate: {slots} slot(s) x 512 B per FIFO: OUT {res['out']:.0f} cycles/packet, IN {res['in']:.0f} cycles/packet")
+    wire = 512 + 40
+    checks.check("rate: 2 buffers per FIFO run within 15 % of the wire (OUT and IN)",
+                 all(v <= wire * 1.15 for v in RATE[2]), f"{RATE[2]} vs {wire}")
+    checks.check("rate: 1 buffer per FIFO is clearly slower than 2 (OUT)", RATE[1][0] > RATE[2][0] * 1.3, f"{RATE[1]} {RATE[2]}")
+    checks.check("rate: 4 buffers are no faster than 2 within 5 % (OUT, IN)",
+                 RATE[4][0] >= RATE[2][0] * 0.95 and RATE[4][1] >= RATE[2][1] * 0.95, f"{RATE[4]} {RATE[2]}")
+
+
 SECTIONS = {"out": section_out, "in": section_in, "in_zlp": section_in_zlp,
             "backpressure": section_backpressure, "ping": section_ping, "halt": section_halt,
-            "control": section_control, "large": section_large}
+            "control": section_control, "large": section_large, "rate": section_rate}
 
 
 def main(argv):
