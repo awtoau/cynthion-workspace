@@ -15,6 +15,22 @@ pub const LIMIT_MV: u32 = 5_500;
 /// Below this the switch is outside its documented working range.
 pub const FLOOR_MV: u32 = 4_400;
 
+/// The accepted rail window for one close: 88% to 110% of the nominal volts
+/// (5 V gives exactly [`FLOOR_MV`]..[`LIMIT_MV`]).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct Window {
+    pub floor_mv: u32,
+    pub limit_mv: u32,
+}
+
+impl Window {
+    pub const V5: Window = Window { floor_mv: FLOOR_MV, limit_mv: LIMIT_MV };
+
+    pub const fn for_nominal(nominal_mv: u32) -> Window {
+        Window { floor_mv: nominal_mv / 100 * 88, limit_mv: nominal_mv / 100 * 110 }
+    }
+}
+
 /// `ALERT_STATUS` / `ALERT_ENABLE` / `GPIO_ALERT2` share one layout: CH1 is the
 /// high bit of each group (CH1OV = bit 15, CH1UV = bit 11).
 pub const fn ov_bit(channel: usize) -> u32 {
@@ -59,16 +75,21 @@ pub const fn sampling_continuously(ctrl: u16) -> bool {
 ///
 /// Flags first: the part compared every sample, the read is one instant.
 pub fn decide(channel: usize, millivolts: u32, flags: u32) -> Result<u32, Refusal> {
+    decide_in(Window::V5, channel, millivolts, flags)
+}
+
+/// [`decide`] against the window of the voltage this close expects.
+pub fn decide_in(window: Window, channel: usize, millivolts: u32, flags: u32) -> Result<u32, Refusal> {
     if flags & ov_bit(channel) != 0 {
         return Err(Refusal::Ov(millivolts));
     }
     if flags & uv_bit(channel) != 0 {
         return Err(Refusal::Uv(millivolts));
     }
-    if millivolts > LIMIT_MV {
+    if millivolts > window.limit_mv {
         return Err(Refusal::TooHigh(millivolts));
     }
-    if millivolts < FLOOR_MV {
+    if millivolts < window.floor_mv {
         return Err(Refusal::TooLow(millivolts));
     }
     Ok(millivolts)

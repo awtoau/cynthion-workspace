@@ -69,7 +69,7 @@ use core::fmt::Write;
 use crate::bus::{self, Bus, BUS_POWER_MONITOR};
 use crate::clock::{self, Instant};
 use crate::uart::Uart;
-use crate::vbus_gate::{alert_action, channel_armed, limit_bits, ov_bit, sampling_continuously, uv_bit, Refusal, FLOOR_MV, LIMIT_MV};
+use crate::vbus_gate::{alert_action, channel_armed, limit_bits, ov_bit, sampling_continuously, uv_bit, Refusal, Window};
 
 /// The address the PAC1954 on r1.4 is strapped to.
 ///
@@ -946,13 +946,13 @@ impl Monitor {
 
     // ---- the VBUS gate's use of the limit ALERT (#552) ---------------------
 
-    /// Program UV = `FLOOR_MV` and OV = `LIMIT_MV` on `channel` only, enable and
+    /// Program UV/OV = `window` on `channel` only, enable and
     /// route their ALERT, and disarm the other source channels.
     ///
     /// Only the source being closed: an open switch's rail is unconnected and
     /// reads UV. It takes those two limits on that channel (`power limit`
     /// overwrites them; arming again restores).
-    fn vbus_arm(&mut self, bus: &mut Bus, closing: Option<usize>) -> Result<(), Refusal> {
+    fn vbus_arm(&mut self, bus: &mut Bus, closing: Option<usize>, window: Window) -> Result<(), Refusal> {
         let ctrl = self.read16(bus, REG_CTRL).map_err(|_| Refusal::Unreadable)?;
         if !sampling_continuously(ctrl) {
             return Err(Refusal::NotSampling);
@@ -960,7 +960,7 @@ impl Monitor {
         self.alert_pin_enable(bus).map_err(|_| Refusal::Unreadable)?;
         for channel in 1..4 {
             let on = channel_armed(channel, closing);
-            for (limit, mv) in [(Limit::UnderVoltage, FLOOR_MV), (Limit::OverVoltage, LIMIT_MV)] {
+            for (limit, mv) in [(Limit::UnderVoltage, window.floor_mv), (Limit::OverVoltage, window.limit_mv)] {
                 let raw = mv_to_limit_code(mv as i32);
                 let armed = self.alert_enable & limit.bit(channel) != 0;
                 let result = if on {
@@ -984,13 +984,13 @@ impl Monitor {
 
     /// Disarm every gate limit (switch open, or a refusal with nothing closed).
     pub fn vbus_disarm(&mut self, bus: &mut Bus) {
-        let _ = self.vbus_arm(bus, None);
+        let _ = self.vbus_arm(bus, None, Window::V5);
     }
 
     /// Re-establish protection for `closed` (the source whose switch is still
     /// closed after a refusal), or disarm if nothing is closed.
-    pub fn vbus_restore(&mut self, bus: &mut Bus, closed: Option<usize>) {
-        let _ = self.vbus_arm(bus, closed);
+    pub fn vbus_restore(&mut self, bus: &mut Bus, closed: Option<usize>, window: Window) {
+        let _ = self.vbus_arm(bus, closed, window);
     }
 
     /// The gate's read for `channel`: arm, then one on-demand sample, then the
@@ -1000,8 +1000,8 @@ impl Monitor {
     /// read), clear stale latches, REFRESH + wait ([`Monitor::read_now`]), read
     /// `ALERT_STATUS`. The part compares every sample, so the flag is current to
     /// within one conversion (976 us) by construction.
-    pub fn vbus_read(&mut self, bus: &mut Bus, channel: usize) -> Result<(Sample, u32), Refusal> {
-        self.vbus_arm(bus, Some(channel))?;
+    pub fn vbus_read(&mut self, bus: &mut Bus, channel: usize, window: Window) -> Result<(Sample, u32), Refusal> {
+        self.vbus_arm(bus, Some(channel), window)?;
         // Latches from before this arm describe an earlier state of the rail.
         let stale = self.alert_service(bus).map_err(|_| Refusal::Unreadable)?;
         self.alert_fired |= stale;
@@ -1381,7 +1381,7 @@ impl Monitor {
                             if action.open { "switches opened" } else { "tripped while open" }
                         );
                     }
-                    let _ = self.vbus_arm(bus, None);
+                    let _ = self.vbus_arm(bus, None, Window::V5);
                 }
                 let fired = fired & !action.gate_bits;
                 fired_bits = fired;

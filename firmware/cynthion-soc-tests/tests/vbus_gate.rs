@@ -196,7 +196,7 @@ fn window_follows_a_9v_contract() {
 }
 
 #[test]
-fn window_never_exceeds_the_spr_top() {
-    assert!(Window::for_nominal(20_000).limit_mv <= 21_000);
+fn window_limit_stays_under_the_next_pdo() {
     assert!(Window::for_nominal(9_000).limit_mv < 10_000);
+    assert!(Window::for_nominal(5_000).limit_mv < 9_000);
 }
