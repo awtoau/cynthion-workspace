@@ -8,16 +8,18 @@ the block cost (128 per DP16KD): anything of 32 DPR16X4 or fewer. A `ram_style` 
 overrides that, which the Scala generator only emits for a few memories. Mapping change only:
 widths, depths and the RTL read/write behaviour are untouched.
 
-`BLOCK` rows: (name, declaration regex, flag that legitimately removes the memory, or None).
+`BLOCK` rows: (name, declaration regex, flag that legitimately removes the memory or None,
+flag the memory needs or None). A row is skipped when its removing flag is present or its
+needed flag is absent (cacheless cores have no L1 tags).
 """
 
 import re
 
 BLOCK = [
-    ("regfile", r"asMem_ram", "--regfile-reg-based"),
-    ("fetch_tags", r"FetchL1Plugin_logic_ways_\d+_mem", None),
-    ("lsu_tags", r"LsuL1Plugin_logic_ways_\d+_mem", None),
-    ("csr_ram", r"CsrRamPlugin_logic_mem", None),
+    ("regfile", r"asMem_ram", "--regfile-reg-based", None),
+    ("fetch_tags", r"FetchL1Plugin_logic_ways_\d+_mem", None, "--with-fetch-l1"),
+    ("lsu_tags", r"LsuL1Plugin_logic_ways_\d+_mem", None, "--with-lsu-l1"),
+    ("csr_ram", r"CsrRamPlugin_logic_mem", None, None),
 ]
 
 
@@ -38,5 +40,6 @@ def force_block(text, patterns):
 
 def apply(text, flags):
     """`force_block` over `BLOCK`, skipping rows whose removing flag is in `flags`."""
-    return force_block(text, [regex for _, regex, removed_by in BLOCK
-                              if removed_by not in flags])
+    return force_block(text, [regex for _, regex, removed_by, needs in BLOCK
+                              if removed_by not in flags
+                              and (needs is None or needs in flags)])

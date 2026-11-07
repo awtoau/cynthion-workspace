@@ -57,7 +57,7 @@ def main(names):
         original = list(vexii.GENERATE_FLAGS)
         try:
             vexii.GENERATE_FLAGS[:] = soc_cpu_arms.flags_for(name)
-            arm = soc_cpu_arms.ARMS[name]
+            arm = soc_cpu_arms.spec(name)
             vexii.generate(0, cache_sets=arm.get("sets", top.CACHE_SETS),
                            cache_ways=arm.get("ways", top.CACHE_WAYS),
                            output=OUT / f"{name}.v")

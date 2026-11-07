@@ -109,6 +109,33 @@ ARMS = {
     "no-rvc": {"drop": [("--with-rvc", False)]},
     "iter-shift": {"add": ["--with-iterative-shift"]},
 
+    # DEVICE-MODE CORE (#612): control plane only, firmware in block RAM, no caches.
+    # `nl` = cacheless (A needs the L1: LsuCachelessBridge asserts !withAmo), so the
+    # ladder below is rv32imc without caches; each `nl-*` removes one more thing.
+    "nl": {"drop": [("--with-rva", False), ("--with-fetch-l1", False),
+                    ("--with-lsu-l1", False), ("--lsu-l1-wishbone", False)]},
+    # `nd`: no D-cache, so no A; the I-cache stays because .text executes from flash.
+    "nd": {"drop": [("--with-rva", False), ("--with-lsu-l1", False),
+                    ("--lsu-l1-wishbone", False)]},
+    "nd-i32": {"base": "nd", "flags": {"--fetch-l1-sets": "32"}, "sets": None, "ways": None},
+    "nl-pc0": {"base": "nl", "flags": {"--performance-counters": "0"}},
+    "nl-nodbg": {"base": "nl", "drop": [("--debug-jtag-instruction", False)],
+                 "drop_ports": [
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_tck",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_tdi",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_enable",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_capture",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_shift",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_update",
+                     "i_EmbeddedRiscvJtag_logic_jtagInstruction_reset",
+                     "o_EmbeddedRiscvJtag_logic_jtagInstruction_tdo",
+                     "i_EmbeddedRiscvJtag_logic_debug_reset"]},
+    "nl-norvm": {"base": "nl", "drop": [("--with-rvm", False)]},
+    "nl-nodiv": {"base": "nl", "add": ["--without-div"]},
+    "nl-norvc": {"base": "nl", "drop": [("--with-rvc", False)]},
+    "nl-iter-shift": {"base": "nl", "add": ["--with-iterative-shift"]},
+    "nl-regfile-reg": {"base": "nl", "add": ["--regfile-reg-based", "--regfile-async"]},
+
     # PIPELINE RELAXATIONS. Each moves work into a later stage: a cycle of
     # latency for a shorter combinational path.
     "relaxed-src-shift": {"add": ["--relaxed-src", "--relaxed-shift"]},
@@ -143,9 +170,23 @@ ARMS = {
 
 
 def spec(name):
+    """The arm, with its `base` arm (one level) folded in."""
     if name not in ARMS:
         raise SystemExit(f"no such CPU arm: {name}; `list` shows them")
-    return ARMS[name]
+    arm = dict(ARMS[name])
+    parent = arm.pop("base", None)
+    if parent is None:
+        return arm
+    merged = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+              for k, v in spec(parent).items()}
+    for key, value in arm.items():
+        if isinstance(value, dict):
+            merged.setdefault(key, {}).update(value)
+        elif isinstance(value, list):
+            merged.setdefault(key, []).extend(value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def flags_for(name):
@@ -238,8 +279,8 @@ def digest(names, out_dir):
             vexii.GENERATE_FLAGS[:] = flags_for(name)
             path = vexii.generate(
                 0x00000000,
-                cache_sets=ARMS[name].get("sets", top.CACHE_SETS),
-                cache_ways=ARMS[name].get("ways", top.CACHE_WAYS),
+                cache_sets=spec(name).get("sets", top.CACHE_SETS),
+                cache_ways=spec(name).get("ways", top.CACHE_WAYS),
                 output=out_dir / f"{name}.v")
         finally:
             vexii.GENERATE_FLAGS[:] = original
