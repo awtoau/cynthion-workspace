@@ -17,6 +17,7 @@ newer SETUP is dropped by the engine and counted in `stale`.
 """
 
 from usb_host import target_device as td
+from usbcore.device import CMD_EP_CLEAR, CMD_EP_DISABLE, CMD_EP_ENABLE, CMD_EP_HALT, ep_code
 
 GET_STATUS, CLEAR_FEATURE, SET_FEATURE, SET_ADDRESS = 0, 1, 3, 5
 GET_DESCRIPTOR, GET_CONFIGURATION, SET_CONFIGURATION = 6, 8, 9
@@ -106,6 +107,8 @@ class Port:
         c.set(e.cmd_last, kw.get("last", 0))
         c.set(e.cmd_addr, kw.get("addr", 0))
         c.set(e.cmd_addr_valid, 1 if "addr" in kw else 0)
+        c.set(e.cmd_ep, kw.get("ep", 0))
+        c.set(e.cmd_arg, kw.get("arg", 0))
         c.set(e.cmd_valid, 1)
         await self.tick()
         c.set(e.cmd_valid, 0)
@@ -141,11 +144,100 @@ class Port:
             await self.command(seq, CMD_STATUS, **addr)
 
 
+PATTERN_LEN = 2 * 512 + 37           # EP3 IN source: one transfer of this many bytes, repeated
+
+
+def pattern(n):
+    return bytes((i * 5 + 1) & 255 for i in range(n))
+
+
+class BulkModel:
+    """What sits behind EP1-4 on the AUX side: the stream ports of the engine, driven cycle by cycle.
+
+    - EP1 OUT -> EP1 IN: echo, packet boundaries and ZLPs kept.
+    - EP2 IN: 8-byte counter packets, always refilled (interrupt endpoint).
+    - EP3 IN: PATTERN_LEN-byte transfers (`pattern`), repeated.
+    - EP4 OUT -> EP4 IN: echo through a consumer that is ready 700 cycles of every 1400 (backpressure).
+    The CSR-master side (enable, halt, clear) is `configure` / `feature`.
+    """
+
+    THROTTLE_ON, THROTTLE_PERIOD = 700, 1400
+
+    def __init__(self, engine):
+        self.e = engine
+        self.reset()
+
+    def reset(self):
+        self.echo = {1: {"rx": [], "tx": None, "i": 0}, 4: {"rx": [], "tx": None, "i": 0}}
+        self.ctr, self.pat_i = 0, 0
+        self.enabled = False
+
+    async def configure(self, port, seq, on):
+        e, speed_hs = self.e, port.get(self.e.speed) == 0
+        mp = 512 if speed_hs else 64
+        for n, is_in, arg in ((1, 0, mp), (1, 1, mp), (2, 1, 8), (3, 1, mp), (4, 0, mp), (4, 1, mp)):
+            await port.command(seq, CMD_EP_ENABLE if on else CMD_EP_DISABLE, ep=ep_code(n, is_in), arg=arg)
+            await port.tick()
+        self.reset()
+        self.enabled = on
+
+    async def feature(self, port, seq, set_, idx):
+        await port.command(seq, CMD_EP_HALT if set_ else CMD_EP_CLEAR, ep=ep_code(idx & 15, bool(idx & 0x80)))
+        await port.tick()
+
+    async def run(self, ctx):
+        e = self.e
+        cycle = 0
+        while True:
+            cycle += 1
+            gate = int(cycle % self.THROTTLE_PERIOD < self.THROTTLE_ON)
+            on = self.enabled
+            drive = []
+            for n, st in self.echo.items():
+                o, i = e.ep_out[n], e.ep_in[n]
+                receiving = on and st["tx"] is None
+                ctx.set(o.ready, int(receiving and (gate if n == 4 else 1)))
+                tx = st["tx"]
+                if on and tx is not None:
+                    d, l, z = tx[st["i"]]
+                    ctx.set(i.data, d); ctx.set(i.last, l); ctx.set(i.zlp, z); ctx.set(i.valid, 1)
+                else:
+                    ctx.set(i.valid, 0)
+            i2, i3 = e.ep_in[2], e.ep_in[3]
+            ctx.set(i2.valid, int(on)); ctx.set(i2.data, self.ctr & 255); ctx.set(i2.last, int(self.ctr % 8 == 7)); ctx.set(i2.zlp, 0)
+            ctx.set(i3.valid, int(on)); ctx.set(i3.data, pattern(PATTERN_LEN)[self.pat_i]); ctx.set(i3.zlp, 0)
+            ctx.set(i3.last, int(self.pat_i == PATTERN_LEN - 1))
+            sig = [(e.ep_out[n].valid, e.ep_out[n].data, e.ep_out[n].last, e.ep_out[n].zlp, e.ep_out[n].ready) for n in (1, 4)]
+            flat = [x for grp in sig for x in grp] + [e.ep_in[n].ready for n in (1, 4, 2, 3)]
+            vals = (await ctx.tick("usb").sample(*flat))[2:]
+            if not on:
+                continue
+            for k, n in enumerate((1, 4)):
+                v, d, l, z, rdy = vals[5 * k:5 * k + 5]
+                st = self.echo[n]
+                if v and rdy:
+                    st["rx"].append((d, l, z))
+                    if l:
+                        st["tx"], st["i"], st["rx"] = st["rx"], 0, []
+            base = 10
+            for k, n in enumerate((1, 4)):
+                st = self.echo[n]
+                if st["tx"] is not None and vals[base + k]:
+                    st["i"] += 1
+                    if st["i"] == len(st["tx"]):
+                        st["tx"] = None
+            if vals[base + 2]:
+                self.ctr += 1
+            if vals[base + 3]:
+                self.pat_i = (self.pat_i + 1) % PATTERN_LEN
+
+
 class TableFirmware:
     """Increment 1: SETUP answered from `Table` after `latency` cycles."""
 
     def __init__(self, engine, latency=40, table=None, sabotage=False):
         self.engine, self.latency = engine, latency
+        self.bulk = BulkModel(engine)
         self.table = table or Table()
         if sabotage:
             self.table.dev = self.table.dev[:8] + bytes([self.table.dev[8] ^ 1]) + self.table.dev[9:]
@@ -163,6 +255,7 @@ class TableFirmware:
                 await port.tick()
                 ctx.set(e.reset_ack, 0)
                 self.table.configuration = 0
+                self.bulk.reset()
             seq = port.get(e.seq)
             if not port.get(e.setup_valid) or seq == self.handled:
                 continue
@@ -176,7 +269,21 @@ class TableFirmware:
             else:
                 verdict, data = self.table.answer(*setup)
             self.log.append((seq, setup, verdict))
+            await self.bulk_effects(port, seq, setup, verdict)
             await port.reply(seq, setup, verdict, data)
+
+    async def bulk_effects(self, port, seq, setup, verdict):
+        """The endpoint side of SET_CONFIGURATION and ENDPOINT_HALT, as the UDC firmware would do it."""
+        bm, req, val, idx, _ = setup
+        if verdict != "ok":
+            return
+        if (bm, req) == (0x00, SET_CONFIGURATION):
+            await self.bulk.configure(port, seq, val == 1)
+        elif bm == 0x02 and req in (SET_FEATURE, CLEAR_FEATURE) and val == 0:
+            await self.bulk.feature(port, seq, req == SET_FEATURE, idx)
+
+    async def data_run(self, ctx):
+        await self.bulk.run(ctx)
 
 
 class Stub:

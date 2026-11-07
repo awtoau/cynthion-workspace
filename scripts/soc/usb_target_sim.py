@@ -380,6 +380,9 @@ GROUPS = {
     "own_ctrl_string": ("model", ("ctrl_string",), False),
     "own_ctrl_std": ("model", ("ctrl_std",), False),
     "own_address": ("model", ("address",), False),
+    # Increment 4: bulk EP1-4 behind the engine (echo, interrupt counter, pattern source, throttled echo).
+    "own_bulk": ("model", ("bulk",), False),
+    "own_bulk_x": ("model", ("own_bulk_x",), False),
     # Increment 2: the same cases with every SETUP relayed over a modelled AUX control channel to a stub.
     "own_relay_std": ("model", ("ctrl_std",), False),
     "own_relay_address": ("model", ("address",), False),
@@ -458,7 +461,8 @@ def run_group(name, args):
                 ctx.set(dev.present, 1) if prof.name != "aoa_phone" else None
                 backend.invalidate()
 
-    extra = (watch_phy,) + ((firmware.run,) if firmware else ())
+    extra = (watch_phy,) + ((firmware.run,) if firmware else ()) \
+        + ((firmware.data_run,) if firmware and hasattr(firmware, 'data_run') else ())
     shim.run(bench, testbench, extra=extra, platform=shim.BoardPlatform())
     if firmware:
         emit(f"  {name}: own engine answered {len(getattr(firmware, 'log', None) or firmware.messages) } SETUPs/messages")
