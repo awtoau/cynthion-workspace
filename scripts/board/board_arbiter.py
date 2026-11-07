@@ -412,7 +412,7 @@ class Board:
             chunk = link.read_available()
             if chunk:
                 reply += chunk
-                if reply.rstrip().endswith(soc_shell.PROMPT):
+                if soc_shell.reply_complete(reply):
                     return reply, "ok", time.monotonic() - started
         return reply, "timeout", time.monotonic() - started
 

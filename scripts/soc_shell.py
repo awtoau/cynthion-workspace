@@ -108,6 +108,22 @@ PROMPT = b">"
 SETTLE_S = 0.030
 
 
+EDITOR_REDRAW = b"\x1b[2K"
+
+
+def reply_complete(raw: bytes) -> bool:
+    """True when `raw` ends a command's reply (#632).
+
+    - Editor redraw on Enter: ESC[2K, prompt, typed text; output and the final prompt follow.
+    - So after the last redraw there must be a newline (the output start) and a closing prompt.
+    - No redraw in `raw` (bare CR, banner): the prompt alone ends it.
+    """
+    if not raw.rstrip().endswith(PROMPT):
+        return False
+    cut = raw.rfind(EDITOR_REDRAW)
+    return cut < 0 or b"\n" in raw[cut:]
+
+
 def other_readers(node):
     """Every other process holding `node` open, as (pid, command) pairs.
 
@@ -250,7 +266,7 @@ class Link:
                 #
                 # Whether that prompt landed at a chunk boundary was a matter of
                 # timing, which is why this was intermittent rather than broken.
-                if reply.rstrip().endswith(PROMPT):
+                if reply_complete(reply):
                     more = self._settle(deadline)
                     if not more:
                         return reply
