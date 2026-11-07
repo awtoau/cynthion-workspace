@@ -109,6 +109,11 @@ impl Shell {
     /// what `load` needs to know which port a transfer is arriving on. It is the
     /// index into `target::UART_BASES`, so it is the same number everywhere.
     pub(crate) fn poll(&mut self, index: usize, uart: &mut Uart, devices: &mut Devices) {
+        // Binary mode (`ops`): bytes are frames, not keystrokes.
+        if crate::ops::active(index) {
+            return crate::ops::service(index, irq::pop(index), devices);
+        }
+
         // From the ring the interrupt handler fills, not from LSR. `uart` is still needed
         // for everything this function ECHOES; only the receive direction moved.
         let byte = match irq::pop(index) {
@@ -232,6 +237,7 @@ impl Shell {
 
         let mut dispatch = Dispatch { index, devices, typed: &typed[..typed_len] };
         let _ = editor.process_byte::<Commands, _>(byte, &mut dispatch);
+        crate::ops::begin(index);
 
         // KEYS THE CRATE HAS NO INPUT FOR, spelled with the ones it does.
         //

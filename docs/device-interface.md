@@ -35,7 +35,7 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 | kind | name | direction | `seq` | `at` | body |
 |---|---|---|---|---|---|
 | `0x08` | REQ | host to board | request id, host-chosen | 0 | `op:u16`, args |
-| `0x09` | RSP | board to host | the request's id, echoed | board ms at completion | `op:u16 status:u8`, result or failure tail |
+| `0x09` | RSP | board to host | the request's id, echoed | board ms when the request frame completed | `op:u16 status:u8`, result or failure tail |
 
 - **Request id** is any u32. Ids need not be unique or increasing; the host matches on the echo. One request outstanding at a time per session (the board answers in order and has one buffer).
 - **RSP does not consume the stream counter.** Its `seq` is the echoed id, so the decoder excludes REQ/RSP from gap detection. Pushed records (TEXT, DROP, ERROR, later EVENT) keep the stream's own monotonic `seq`.
@@ -49,8 +49,8 @@ C0 | kind:u8  ver|flags:u8  len:u16  seq:u32  at:u32 | body[len] | crc32:u32 | C
 - `status = 0`: result per the op table.
 - `status != 0`: the result is always `reason:u8 value:u32`, 5 bytes. `reason` is op-specific (below), `value` the number that explains it (mV for a gate refusal), else 0.
 
-`vbus.set` refusal reasons: 1 too_high, 2 too_low, 3 uv, 4 ov, 5 unreadable, 6 not_sampling, 7 not_output, 8 other_source_closed, 9 cc_failed, 10 no_board.
-`power.read` unavailable reasons: 1 no_sample, 2 no_board, 3 read_failed.
+`vbus.set` refusal reasons (status 3): 1 too_high, 2 too_low, 3 uv, 4 ov, 5 unreadable, 6 not_sampling, 7 not_output, 8 other_source_closed, 9 cc_failed.
+Unavailable reasons (status 4, any op): 1 no_board (QEMU, or the op needs a peripheral this target lacks), 2 no_sample, 3 read_failed.
 
 ### Frames that never become requests
 
@@ -74,14 +74,14 @@ Each bad frame costs one 21-byte ERROR out for at least 3 bytes in; noise on the
 
 - **Entry**: text command `ops` on a console. The board answers with a SESSION record (`RESYNC`) as the first frame; anything before the first `C0` is the text prompt and is discarded by the host. **The host waits for SESSION before sending a frame**: bytes sent earlier go to the line editor.
 - **While in binary mode on a console**: its bytes bypass the line editor entirely; async text (log lines from tasks) is diverted into TEXT records, emitted by the one writer (idle context) between responses. One console at a time; `ops` on a second console while one is active replies `ops: busy` as text.
-- **Exit, host**: one raw byte `0x03` (ETX), recognised only *between* frames (immediately after a `C0`, never inside one; a frame's first byte is its kind, `0x08`, so there is no clash). The board sends ERROR(`left`, 1), then text.
+- **Exit, host**: one raw byte `0x03` (ETX), recognised only *between* frames (immediately after a `C0`, never inside one; a frame's first byte is its kind, `0x08`, so there is no clash). The board sends ERROR(`left`, 1), then the text line `ops: back to text`.
 - **`?`** between frames: re-emit SESSION (the catalogue is empty; no producers this round).
 - **Exit, watchdog**: the board leaves binary mode after **2500 ms** with no received byte and no response sent.
   - Waits for: any byte from the host. The client library sends `sys.ping` every `KEEPALIVE_MS` = 2000 ms when otherwise idle.
   - Expected: a live host speaks at least every 2000 ms (its keepalive period).
   - Multiplier: 1.25 x 2000 = 2500 ms.
   - Clock: reset on every received byte and after every response sent, so a long op cannot expire it.
-  - On expiry: board sends `C0` (aborts any partial frame the host is reading), ERROR(`left`, 2), then the text line `ops: watchdog, back to text`. The text shell is usable again.
+  - On expiry: board sends ERROR(`left`, 2) (its leading `C0` aborts any partial frame the host is reading), then the text line `ops: watchdog, back to text`. The text shell is usable again after one Enter.
   - Why it exists: a host that dies mid-session must not leave the only diagnostic console speaking binary. It is `load`'s missing abort ([`binary-protocol.md`](binary-protocol.md) pitfalls).
 - **No lock is held across the session.** Each op takes the `devices` lock for its own duration only, as a shell command does; `load`'s lock-for-the-transfer is not repeated.
 - **Transport**: console 0 (USB CDC) now. The AUX link in device mode carries identical frames; nothing in the frame or the ops mentions the transport.
@@ -119,7 +119,8 @@ Wire codes (stable, independent of firmware table order):
 - **Channels** (`power.read` order, `usb.port`/`vbus.set` `port`): 0 target_a, 1 target_c, 2 aux, 3 control. The PAC1954's order, not connector order ([`power.rs`](../firmware/cynthion-soc/src/power.rs) `PORTS`).
 - **LEDs**: 0 red, 1 orange, 2 yellow, 3 green, 4 blue, 5 violet. Masks use bit n = LED n. States: 0 off, 1 on, 2 fabric (released to the gateware).
 - **vbus.set action**: 0 power off `port`, 1 power on `port` (`current_ma` 0, 1500 or 3000 = Rp advertised, target_c only), 2 close `port` as the rail source (control, aux or target_c; `vbus control` etc.), 3 open every switch (`port` ignored).
-  - `source` in the result: 0 control, 1 aux, 2 target_c. `flags` bit 0 fell back to aux, bit 1 already on (`mv` 0).
+  - `source` in the result: 0 control, 1 aux, 2 target_c, `0xFF` none (off, open-all). `flags` bit 0 fell back to aux, bit 1 already on (`mv` 0).
+  - On a target without the I2C bus, power-on and close-source are unavailable (no_board); off and open-all still act, as the shell's do.
   - Goes through the existing gate: the PAC1954 read and UV/OV flags decide, not the host ([`vbus_gate.rs`](../firmware/cynthion-soc/src/vbus_gate.rs)).
   - Power on/off arms and disarms the PD session on target_c, as the shell does.
 - **power.read flags**: bit 0 drawing (|current| at or above the channel floor); the driver decides, not the host.
@@ -194,14 +195,14 @@ Legend: **done** = op in the first set; **planned** = op named, next round; **te
 
 Hidden aliases (`power`, `typec`, `phy`, `workload`) dispatch to the same families and map as above.
 
-Counts: 14 ops implemented; 19 command families planned; the rest text-only by decision.
+Counts: 14 ops implemented, covering 24 of the 97 `HELP` rows (`ops` included); the planned rows are listed as planned; the rest are text-only by decision.
 
 ## Test strategy
 
 - **Golden frames**: [`ops_golden.txt`](../firmware/cynthion-soc-tests/tests/ops_golden.txt) is generated by `soc_ops.py --golden`; the Python test fails if it differs from the generator, the Rust test replays every request through the real dispatcher with a fake driver and requires the exact response bytes. A changed byte on either side fails.
 - **Host Rust tests** ([`../firmware/cynthion-soc-tests/tests/ops.rs`](../firmware/cynthion-soc-tests/tests/ops.rs)): framing, each op's argument and result codec, malformed cases, watchdog with an injected clock.
-- **QEMU gate** (`scripts/soc_test.py`): enter, run ops, leave; malformed, overlong, truncated, bad-CRC and unknown-opcode frames; stuck host and the watchdog.
-- **Every test carries its cannot-fail proof**: each op test has a mutation the same file feeds to the code (a wrong byte, a wrong length) and asserts the test's own check fails on it.
+- **QEMU gate** ([`../scripts/soc/soc_ops_gate.py`](../scripts/soc/soc_ops_gate.py), called by `scripts/soc_test.py`, on an emulator of its own): enter, every op, bad arguments; malformed, overlong, truncated, bad-CRC, bad-escape, wrong-version, wrong-kind and unknown-opcode frames; 80% of the watchdog in silence keeps the session, a stuck host mid-frame is cut loose at 2.5 s; ETX; the text shell afterwards. Not covered: async text diverted into TEXT records (QEMU logs nothing unprompted) and anything that needs the board.
+- **Cannot-fail proofs**: the Rust golden test is re-run with a driver value shifted per op and must differ (`cannot_fail_proof_each_golden_comparison_catches_a_changed_value`); a changed byte at every frame position is caught by the CRC test; the watchdog test asserts 2499 ms stays and 2500 ms leaves, across a clock wrap; the Python golden test asserts a one-byte change is detected. The QEMU gate was run once against a deliberately wrong reason code and failed 7 checks.
 
 ## Bench path (not built this round)
 

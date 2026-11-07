@@ -633,8 +633,8 @@ def listen(seconds: float) -> int:
     for line in decoder.summary():
         emit(line)
     if decoder.counters.records == 0:
-        emit("no records: nothing on this board emits them yet, and the shell has "
-             "no command to enter binary mode. See docs/binary-protocol.md.")
+        emit("no records: the console is in text mode. `ops` enters binary mode "
+             "(docs/device-interface.md); this listener does not send it.")
         return 1
     return 0 if decoder.counters.clean() else 1
 

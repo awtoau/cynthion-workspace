@@ -140,6 +140,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("init <peripheral>", "one of uart i2c pac1954 fusb302b hyperram w25q32 usb3343 vbus"),
     ("led [colour]", "the six LEDs"),
     ("load <hex>", "stage <hex> bytes of firmware, then boot it"),
+    ("ops", "binary op protocol on this console; 0x03 leaves (docs/device-interface.md)"),
     ("pac1954", "the four PAC1954 channels"),
     ("pac1954 status", "the reading, the limits and the floors"),
     ("pac1954 floor <port> <mA>", "the current below which a port reads absent"),
@@ -456,6 +457,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
 
     match cmd {
         b"help" | b"?" => help(uart),
+        b"ops" => crate::ops::request_enter(index, uart),
         // Which dispatcher this image was built with, and what it is achieving:
         // the #115 comparison, on the shipping firmware rather than on a
         // synthetic workload. See `src/sched.rs`.
