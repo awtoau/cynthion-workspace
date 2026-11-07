@@ -224,6 +224,10 @@ name = "usb-bare"
 path = "src/bin/usb_bare.rs"
 required-features = ["usbport"]
 
+# fusb302b 0.2.0 plus the source-role patch in ../fusb302b (upstream is a sink PHY).
+[patch.crates-io]
+fusb302b = { path = "../fusb302b" }
+
 [profile.release]
 # "z" for SPEED, not size: bigger code thrashes the I-cache, and `.text` is
 # fetched from SPI flash so every miss is a full quad-SPI transaction.

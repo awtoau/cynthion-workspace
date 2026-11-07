@@ -570,8 +570,6 @@ dependencies = [
 [[package]]
 name = "fusb302b"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "420c5bf3067ac9ccc2805ee43368b4fea906b5e2d4c168d2752ad71cfe51fb37"
 dependencies = [
  "device-driver",
  "embassy-time",
