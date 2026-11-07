@@ -118,7 +118,7 @@ from peripherals.fabric_status import FabricStatus
 from peripherals.ulpi_window import UlpiRegisters
 from peripherals.usb_host import UsbPort
 from peripherals.usb_device import UsbDevicePort
-from peripherals.aux_csr_bridge import AuxCsrBridge
+from peripherals.aux_csr_bridge import AuxCsrBridge, AuxSelect
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
@@ -391,6 +391,9 @@ USB_HOST_BASE = 0xf0001000
 # Device engine CSRs (#612): 64 bytes after the host port, device-mode bitstream only.
 USB_DEV_BASE = 0xf0001040
 
+# AUX pipe owner (console or bridge), device-mode bitstream with CYNTHION_AUX_BRIDGE only.
+AUX_SELECT_BASE = 0xf0001080
+
 # The machine timer and software interrupts: a standard RISC-V CLINT, in its own
 # 64 KiB window. The offsets inside are not negotiable (mtime is at 0xbff8), the
 # window must be aligned to its size, and it must be inside the `main=0` CSR
@@ -591,11 +594,9 @@ class AwtoSoc(Elaboratable):
         # CYNTHION_CORE picks the core profile (`cpu.cpu.CORES`). Defaults leave the SoC as it was.
         device = variant.flag("CYNTHION_DEVICE_MODE")
         core = variant.value("CYNTHION_CORE")
-        # core "none": no CPU. The AUX link reaches every peripheral through `AuxCsrBridge`.
-        cpuless = core == "none"
-        bridge = cpuless or variant.flag("CYNTHION_AUX_BRIDGE")
-        fetch_l1, lsu_l1 = ((False, False) if cpuless
-                            else vexii_cpu.has_l1(vexii_cpu.generate_flags(core)))
+        # Device mode only: a second bus master that Linux reaches over AUX (`AuxCsrBridge`).
+        bridge = device and variant.flag("CYNTHION_AUX_BRIDGE")
+        fetch_l1, lsu_l1 = vexii_cpu.has_l1(vexii_cpu.generate_flags(core))
 
         # `sync` and the flash clocks (`fsck`, `fcap`, MCLK) on PLL0; `usb` is the
         # 60 MHz oscillator itself. See `clocks.py`.
@@ -640,12 +641,10 @@ class AwtoSoc(Elaboratable):
         # could read a netlist another was halfway through writing -- yosys then
         # fails in whatever way a truncated 1.2 MB Verilog file happens to break
         # it, or worse, succeeds on a stale but valid one.
-        cpu = None
-        if not cpuless:
-            cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
-                             cache_ways=CACHE_WAYS, regions=regions,
-                             netlist=BUILD_DIR / "VexiiRiscv.v", core=core)
-            m.submodules.cpu = cpu
+        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
+                         cache_ways=CACHE_WAYS, regions=regions,
+                         netlist=BUILD_DIR / "VexiiRiscv.v", core=core)
+        m.submodules.cpu = cpu
 
         # The die's one `JTAGG`, and both taps off it.
         #
@@ -653,20 +652,18 @@ class AwtoSoc(Elaboratable):
         # There is exactly one of this primitive on the part, so it is instantiated
         # here and handed out rather than claimed by whichever module wants JTAG.
         m.submodules.user_jtag = user_jtag = UserJTAG()
-        if cpu is not None:
-            m.d.comb += [
-                cpu.jtag_tck.eq(user_jtag.tck),
-                cpu.jtag_tdi.eq(user_jtag.tdi),
-                cpu.jtag_ce.eq(user_jtag.ce2),
-                cpu.jtag_shift.eq(user_jtag.shift),
-                cpu.jtag_update.eq(user_jtag.update),
-                cpu.jtag_rstn.eq(user_jtag.rstn),
-                user_jtag.tdo2.eq(cpu.jtag_tdo),
-            ]
+        m.d.comb += [
+            cpu.jtag_tck.eq(user_jtag.tck),
+            cpu.jtag_tdi.eq(user_jtag.tdi),
+            cpu.jtag_ce.eq(user_jtag.ce2),
+            cpu.jtag_shift.eq(user_jtag.shift),
+            cpu.jtag_update.eq(user_jtag.update),
+            cpu.jtag_rstn.eq(user_jtag.rstn),
+            user_jtag.tdo2.eq(cpu.jtag_tdo),
+        ]
 
-        if not cpuless:
-            ram = BlockRAM(size=RAM_SIZE, init=self.firmware)
-            m.submodules.ram = ram
+        ram = BlockRAM(size=RAM_SIZE, init=self.firmware)
+        m.submodules.ram = ram
 
         # Two 16550s, identical apart from where the decoder puts them and what
         # their streams are attached to. `Uart16550` holds no module-level state
@@ -691,8 +688,7 @@ class AwtoSoc(Elaboratable):
         # the class of error that once had firmware sending `0x9f << 24` because a comment
         # disagreed with the hardware.
         self.decoder = decoder
-        if not cpuless:
-            decoder.add(ram.bus, addr=RAM_BASE, name="ram")
+        decoder.add(ram.bus, addr=RAM_BASE, name="ram")
 
         # Every CSR peripheral sits on ONE csr.Decoder behind ONE bridge, added to the
         # Wishbone decoder as a single window at CSR_BASE (#619). The bridge is added
@@ -750,6 +746,9 @@ class AwtoSoc(Elaboratable):
         if device:
             m.submodules.target_dev = target_dev = UsbDevicePort()
             csr_add(target_dev.bus, USB_DEV_BASE, "usb_dev")
+            if bridge:
+                m.submodules.aux_select = aux_select = AuxSelect()
+                csr_add(aux_select.bus, AUX_SELECT_BASE, "aux_select")
 
         # The bus select for the one I2C controller, and the four Type-C signals
         # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
@@ -833,12 +832,10 @@ class AwtoSoc(Elaboratable):
         # The CLINT, comparing against the CPU's own `rdtime` counter rather
         # than one of its own. Two counters could disagree; one cannot, and
         # `csrr time` and a load from mtime have to return the same number.
-        if not cpuless:
-            m.submodules.clint = clint = Clint()
-            m.d.comb += clint.mtime.eq(cpu.mtime)
+        m.submodules.clint = clint = Clint()
+        m.d.comb += clint.mtime.eq(cpu.mtime)
 
-        if not cpuless:
-            csr_add(clint.bus, CLINT_BASE, "clint")
+        csr_add(clint.bus, CLINT_BASE, "clint")
 
         # The configuration SPI flash (#593): `peripherals/flash.py` on the #590 core.
         # - `spiflash`: XIP, read-only, cached by the CPU (FLASH_CACHED)
@@ -878,9 +875,10 @@ class AwtoSoc(Elaboratable):
             stager.ce.eq(user_jtag.ce1),
             stager.shift.eq(user_jtag.shift),
             user_jtag.tdo1.eq(stager.tdo),
+
+            # Also held until the flash's first calibration: `.text` executes from it.
+            cpu.ext_reset.eq(stager.cpu_reset | ~flash.boot_ready),
         ]
-        if cpu is not None:
-            m.d.comb += cpu.ext_reset.eq(stager.cpu_reset | ~flash.boot_ready)
 
         m.d.comb += [
             hyperram.pair_req.eq(stager.req),
@@ -900,12 +898,11 @@ class AwtoSoc(Elaboratable):
         # any more. `irq_timer` is `mtime >= mtimecmp` and is what the firmware's
         # 1 ms tick rides on; `irq_software` is msip, which nothing raises yet
         # but which a driver can now reach rather than write into a hole.
-        if cpu is not None:
-            m.d.comb += [
-                cpu.irq_external.eq(intc.irq_out),
-                cpu.irq_timer.eq(clint.irq_timer),
-                cpu.irq_software.eq(clint.irq_software),
-            ]
+        m.d.comb += [
+            cpu.irq_external.eq(intc.irq_out),
+            cpu.irq_timer.eq(clint.irq_timer),
+            cpu.irq_software.eq(clint.irq_software),
+        ]
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.
@@ -920,17 +917,15 @@ class AwtoSoc(Elaboratable):
         arbiter = wishbone.Arbiter(addr_width=30, data_width=32,
                                    granularity=8,
                                    features={"cti", "bte", "err"})
+        m.submodules.arbiter = arbiter
+        arbiter.add(cpu.ibus)
+        if lsu_l1:
+            arbiter.add(cpu.dbus)
+        arbiter.add(cpu.iobus)
         if bridge:
             m.submodules.aux_bridge = aux_bridge = AuxCsrBridge()
             m.d.comb += aux_bridge.events.eq(intc.irq_out)
-        if not cpuless:
-            m.submodules.arbiter = arbiter
-            arbiter.add(cpu.ibus)
-            if lsu_l1:
-                arbiter.add(cpu.dbus)
-            arbiter.add(cpu.iobus)
-            if bridge:
-                arbiter.add(aux_bridge.wb)
+            arbiter.add(aux_bridge.wb)
 
         # A flip-flop between the arbiter and the decoder, on the return path.
         #
@@ -980,7 +975,7 @@ class AwtoSoc(Elaboratable):
             addr_width=30, data_width=32, granularity=8,
             features={"cti", "bte", "err"})
 
-        wiring.connect(m, aux_bridge.wb if cpuless else arbiter.bus, bus_pipe.intr_bus)
+        wiring.connect(m, arbiter.bus, bus_pipe.intr_bus)
         wiring.connect(m, bus_pipe.sub_bus, bus_fault.intr_bus)
         wiring.connect(m, bus_fault.sub_bus, decoder.bus)
 
@@ -1044,8 +1039,19 @@ class AwtoSoc(Elaboratable):
             depth=CONSOLE_RX_DEPTH, i_domain="usb", o_domain="sync")
 
         if bridge:
-            wiring.connect(m, aux_bridge.tx, console_tx_buf.sink)
-            wiring.connect(m, console_rx_buf.source, aux_bridge.rx)
+            # One AUX pipe, two users: the console by default, the bridge when `aux_select` says.
+            sel = aux_select.bridge
+            m.d.comb += [
+                console_tx_buf.sink.payload.eq(Mux(sel, aux_bridge.tx.payload, console.source.payload)),
+                console_tx_buf.sink.valid.eq(Mux(sel, aux_bridge.tx.valid, console.source.valid)),
+                console.source.ready.eq(~sel & console_tx_buf.sink.ready),
+                aux_bridge.tx.ready.eq(sel & console_tx_buf.sink.ready),
+                console.sink.payload.eq(console_rx_buf.source.payload),
+                console.sink.valid.eq(~sel & console_rx_buf.source.valid),
+                aux_bridge.rx.payload.eq(console_rx_buf.source.payload),
+                aux_bridge.rx.valid.eq(sel & console_rx_buf.source.valid),
+                console_rx_buf.source.ready.eq(Mux(sel, aux_bridge.rx.ready, console.sink.ready)),
+            ]
         else:
             wiring.connect(m, console.source, console_tx_buf.sink)
             wiring.connect(m, console_rx_buf.source, console.sink)
@@ -1240,18 +1246,12 @@ class AwtoSoc(Elaboratable):
         ever_io      = Signal()
         ever_errored = Signal()
         ever_console = Signal()
-        if cpuless:
-            with m.If(aux_bridge.wb.cyc):
-                m.d.sync += [ever_fetched.eq(1), ever_io.eq(1)]
-            with m.If(aux_bridge.wb.err):
-                m.d.sync += ever_errored.eq(1)
-        else:
-            with m.If(cpu.ibus.cyc):
-                m.d.sync += ever_fetched.eq(1)
-            with m.If(cpu.iobus.cyc):
-                m.d.sync += ever_io.eq(1)
-            with m.If(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err):
-                m.d.sync += ever_errored.eq(1)
+        with m.If(cpu.ibus.cyc):
+            m.d.sync += ever_fetched.eq(1)
+        with m.If(cpu.iobus.cyc):
+            m.d.sync += ever_io.eq(1)
+        with m.If(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err):
+            m.d.sync += ever_errored.eq(1)
         with m.If(console.source.valid):
             m.d.sync += ever_console.eq(1)
 
@@ -1731,9 +1731,9 @@ def main():
         speed=platform.speed,
         sync_hz=round(solved.actual_sync_mhz * 1e6),
         usb_hz=round(solved.actual_usb_mhz * 1e6),
-        cache_sets=CACHE_SETS if core != "none" and vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
-        cache_ways=CACHE_WAYS if core != "none" and vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
-        isa=vexii_cpu.isa_generated([] if core == "none" else vexii_cpu.generate_flags(core)))
+        cache_sets=CACHE_SETS if vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
+        cache_ways=CACHE_WAYS if vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
+        isa=vexii_cpu.isa_generated(vexii_cpu.generate_flags(core)))
     # The packed file must agree with the record on the part (cynthion#185).
     problems = usercode_map.bitstream_problems(build_dir / "top.bit", record)
     if problems:

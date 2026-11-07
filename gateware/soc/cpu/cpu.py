@@ -173,13 +173,10 @@ def isa_generated(flags=None):
 # - lean: what the EXISTING firmware (imac, XIP .text, RTIC amo*) still runs on: smaller L1s.
 # - min:  rv32imc, I-cache only. Needs a firmware rebuild (no A: LsuCachelessBridge asserts
 #   !withAmo) and reads flash .rodata uncached.
-# - nl:   rv32imc, no caches. Only for firmware resident in block RAM; a lower bound, not wired.
 CORES = {
     "full": {"drop": (), "sets": None},
     "lean": {"drop": (), "sets": 32},
     "min":  {"drop": ("--with-rva", "--with-lsu-l1", "--lsu-l1-wishbone"), "sets": None},
-    "nl":   {"drop": ("--with-rva", "--with-fetch-l1", "--with-lsu-l1", "--lsu-l1-wishbone"),
-             "sets": None},
 }
 VALUED = ("--fetch-l1-sets", "--fetch-l1-ways", "--lsu-l1-sets", "--lsu-l1-ways")
 

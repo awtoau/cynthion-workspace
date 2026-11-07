@@ -25,9 +25,9 @@ from amaranth import Module, Signal
 from amaranth.lib import stream, wiring
 from amaranth.lib.wiring import In, Out
 
-from amaranth_soc import wishbone
+from amaranth_soc import csr, wishbone
 
-__all__ = ["AuxCsrBridge", "OP_WRITE", "OP_READ", "OP_EVENTS"]
+__all__ = ["AuxCsrBridge", "AuxSelect", "OP_WRITE", "OP_READ", "OP_EVENTS"]
 
 OP_WRITE, OP_READ, OP_EVENTS = ord("W"), ord("R"), ord("E")
 
@@ -100,3 +100,29 @@ class AuxCsrBridge(wiring.Component):
                         m.next = "OP"
         return m
 
+
+
+class AuxSelect(wiring.Component):
+    """One CSR bit (offset 0, reset 0): who owns the AUX pipe. 0 = console 16550, 1 = `AuxCsrBridge`.
+
+    Stand-in for the AUX device's second interface, which does not exist yet; the default keeps the
+    console exactly as the SoC has it.
+    """
+
+    bus:    In(csr.Signature(addr_width=2, data_width=8))
+    bridge: Out(1)
+
+    def __init__(self):
+        super().__init__()
+        self._reg = csr.Register({"v": csr.Field(csr.action.RW, 1)}, access="rw")
+        builder = csr.Builder(addr_width=2, data_width=8)
+        builder.add("select", self._reg, offset=0)
+        self._bridge = csr.Bridge(builder.as_memory_map())
+        self.bus.memory_map = self._bridge.bus.memory_map
+
+    def elaborate(self, platform):
+        m = Module()
+        m.submodules.bridge = self._bridge
+        wiring.connect(m, wiring.flipped(self.bus), self._bridge.bus)
+        m.d.comb += self.bridge.eq(self._reg.f.v.data)
+        return m

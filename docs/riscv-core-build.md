@@ -57,6 +57,19 @@ a map, not a copy.
 | **performance counters** | `--performance-counters 4` |
 | PMA regions | `--region base=...,size=...,main=,exe=` per window |
 
+## Core profiles (`CYNTHION_CORE`, [#612](https://github.com/awtoau/cynthion-workspace/issues/612))
+
+`gateware/soc/cpu/cpu.py` `CORES`; default `full` is the SoC's core and the SoC bitstream never changes with it unset.
+
+| profile | flags changed | runs |
+|---|---|---|
+| `full` | none | the shipping firmware |
+| `lean` | L1 sets 64 -> 32 (2 KiB each) | the shipping firmware (imac kept) |
+| `min` | no A, no D-cache (`--with-rva`, `--with-lsu-l1`, `--lsu-l1-wishbone` dropped); I-cache kept | rv32imc firmware only; .rodata from flash uncached |
+
+- Cost per knob (core alone, synthesis): [`usb-device-mode.md`](usb-device-mode.md#device-mode-bitstream).
+- Arms for sweeps: `scripts/soc/soc_cpu_arms.py` (`nl*`, `nd*`); cells: `scripts/soc/soc_cpu_knobs.py`.
+
 `--region` is not optional. VexiiRiscv's `defaultPma` covers only `0x80000000`
 and `0x10000000`, so a design with memory at `0x00000000` has it in **no region
 at all** and every access traps — including every stack operation. The failure
