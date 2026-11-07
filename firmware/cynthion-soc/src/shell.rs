@@ -24,6 +24,7 @@ pub(crate) mod i2c;
 pub(crate) mod led;
 pub(crate) mod memory;
 pub(crate) mod parse;
+pub(crate) mod pd;
 pub(crate) mod phy;
 pub(crate) mod power;
 pub(crate) mod rejoin;
@@ -150,6 +151,8 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("pac1954 bracket <port> <mA> <mV>", "limits around the present reading"),
     ("pac1954 hispeed [on|off]", "SLOW bit 0: the 3.4 MHz Pulse Gobbler filter"),
     ("pac1954 reset", "DESTRUCTIVE: PWRDN#, which loses the accumulators"),
+    ("pd", "USB PD source on TARGET-C"),
+    ("pd target_c [log|live|probe]", "state; PDOs offered; messages; chip regs"),
     ("reset", "jump to the reset vector"),
     ("rtic", "the dispatcher: model, task jitter, stalls"),
     ("selftest", "run every self-check"),
@@ -576,6 +579,7 @@ pub(crate) fn run(index: usize, uart: &mut Uart, line: &[u8], devices: &mut Devi
         // every issue written so far -- but it is not in `HELP`, so it does not
         // complete and is not offered. One name to learn, one name that works.
         b"pac1954" | b"power" => power::command(uart, rest, devices),
+        b"pd" => pd::command(uart, rest, devices),
         b"usb" => usb::command(uart, rest, devices),
         b"usb3343" | b"phy" => phy::command(uart, trim(rest)),
         // Split here rather than inside the command, because "there is no board"
