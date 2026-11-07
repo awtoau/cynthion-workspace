@@ -161,6 +161,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("usb control", "the host port, and apollo's"),
     ("usb target_a", "the USB-A side of the passthrough"),
     ("usb target_c", "the port under test"),
+    ("usb <port> power [on|off]", "target_a|target_c: drive the port; none = register view"),
     ("usb <port> role [mode]", "off|regs|host|raw; no argument reads"),
     ("usb <port> reset", "host: bus reset, wait for the speed result"),
     ("usb <port> desc", "host: device descriptor at the address"),
