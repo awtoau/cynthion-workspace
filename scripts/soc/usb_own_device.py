@@ -192,7 +192,7 @@ class BulkModel:
             cycle += 1
             gate = int(cycle % self.THROTTLE_PERIOD < self.THROTTLE_ON)
             on = self.enabled
-            drive = []
+            driving = {n: on and st["tx"] is not None for n, st in self.echo.items()}
             for n, st in self.echo.items():
                 o, i = e.ep_out[n], e.ep_in[n]
                 receiving = on and st["tx"] is None
@@ -222,7 +222,7 @@ class BulkModel:
             base = 10
             for k, n in enumerate((1, 4)):
                 st = self.echo[n]
-                if st["tx"] is not None and vals[base + k]:
+                if driving[n] and vals[base + k]:
                     st["i"] += 1
                     if st["i"] == len(st["tx"]):
                         st["tx"] = None

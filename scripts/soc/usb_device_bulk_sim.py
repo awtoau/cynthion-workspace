@@ -547,14 +547,14 @@ def section_control(checks, hs):
         await bus.send(data_packet(PID.DATA0, b"x"))
         await bus.tick(60)
         checks.check(f"control[{t}]: disabled endpoint: no response", len(bus.tx_packets) == n)
-        await o1.host_out(pat(8, 6), toggle=o1.status("ep_toggle"))
-        await o1.cmd(CMD_EP_ENABLE, arg=M)
-        checks.check(f"control[{t}]: ENABLE of an enabled endpoint flushes and resets the toggle",
-                     o1.status("ep_level") == 0 and o1.status("ep_toggle") == 0)
-        await o1.cmd(CMD_EP_DISABLE)
         await o1.enable()
         checks.check(f"control[{t}]: re-enable: empty FIFO, toggle 0, not halted",
                      o1.status("ep_level") == 0 and o1.status("ep_toggle") == 0 and o1.status("ep_halted") == 0)
+        await o1.host_out(pat(8, 6))
+        queued = o1.status("ep_level")
+        await o1.cmd(CMD_EP_ENABLE, arg=M)
+        checks.check(f"control[{t}]: ENABLE of an enabled endpoint flushes and resets the toggle",
+                     queued == 1 and o1.status("ep_level") == 0 and o1.status("ep_toggle") == 0, f"{queued}")
         await o1.host_out(pat(8, 8))
         await i1.push(pat(4, 4))
         await reset_to(bus, hs)
@@ -680,6 +680,8 @@ def section_large(checks, hs):
                     *_, ready = await ctx.tick("usb").sample(s.ready)
                     if ready:
                         break
+                else:
+                    return
                 n += 1
             produced.append(len(blob))
         ctx.set(s.valid, 0)

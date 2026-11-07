@@ -388,6 +388,9 @@ GROUPS = {
     "own_relay_address": ("model", ("address",), False),
 }
 
+OWN_NOT_APPLICABLE = {      # LUNA-model behaviour the case pins; own_bulk_x covers our behaviour instead
+    "bulk_zlp_out": "the model drops a ZLP OUT; our echo returns it as a ZLP IN (own_zlp_echo)",
+}
 RELAY_LINK_CYCLES = 100     # one way, usb cycles: stands for one AUX bulk transfer (~100 us at HS polling)
 
 
@@ -424,6 +427,10 @@ def run_group(name, args):
     if name == "fuzz":
         cases = tc.fuzz_cases(args.seed, args.fuzz, prof)
     cases = tc.select(cases, prof, args.only, case_groups)
+    if own_device:
+        for c in [c for c in cases if c.name in OWN_NOT_APPLICABLE]:
+            emit(f"  NOT APPLICABLE  {name}: {c.name}: {OWN_NOT_APPLICABLE[c.name]}")
+        cases = [c for c in cases if c.name not in OWN_NOT_APPLICABLE]
     started_group = time.monotonic()
     bench, fault, dev = make_bench(prof, own_device)
     firmware = make_firmware(name, dev) if own_device else None

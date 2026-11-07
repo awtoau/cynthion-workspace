@@ -601,10 +601,10 @@ def table():
          S("bulk_in", E(length=512, data=_pattern(0, 512)), ep=3, n=512)],
         profiles=own, about="2*512+37 byte transfer from the AUX side: split at 512, next transfer starts clean")
     add("own_out_backpressure_echo", "own_bulk_x",
-        [S("bulk_out", E(), ep=4, data=bytes((i * 3 + k) & 255 for i in range(100))) for k in range(6)]
+        [S("bulk_out", E(), ep=4, data=bytes((i * 3 + k) & 255 for i in range(100))) for k in range(4)]
         + [S("bulk_in", E(length=100, data=bytes((i * 3 + k) & 255 for i in range(100))), ep=4, n=128)
-           for k in range(6)],
-        profiles=own, about="a throttled AUX consumer: the device NAKs / NYETs, the host retries, order and data hold")
+           for k in range(4)],
+        profiles=own, about="throttled AUX consumer, 4 packets (capacity before the host reads: 2 OUT + 1 held + 2 IN FIFO buffers): NAK / NYET, retries, order and data hold")
     return cases
 
 
