@@ -43,6 +43,9 @@ pub mod rejoin;
 #[path = "../../cynthion-soc/src/usb_desc.rs"]
 pub mod usb_desc;
 
+#[path = "../../cynthion-soc/src/pd_decode.rs"]
+pub mod pd_decode;
+
 #[path = "../../cynthion-soc/src/pd_msg.rs"]
 pub mod pd_msg;
 
