@@ -430,7 +430,7 @@ class ArbiterLink:
     """
 
     how = "board arbiter"
-    FILLER = "help"
+    FILLERS = ("time", "time", "time")
 
     def __init__(self, run_job=None):
         self.run_job = run_job or self._board_py
@@ -463,11 +463,13 @@ class ArbiterLink:
     def read_until_prompt(self, budget_s=REPLY_S + 2):
         if not self.command:
             return PROMPT
-        record = self.run_job([self.command, self.FILLER], budget_s)
-        echo = re.compile(r">\s*" + re.escape(self.command) + r"\r?\n")
-        for step in record.get("transcript", []):
-            if echo.search(step["reply"]):
-                return step["reply"].encode()
+        record = self.run_job([self.command, *self.FILLERS], budget_s)
+        joined = "".join(step["reply"] for step in record.get("transcript", []))
+        echo = re.compile(r">\s*" + re.escape(self.command) + r"\r?\n(.*?)(?:\d+\.\d+ \S+>|\Z)",
+                          re.S)
+        found = echo.search(joined)
+        if found:
+            return found.group(0).encode()
         emit(f"  no reply echoing {self.command!r} (job {record.get('status')}, "
              f"{record.get('error')})")
         return b""
