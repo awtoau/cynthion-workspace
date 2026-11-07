@@ -55,6 +55,7 @@ class Exp:
     """Spec-legal outcome (`kinds`) plus optional `pin`: what the LUNA model does exactly."""
     kinds: frozenset = frozenset({"ack"})
     length: object = None           # int | callable(profile)
+    max_length: object = None       # int: data may be shorter, never longer
     data: object = None             # bytes | callable(profile)
     check: object = None            # callable(result, profile) -> str | None
     info: dict = field(default_factory=dict)
@@ -139,6 +140,8 @@ def verify(exp, res, prof):
         want = e.length(prof) if callable(e.length) else e.length
         if want is not None and len(res.data) != want:
             return f"length {len(res.data)} != {want}"
+        if e.max_length is not None and len(res.data) > e.max_length:
+            return f"length {len(res.data)} > {e.max_length}"
         want = e.data(prof) if callable(e.data) else e.data
         if want is not None and res.data != want:
             return f"data {res.data.hex()} != {want.hex()}"
@@ -240,6 +243,8 @@ def table():
         needs=ADDRESSED, about="HS devices answer; FS-only devices STALL")
 
     # ---- control: every standard request -------------------------------------------
+    # #624: generic takes STALL or ACK (<= wLength); the LUNA model (pin) stays STALL
+    either_in = E("stall", "ack", max_length=2, pin=E("stall"))
     std = [
         ("get_status_device", 0x80, 0, 0, 0, 2, E("ack", length=2)),
         ("get_status_interface", 0x81, 0, 0, 0, 2, E("ack", "stall")),
@@ -254,9 +259,9 @@ def table():
         ("synch_frame", 0x82, 12, 0, 0x81, 2, E("ack", "stall")),
         ("set_descriptor", 0x00, 7, 0x0100, 0, 0, E("ack", "stall")),
         ("unknown_standard_request", 0x80, 0x7F, 0, 0, 2, E("stall")),
-        ("vendor_request_in", 0xC0, 1, 0, 0, 2, E("stall")),
+        ("vendor_request_in", 0xC0, 1, 0, 0, 2, either_in),
         ("vendor_request_out", 0x40, 1, 0, 0, 0, E("stall")),
-        ("class_request_in", 0xA1, 1, 0, 0, 2, E("stall")),
+        ("class_request_in", 0xA1, 1, 0, 0, 2, either_in),
         ("reserved_request_type", 0xE0, 1, 0, 0, 2, E("stall", "ack", "timeout")),
     ]
     for name, bm, req, val, idx, wl, exp in std:
@@ -992,6 +997,20 @@ def selftest():
     b = BoardBackend(link, "target_a", get_profile("generic"), print)
     b.restore_power(False)
     expect("restore turns off what it turned on", link.sent[-1], "usb target_a power off")
+    # #624: generic accepts STALL or ACK (<= wLength) for class/vendor IN; the model stays STALL.
+    gen, mod = get_profile("generic"), Profile("m", True)
+    either = E("stall", "ack", max_length=2, pin=E("stall"))
+    for what, res, prof, want in (
+            ("stall", Result("stall"), gen, True), ("ack 2", Result("ack", b"\1\2"), gen, True),
+            ("ack 0", Result("ack"), gen, True), ("timeout", Result("timeout"), gen, False),
+            ("nak", Result("nak"), gen, False), ("ack 3 (over wLength)", Result("ack", b"\1\2\3"), gen, False),
+            ("model ack", Result("ack", b"\1\2"), mod, False)):
+        expect(f"either stall/ack: {what}", verify(either, res, prof) is None, want)
+    cases = {c.name: c for c in table()}
+    for name in ("ctrl_class_request_in", "ctrl_vendor_request_in"):
+        exp = cases[name].steps[0].exp
+        expect(f"{name} generic accepts ack", verify(exp, Result("ack", b"\1\2"), gen) is None, True)
+        expect(f"{name} model still stall", verify(exp, Result("ack", b"\1\2"), mod) is None, False)
     emit = print
     for line in bad:
         emit("FAIL " + line)
