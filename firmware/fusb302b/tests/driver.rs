@@ -544,7 +544,7 @@ async fn receive_sop_reports_the_token_and_receive_skips_cable_frames() {
     let (mut driver, bus) = driver().await;
     {
         let mut m = bus.0.lock().unwrap();
-        m.push_frame(&[0x41, 0x4f]);
+        m.push_frame(&[0x47, 0x02]);
         m.fifo[0] = 0xc0; // SOP'
         m.push_frame(&[0x43, 0x03]); // SOP
     }
@@ -553,11 +553,12 @@ async fn receive_sop_reports_the_token_and_receive_skips_cable_frames() {
         driver.receive_sop(&mut buffer).await.unwrap(),
         (2, fusb302b::Sop::SopPrime)
     );
-    assert_eq!(&buffer[..2], &[0x41, 0x4f]);
+    assert_eq!(&buffer[..2], &[0x47, 0x02]);
     {
         let mut m = bus.0.lock().unwrap();
-        m.push_frame(&[0x41, 0x4f]);
-        m.fifo[0] = 0xa0; // SOP''
+        let at = m.fifo.len();
+        m.push_frame(&[0x47, 0x02]);
+        m.fifo[at] = 0xa0; // SOP''
         m.push_frame(&[0x43, 0x03]);
     }
     assert_eq!(driver.receive(&mut buffer).await.unwrap(), 2);

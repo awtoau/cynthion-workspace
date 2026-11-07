@@ -16,8 +16,10 @@ mod interface;
 mod packet;
 
 pub use interface::DeviceInterface;
+pub use packet::Sop;
 use packet::{
     CRC_LEN, HEADER_LEN, Header, MAX_PAYLOAD_LEN, RX_PAYLOAD_OFFSET, RX_PREFIX_LEN, TxFrame,
+    rx_sop,
 };
 
 use embedded_hal_async::i2c::I2c;
@@ -209,6 +211,41 @@ where
         int_pin: I,
     ) -> Result<Self, FusbError<E>> {
         Self::initialize(i2c, VbusSource::External(vbus_detect), int_pin).await
+    }
+}
+
+impl<I2CBus, E, I> Fusb302b<I2CBus, E, (), I>
+where
+    I2CBus: I2c<Error = E> + 'static,
+    E: core::fmt::Debug,
+    I: InterruptPin,
+{
+    /// Take over a part the caller has already configured (awto patch, source role).
+    ///
+    /// No reset and no CC detection: CC pull-ups, `SWITCHES0/1` (roles, `TXCC`),
+    /// `AUTO_CRC`, retries and masks are the caller's. Only the version is checked,
+    /// and SOP'/SOP'' reception is enabled.
+    pub async fn attach_configured(i2c: I2CBus, int_pin: I) -> Result<Self, FusbError<E>> {
+        let mut driver = Self {
+            ll: FusbLowLevel::new(DeviceInterface::new(i2c)),
+            vbus_source: VbusSource::Internal,
+            int_pin,
+            events: Events::default(),
+            _marker: core::marker::PhantomData,
+        };
+        let id = driver.ll.device_id().read_async().await?;
+        if let Fusb302Version::UnknownOrFutureVersion(version) = id.version_id() {
+            return Err(FusbError::UnsupportedVersion(version));
+        }
+        driver
+            .ll
+            .control_1()
+            .modify_async(|r| {
+                r.set_ensop_1(true);
+                r.set_ensop_2(true);
+            })
+            .await?;
+        Ok(driver)
     }
 }
 
@@ -464,7 +501,29 @@ where
     }
 
     async fn transmit(&mut self, data: &[u8]) -> Result<(), DriverTxError> {
-        let frame = TxFrame::new(data).ok_or(DriverTxError::Discarded)?;
+        self.transmit_sop(Sop::Sop, data).await
+    }
+
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, DriverRxError> {
+        loop {
+            let (length, sop) = self.receive_sop(buffer).await?;
+            if sop == Sop::Sop {
+                return Ok(length);
+            }
+        }
+    }
+}
+
+impl<I2CBus, E, V, I> Fusb302b<I2CBus, E, V, I>
+where
+    I2CBus: I2c<Error = E> + 'static,
+    E: core::fmt::Debug,
+    V: VbusDetect,
+    I: InterruptPin,
+{
+    /// Transmit one message with the given start-of-packet (awto patch).
+    pub async fn transmit_sop(&mut self, sop: Sop, data: &[u8]) -> Result<(), DriverTxError> {
+        let frame = TxFrame::new(sop, data).ok_or(DriverTxError::Discarded)?;
         self.read_events()
             .await
             .map_err(|_| DriverTxError::Discarded)?;
@@ -518,7 +577,8 @@ where
         }
     }
 
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, DriverRxError> {
+    /// Receive one non-GoodCRC message of any start-of-packet (awto patch).
+    pub async fn receive_sop(&mut self, buffer: &mut [u8]) -> Result<(usize, Sop), DriverRxError> {
         if buffer.len() < HEADER_LEN {
             return Err(DriverRxError::Discarded);
         }
@@ -539,7 +599,7 @@ where
             // transmit() reads it to check I_COLLISION — which clears I_CRC_CHK
             // as a side effect, causing a race condition.
             if !status1.rx_empty() {
-                let length = self.read_frame(buffer).await?;
+                let (length, sop) = self.read_frame(buffer).await?;
                 let header = Header::from_bytes([buffer[0], buffer[1]]);
                 // AUTO_RETRY already consumed this acknowledgement logically.
                 // FUSB302 still puts it in RX FIFO. Never deliver it to the PE:
@@ -550,7 +610,7 @@ where
                     }
                     continue;
                 }
-                return Ok(length);
+                return Ok((length, sop));
             }
             if Instant::now() >= deadline {
                 return Err(DriverRxError::Discarded);
@@ -565,7 +625,7 @@ where
     I2CBus: I2c<Error = E> + 'static,
     E: core::fmt::Debug,
 {
-    async fn read_frame(&mut self, buffer: &mut [u8]) -> Result<usize, DriverRxError> {
+    async fn read_frame(&mut self, buffer: &mut [u8]) -> Result<(usize, Sop), DriverRxError> {
         // Every complete frame has at least token + header + CRC (7 bytes).
         // Read that minimum together so control packets, including the
         // hardware retry engine's GoodCRC, need only one FIFO transaction.
@@ -577,14 +637,14 @@ where
             .map_err(|_| DriverRxError::Discarded)?;
 
         // Check if the received byte is a valid Start-of-Packet token.
-        if !packet::is_sop(prefix[0]) {
+        let Some(sop) = rx_sop(prefix[0]) else {
             self.ll
                 .control_1()
                 .modify_async(|r| r.set_rx_flush(true))
                 .await
                 .ok();
             return Err(DriverRxError::Discarded);
-        }
+        };
 
         // The I2C buffer interface always fills the whole slice, so a single
         // read is an exact read here.
@@ -623,6 +683,6 @@ where
                 .copy_from_slice(&tail[..remaining_payload_len]);
         }
 
-        Ok(total_len)
+        Ok((total_len, sop))
     }
 }
