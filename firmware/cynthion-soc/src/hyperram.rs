@@ -219,6 +219,55 @@ pub mod backend {
         r16(offset::STATUS)
     }
 
+    /// Calibration result: (tap, width, valid).
+    pub fn calibration() -> (u8, u8, bool) {
+        let cal = r32(offset::CAL);
+        ((cal & 0x7f) as u8, ((cal >> 8) & 0xff) as u8, (cal >> 16) & 1 == 1)
+    }
+
+    /// `hr status`, decoded: the shell renders it, the op protocol encodes it.
+    pub struct Snapshot {
+        pub id: u32,
+        pub ck_khz_req: u32,
+        pub ck_khz_meas: u32,
+        pub ready: bool,
+        pub locked: bool,
+        pub calibrated: bool,
+        pub busy: bool,
+        pub hr_busy: bool,
+        pub last_op: u8,
+        pub last_code: u8,
+        pub errors: u16,
+        pub state: u16,
+        pub cal_tap: u8,
+        pub cal_width: u8,
+        pub cal_valid: bool,
+    }
+
+    pub fn snapshot() -> Snapshot {
+        let s = status();
+        // CK_COUNT counts hr cycles over 2^19 cycles of the 60 MHz oscillator.
+        let khz = ((r32(offset::CK_COUNT) as u64 * 60_000) >> 19) as u32;
+        let (cal_tap, cal_width, cal_valid) = calibration();
+        Snapshot {
+            id: r32(offset::ID),
+            ck_khz_req: r32(offset::CK_KHZ),
+            ck_khz_meas: khz,
+            ready: s & STATUS_READY != 0,
+            locked: s & STATUS_LOCKED != 0,
+            calibrated: s & STATUS_CAL != 0,
+            busy: s & STATUS_BUSY != 0,
+            hr_busy: s & STATUS_HR_BUSY != 0,
+            last_op: (s >> 12) as u8,
+            last_code: ((s >> 8) & 0xf) as u8,
+            errors: r16(offset::ERRORS),
+            state: r16(offset::STATE),
+            cal_tap,
+            cal_width,
+            cal_valid,
+        }
+    }
+
     pub fn win_get(off: u32) -> u8 {
         // SAFETY: inside the 4 KiB HYPERRAM_WINDOW; callers keep `off` < WINDOW.
         unsafe { read_volatile((WIN + off as usize) as *const u8) }

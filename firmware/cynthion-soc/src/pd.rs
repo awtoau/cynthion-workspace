@@ -32,6 +32,20 @@ const ATTACH_POLL_MS: u32 = 50;
 /// Unanswered-capabilities bound, ms: nCapsCount 50 x 150 ms = 7.5 s (spec 6.7.3), x1.33.
 const NO_SINK_MS: u32 = 10_000;
 
+pub struct Snapshot {
+    pub armed: bool,
+    pub cc: u8,
+    pub running: bool,
+    pub ready: bool,
+    pub sent: u32,
+    pub received: u32,
+    pub errors: u32,
+    pub hardresets: u32,
+    /// (position, mA)
+    pub contract: Option<(u8, u16)>,
+    pub session_bytes: u32,
+}
+
 pub struct Pd {
     lib: pd_lib::Pd,
     armed: bool,
@@ -258,6 +272,23 @@ impl Pd {
             let _ = writeln!(uart, "  last session ended: {}", self.lib.ended);
         }
         let _ = writeln!(uart, "  engine future {} B", self.session_bytes);
+    }
+
+    /// The numbers behind `status`, for the op protocol.
+    pub fn snapshot(&self) -> Snapshot {
+        let (sent, received, errors, hardresets) = self.lib.counters();
+        Snapshot {
+            armed: self.armed,
+            cc: self.cc,
+            running: self.lib.running(),
+            ready: self.lib.ready(),
+            sent,
+            received,
+            errors,
+            hardresets,
+            contract: self.lib.contract(),
+            session_bytes: self.session_bytes as u32,
+        }
     }
 
     pub fn caps(&self, uart: &mut Uart) {

@@ -26,7 +26,7 @@ use crate::shell::vbus as vbus_shell;
 use crate::shell::parse::trim;
 use crate::shell::usb_host as host;
 use crate::uart::Uart;
-use crate::{power, target, typec::Controllers, vbus, Devices};
+use crate::{target, typec::Controllers, vbus, Devices};
 
 /// The four rails, in `power::PORTS` order, and what each one is.
 ///
@@ -37,14 +37,11 @@ use crate::{power, target, typec::Controllers, vbus, Devices};
 /// `Port` is the FUSB302B's, and CONTROL and TARGET_A have none: CONTROL has no
 /// controller on the board at all, and TARGET_A is USB-A, which has no CC pins
 /// to have a controller for.
-const PORTS: [(&str, Option<Port>, Option<vbus::Source>, &str); 4] = [
-    ("target_a", None, None, "the USB-A side of the passthrough; no CC, no PD"),
-    ("target_c", Some(Port::Target), Some(vbus::Source::TargetC),
-     "the port under test; nothing in this SoC drives it"),
-    ("aux", Some(Port::Aux), Some(vbus::Source::Aux),
-     "the USB console; this text is leaving through it"),
-    ("control", None, Some(vbus::Source::Control),
-     "the host port, and Apollo's; no fusb302b, so CC is invisible"),
+const PORTS: [(&str, &str); 4] = [
+    ("target_a", "the USB-A side of the passthrough; no CC, no PD"),
+    ("target_c", "the port under test; nothing in this SoC drives it"),
+    ("aux", "the USB console; this text is leaving through it"),
+    ("control", "the host port, and Apollo's; no fusb302b, so CC is invisible"),
 ];
 
 /// `usb`, `usb <port>`, `usb <port> status|off`.
@@ -62,7 +59,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         None => (rest, &rest[..0]),
     };
 
-    let Some(index) = PORTS.iter().position(|(port, ..)| port.as_bytes() == name)
+    let Some(index) = PORTS.iter().position(|(port, _)| port.as_bytes() == name)
     else {
         let _ = writeln!(uart, "no port of that name; they are:");
         return crate::shell::list_family(uart, "usb");
@@ -105,32 +102,23 @@ enum|ctrl|setup|in|out|tx|rx|addr|aoa|pump|echo]", PORTS[index].0);
 /// the row -- an absent row reads as "not checked", which is the opposite of
 /// what is true here.
 fn status(uart: &mut Uart, index: usize, devices: &mut Devices) {
-    let (name, controller, source, what) = PORTS[index];
+    let (name, what) = PORTS[index];
+    let (controller, source) = (crate::portctl::controller(index), crate::portctl::source(index));
     let _ = writeln!(uart, "{}  {}", name, what);
 
     // --- the rail ------------------------------------------------------
     // Poll off (the default): one on-demand read of the whole part rather than
     // a cached sample of unknown age (#552). Poll on: the cache is at most one
     // interval old.
-    let sample = if power::interval_ms() == power::RATE_OFF {
-        match devices.bus.as_mut() {
-            Some(bus) => devices.power.read_now(bus).ok(),
-            None => None,
-        }
-    } else {
-        devices.power.latest()
-    };
+    let sample = devices.power.current(devices.bus.as_mut());
     let _ = write!(uart, "  power     ");
     match sample.as_ref() {
         Some(sample) => {
             let millivolts = sample.readings[index].bus_mv;
             let milliamps = sample.readings[index].current_ua / 1000;
             let floor = devices.power.floor(index) / 1000;
-            // ABSENT, not "0 mA". Below the floor the current is indistinguishable
-            // from the part's own offset, so the reading is not evidence of a
-            // connected device -- and printing a small number implies it is.
-            // Magnitude: TARGET-A is the far end, so its current reads negative.
-            if milliamps.unsigned_abs() < floor as u32 {
+            // ABSENT, not "0 mA": see `Monitor::drawing`.
+            if !devices.power.drawing(index, &sample.readings[index]) {
                 let _ = writeln!(
                     uart,
                     "{}.{:03} V   nothing drawing (under the {} mA floor)",

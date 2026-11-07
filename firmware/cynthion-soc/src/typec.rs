@@ -348,6 +348,13 @@ impl Controllers {
     /// a toggle -- does not produce a line saying nothing changed. An interrupt
     /// with no visible consequence is still visible in `typec`'s serviced count.
 
+    /// What the port is NOW: a live read, with the bands carried over. `typec` and
+    /// the op protocol both ask this.
+    pub fn live(&self, bus: &mut Bus, port: Port) -> Result<State, crate::bus::Error> {
+        let state = fusb302::state(bus, port, fusb302::Bands::Skip)?;
+        Ok(self.carry_bands(port, state))
+    }
+
     /// Fill in bands a `Bands::Skip` read did not measure, from the last one that
     /// did.
     ///

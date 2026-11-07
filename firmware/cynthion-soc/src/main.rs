@@ -145,6 +145,7 @@ mod pd;
 mod pd_decode;
 mod pd_lib;
 mod pd_verbs;
+mod portctl;
 mod typec;
 mod uart;
 mod usb_desc;
