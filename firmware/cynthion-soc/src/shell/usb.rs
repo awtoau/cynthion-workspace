@@ -21,7 +21,8 @@
 
 use core::fmt::Write;
 
-use crate::fusb302::Port;
+use crate::fusb302::{HostCurrent, Port};
+use crate::shell::vbus as vbus_shell;
 use crate::shell::parse::trim;
 use crate::shell::usb_host as host;
 use crate::uart::Uart;
@@ -73,6 +74,16 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     };
     match word {
         b"" | b"status" => status(uart, index, devices),
+        b"power" => match trim(args) {
+            b"" | b"status" => vbus_shell::power_status(uart, index),
+            b"off" => vbus_shell::power_off(uart, index, devices),
+            b"on" => vbus_shell::power_on(uart, index, HostCurrent::Default, devices),
+            b"on 1.5" => vbus_shell::power_on(uart, index, HostCurrent::A1_5, devices),
+            b"on 3" => vbus_shell::power_on(uart, index, HostCurrent::A3, devices),
+            _ => {
+                let _ = writeln!(uart, "usage: usb {} power [status|on|off]", PORTS[index].0);
+            }
+        },
         word if host::VERBS.contains(&word) => {
             // One engine, on target_phy: only target_a / target_c reach it.
             if index <= 1 {
@@ -84,7 +95,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         _ => match VERBS.iter().find(|(name, ..)| name.as_bytes() == verb) {
             Some((name, what, missing)) => planned(uart, index, name, what, missing),
             None => {
-                let _ = writeln!(uart, "usage: usb {} [status|disable|enable|role|reset|desc|\
+                let _ = writeln!(uart, "usage: usb {} [status|power|disable|enable|role|reset|desc|\
 enum|ctrl|setup|in|out|tx|rx|addr|aoa|pump|echo]", PORTS[index].0);
             }
         },
