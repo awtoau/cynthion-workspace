@@ -117,6 +117,8 @@ from peripherals.vbus_csr import VbusControl
 from peripherals.fabric_status import FabricStatus
 from peripherals.ulpi_window import UlpiRegisters
 from peripherals.usb_host import UsbPort
+from peripherals.usb_device import UsbDevicePort
+from peripherals.aux_csr_bridge import AuxCsrBridge
 from peripherals.i2c_mux import (I2CBusMux, BUS_TARGET_C as I2C_MUX_TARGET_C,
                      BUS_AUX_C as I2C_MUX_AUX_C,
                      BUS_POWER_MONITOR as I2C_MUX_POWER)
@@ -386,6 +388,9 @@ INTC_BASE = 0xf0000c00
 # inside the uncached CSR region; the FIFO pop registers need that.
 USB_HOST_BASE = 0xf0001000
 
+# Device engine CSRs (#612): 64 bytes after the host port, device-mode bitstream only.
+USB_DEV_BASE = 0xf0001040
+
 # The machine timer and software interrupts: a standard RISC-V CLINT, in its own
 # 64 KiB window. The offsets inside are not negotiable (mtime is at 0xbff8), the
 # window must be aligned to its size, and it must be inside the `main=0` CSR
@@ -440,6 +445,9 @@ IRQ_TYPE_C_AUX = 5
 # LEVEL: it holds until the FIFO is drained or EVENTS is cleared.
 # Number 10 is `docs/soc-interrupts.md`'s "USB3343 TARGET link event".
 IRQ_TARGET_USB = 10
+
+# The device engine's events (`peripherals/usb_device.py`), device-mode bitstream only (#612).
+IRQ_TARGET_USB_DEV = 11
 
 # The PAC1954's ALERT, on GPIO/ALERT2 -- ECP5 ball D6, U1 pin 15, pulled up by
 # R86 (10k). #270.
@@ -514,6 +522,9 @@ IRQ_TRIGGERS = {
 # 4 MiB, W25Q32, JEDEC EF 40 16. The SFDP table declares 4 MiB and everything
 # above that aliases back to offset 0, so mapping more would map the same chip
 # twice under two addresses.
+# Device mode adds one source; the SoC's table is untouched.
+IRQ_TRIGGERS_DEVICE = {**IRQ_TRIGGERS, IRQ_TARGET_USB_DEV: "level"}
+
 FLASH_SIZE = 4 * 1024 * 1024
 
 # The CPU clock. `usb` stays at 60 MHz inside the domain generator -- the ULPI PHY
@@ -576,6 +587,16 @@ class AwtoSoc(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
+        # Device-mode bitstream (#612): everything the SoC has plus `usb_dev` on target_phy.
+        # CYNTHION_CORE picks the core profile (`cpu.cpu.CORES`). Defaults leave the SoC as it was.
+        device = variant.flag("CYNTHION_DEVICE_MODE")
+        core = variant.value("CYNTHION_CORE")
+        # core "none": no CPU. The AUX link reaches every peripheral through `AuxCsrBridge`.
+        cpuless = core == "none"
+        bridge = cpuless or variant.flag("CYNTHION_AUX_BRIDGE")
+        fetch_l1, lsu_l1 = ((False, False) if cpuless
+                            else vexii_cpu.has_l1(vexii_cpu.generate_flags(core)))
+
         # `sync` and the flash clocks (`fsck`, `fcap`, MCLK) on PLL0; `usb` is the
         # 60 MHz oscillator itself. See `clocks.py`.
         m.submodules.car = car = SocClocks(sync_mhz=SYNC_MHZ, flash_mhz=FLASH_SCK_MHZ)
@@ -619,10 +640,12 @@ class AwtoSoc(Elaboratable):
         # could read a netlist another was halfway through writing -- yosys then
         # fails in whatever way a truncated 1.2 MB Verilog file happens to break
         # it, or worse, succeeds on a stale but valid one.
-        cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
-                         cache_ways=CACHE_WAYS, regions=regions,
-                         netlist=BUILD_DIR / "VexiiRiscv.v")
-        m.submodules.cpu = cpu
+        cpu = None
+        if not cpuless:
+            cpu = VexiiRiscv(reset_addr=RAM_BASE, cache_sets=CACHE_SETS,
+                             cache_ways=CACHE_WAYS, regions=regions,
+                             netlist=BUILD_DIR / "VexiiRiscv.v", core=core)
+            m.submodules.cpu = cpu
 
         # The die's one `JTAGG`, and both taps off it.
         #
@@ -630,18 +653,20 @@ class AwtoSoc(Elaboratable):
         # There is exactly one of this primitive on the part, so it is instantiated
         # here and handed out rather than claimed by whichever module wants JTAG.
         m.submodules.user_jtag = user_jtag = UserJTAG()
-        m.d.comb += [
-            cpu.jtag_tck.eq(user_jtag.tck),
-            cpu.jtag_tdi.eq(user_jtag.tdi),
-            cpu.jtag_ce.eq(user_jtag.ce2),
-            cpu.jtag_shift.eq(user_jtag.shift),
-            cpu.jtag_update.eq(user_jtag.update),
-            cpu.jtag_rstn.eq(user_jtag.rstn),
-            user_jtag.tdo2.eq(cpu.jtag_tdo),
-        ]
+        if cpu is not None:
+            m.d.comb += [
+                cpu.jtag_tck.eq(user_jtag.tck),
+                cpu.jtag_tdi.eq(user_jtag.tdi),
+                cpu.jtag_ce.eq(user_jtag.ce2),
+                cpu.jtag_shift.eq(user_jtag.shift),
+                cpu.jtag_update.eq(user_jtag.update),
+                cpu.jtag_rstn.eq(user_jtag.rstn),
+                user_jtag.tdo2.eq(cpu.jtag_tdo),
+            ]
 
-        ram = BlockRAM(size=RAM_SIZE, init=self.firmware)
-        m.submodules.ram = ram
+        if not cpuless:
+            ram = BlockRAM(size=RAM_SIZE, init=self.firmware)
+            m.submodules.ram = ram
 
         # Two 16550s, identical apart from where the decoder puts them and what
         # their streams are attached to. `Uart16550` holds no module-level state
@@ -666,7 +691,8 @@ class AwtoSoc(Elaboratable):
         # the class of error that once had firmware sending `0x9f << 24` because a comment
         # disagreed with the hardware.
         self.decoder = decoder
-        decoder.add(ram.bus, addr=RAM_BASE, name="ram")
+        if not cpuless:
+            decoder.add(ram.bus, addr=RAM_BASE, name="ram")
 
         # Every CSR peripheral sits on ONE csr.Decoder behind ONE bridge, added to the
         # Wishbone decoder as a single window at CSR_BASE (#619). The bridge is added
@@ -721,6 +747,9 @@ class AwtoSoc(Elaboratable):
         # on the same pins. Reset role is `off`, which routes UlpiRegisters.
         m.submodules.target_usb = target_usb = UsbPort(name="target", trace_depth=1024 if variant.flag("CYNTHION_USB_TRACE") else 0)
         csr_add(target_usb.bus, USB_HOST_BASE, "usb_host")
+        if device:
+            m.submodules.target_dev = target_dev = UsbDevicePort()
+            csr_add(target_dev.bus, USB_DEV_BASE, "usb_dev")
 
         # The bus select for the one I2C controller, and the four Type-C signals
         # that come with it. See i2c_mux.py: both FUSB302Bs answer to 0x22, so
@@ -746,7 +775,7 @@ class AwtoSoc(Elaboratable):
         csr_add(fabric_status.bus, FABRIC_BASE,  ("board", "fabric"))
         csr_add(clock_monitor.bus, CLOCKS_BASE,  ("board", "clocks"))
 
-        m.submodules.intc = intc = Interrupts(IRQ_TRIGGERS)
+        m.submodules.intc = intc = Interrupts(IRQ_TRIGGERS_DEVICE if device else IRQ_TRIGGERS)
         m.d.comb += [
             intc.lines[IRQ_CONSOLE].eq(console.irq),
             intc.lines[IRQ_APOLLO].eq(apollo_uart.irq),
@@ -796,15 +825,20 @@ class AwtoSoc(Elaboratable):
             "spi0":          IRQ_FLASH,
         }
 
+        if device:
+            m.d.comb += intc.lines[IRQ_TARGET_USB_DEV].eq(target_dev.irq)
+            self.interrupt_sources["usb_dev"] = IRQ_TARGET_USB_DEV
         csr_add(intc.bus, INTC_BASE, "intc")
 
         # The CLINT, comparing against the CPU's own `rdtime` counter rather
         # than one of its own. Two counters could disagree; one cannot, and
         # `csrr time` and a load from mtime have to return the same number.
-        m.submodules.clint = clint = Clint()
-        m.d.comb += clint.mtime.eq(cpu.mtime)
+        if not cpuless:
+            m.submodules.clint = clint = Clint()
+            m.d.comb += clint.mtime.eq(cpu.mtime)
 
-        csr_add(clint.bus, CLINT_BASE, "clint")
+        if not cpuless:
+            csr_add(clint.bus, CLINT_BASE, "clint")
 
         # The configuration SPI flash (#593): `peripherals/flash.py` on the #590 core.
         # - `spiflash`: XIP, read-only, cached by the CPU (FLASH_CACHED)
@@ -844,10 +878,9 @@ class AwtoSoc(Elaboratable):
             stager.ce.eq(user_jtag.ce1),
             stager.shift.eq(user_jtag.shift),
             user_jtag.tdo1.eq(stager.tdo),
-
-            # Also held until the flash's first calibration: `.text` executes from it.
-            cpu.ext_reset.eq(stager.cpu_reset | ~flash.boot_ready),
         ]
+        if cpu is not None:
+            m.d.comb += cpu.ext_reset.eq(stager.cpu_reset | ~flash.boot_ready)
 
         m.d.comb += [
             hyperram.pair_req.eq(stager.req),
@@ -867,11 +900,12 @@ class AwtoSoc(Elaboratable):
         # any more. `irq_timer` is `mtime >= mtimecmp` and is what the firmware's
         # 1 ms tick rides on; `irq_software` is msip, which nothing raises yet
         # but which a driver can now reach rather than write into a hole.
-        m.d.comb += [
-            cpu.irq_external.eq(intc.irq_out),
-            cpu.irq_timer.eq(clint.irq_timer),
-            cpu.irq_software.eq(clint.irq_software),
-        ]
+        if cpu is not None:
+            m.d.comb += [
+                cpu.irq_external.eq(intc.irq_out),
+                cpu.irq_timer.eq(clint.irq_timer),
+                cpu.irq_software.eq(clint.irq_software),
+            ]
 
         # All three CPU ports share one decoder through an arbiter, so no two
         # can corrupt each other.
@@ -886,10 +920,17 @@ class AwtoSoc(Elaboratable):
         arbiter = wishbone.Arbiter(addr_width=30, data_width=32,
                                    granularity=8,
                                    features={"cti", "bte", "err"})
-        m.submodules.arbiter = arbiter
-        arbiter.add(cpu.ibus)
-        arbiter.add(cpu.dbus)
-        arbiter.add(cpu.iobus)
+        if bridge:
+            m.submodules.aux_bridge = aux_bridge = AuxCsrBridge()
+            m.d.comb += aux_bridge.events.eq(intc.irq_out)
+        if not cpuless:
+            m.submodules.arbiter = arbiter
+            arbiter.add(cpu.ibus)
+            if lsu_l1:
+                arbiter.add(cpu.dbus)
+            arbiter.add(cpu.iobus)
+            if bridge:
+                arbiter.add(aux_bridge.wb)
 
         # A flip-flop between the arbiter and the decoder, on the return path.
         #
@@ -939,7 +980,7 @@ class AwtoSoc(Elaboratable):
             addr_width=30, data_width=32, granularity=8,
             features={"cti", "bte", "err"})
 
-        wiring.connect(m, arbiter.bus, bus_pipe.intr_bus)
+        wiring.connect(m, aux_bridge.wb if cpuless else arbiter.bus, bus_pipe.intr_bus)
         wiring.connect(m, bus_pipe.sub_bus, bus_fault.intr_bus)
         wiring.connect(m, bus_fault.sub_bus, decoder.bus)
 
@@ -1002,8 +1043,12 @@ class AwtoSoc(Elaboratable):
         m.submodules.console_rx_buf = console_rx_buf = StreamBuffer(
             depth=CONSOLE_RX_DEPTH, i_domain="usb", o_domain="sync")
 
-        wiring.connect(m, console.source, console_tx_buf.sink)
-        wiring.connect(m, console_rx_buf.source, console.sink)
+        if bridge:
+            wiring.connect(m, aux_bridge.tx, console_tx_buf.sink)
+            wiring.connect(m, console_rx_buf.source, aux_bridge.rx)
+        else:
+            wiring.connect(m, console.source, console_tx_buf.sink)
+            wiring.connect(m, console_rx_buf.source, console.sink)
 
         # Console -> host.
         m.d.comb += [
@@ -1195,12 +1240,18 @@ class AwtoSoc(Elaboratable):
         ever_io      = Signal()
         ever_errored = Signal()
         ever_console = Signal()
-        with m.If(cpu.ibus.cyc):
-            m.d.sync += ever_fetched.eq(1)
-        with m.If(cpu.iobus.cyc):
-            m.d.sync += ever_io.eq(1)
-        with m.If(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err):
-            m.d.sync += ever_errored.eq(1)
+        if cpuless:
+            with m.If(aux_bridge.wb.cyc):
+                m.d.sync += [ever_fetched.eq(1), ever_io.eq(1)]
+            with m.If(aux_bridge.wb.err):
+                m.d.sync += ever_errored.eq(1)
+        else:
+            with m.If(cpu.ibus.cyc):
+                m.d.sync += ever_fetched.eq(1)
+            with m.If(cpu.iobus.cyc):
+                m.d.sync += ever_io.eq(1)
+            with m.If(cpu.ibus.err | cpu.dbus.err | cpu.iobus.err):
+                m.d.sync += ever_errored.eq(1)
         with m.If(console.source.valid):
             m.d.sync += ever_console.eq(1)
 
@@ -1427,12 +1478,7 @@ class AwtoSoc(Elaboratable):
             target_phy.rst.o.eq(car.phy_reset | target_ulpi.phy_rst),
             # Pins <-> role mux <-> UlpiRegisters. In role off/regs this is the
             # old direct connection through one mux level.
-            target_phy.stp.o.eq(target_usb.stp_o),
-            target_phy.data.o.eq(target_usb.data_o),
-            target_phy.data.oe.eq(target_usb.data_oe),
             target_usb.data_i.eq(target_phy.data.i),
-            target_usb.dir_i.eq(target_phy.dir.i),
-            target_usb.nxt_i.eq(target_phy.nxt.i),
             target_ulpi.data_i.eq(target_phy.data.i),
             target_ulpi.dir_i.eq(target_usb.regs_dir),
             target_ulpi.nxt_i.eq(target_usb.regs_nxt),
@@ -1451,6 +1497,33 @@ class AwtoSoc(Elaboratable):
         # `power_monitor` was requested above for its PWRDN pin, so it is passed
         # in rather than requested again -- a resource may only be requested
         # once, and the second request is an error rather than a second copy.
+        # Pins -> [device engine] -> host port -> register window. Without the engine the
+        # host port sits on the pins; with it, the engine's hand-off side feeds the host port.
+        if device:
+            m.d.comb += [
+                target_dev.data_i.eq(target_phy.data.i),
+                target_dev.dir_i.eq(target_phy.dir.i),
+                target_dev.nxt_i.eq(target_phy.nxt.i),
+                target_phy.stp.o.eq(target_dev.stp_o),
+                target_phy.data.o.eq(target_dev.data_o),
+                target_phy.data.oe.eq(target_dev.data_oe),
+                target_dev.regs_data_o.eq(target_usb.data_o),
+                target_dev.regs_data_oe.eq(target_usb.data_oe),
+                target_dev.regs_stp_o.eq(target_usb.stp_o),
+                # Leaving the host port to the engine is firmware's job (ROLE off first).
+                target_dev.regs_idle.eq(target_ulpi.usb_idle),
+                target_usb.dir_i.eq(target_dev.regs_dir),
+                target_usb.nxt_i.eq(target_dev.regs_nxt),
+            ]
+        else:
+            m.d.comb += [
+                target_phy.stp.o.eq(target_usb.stp_o),
+                target_phy.data.o.eq(target_usb.data_o),
+                target_phy.data.oe.eq(target_usb.data_oe),
+                target_usb.dir_i.eq(target_phy.dir.i),
+                target_usb.nxt_i.eq(target_phy.nxt.i),
+            ]
+
         m.d.comb += [
             i2c_mux.idle.eq(i2c.idle),
             i2c_mux.target_int.eq(type_c_target.int.i),
@@ -1616,6 +1689,7 @@ def main():
     # what makes a build distinct, so the cache and the directory cannot disagree.
     build_dir = BUILD_DIR
     build_dir.mkdir(parents=True, exist_ok=True)
+    core = variant.value("CYNTHION_CORE")
 
     # THE BUILD IDENTITY, stamped at pack time (#447, #450).
     #
@@ -1657,8 +1731,9 @@ def main():
         speed=platform.speed,
         sync_hz=round(solved.actual_sync_mhz * 1e6),
         usb_hz=round(solved.actual_usb_mhz * 1e6),
-        cache_sets=CACHE_SETS, cache_ways=CACHE_WAYS,
-        isa=vexii_cpu.isa_generated())
+        cache_sets=CACHE_SETS if core != "none" and vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
+        cache_ways=CACHE_WAYS if core != "none" and vexii_cpu.has_l1(vexii_cpu.generate_flags(core))[0] else 0,
+        isa=vexii_cpu.isa_generated([] if core == "none" else vexii_cpu.generate_flags(core)))
     # The packed file must agree with the record on the part (cynthion#185).
     problems = usercode_map.bitstream_problems(build_dir / "top.bit", record)
     if problems:
