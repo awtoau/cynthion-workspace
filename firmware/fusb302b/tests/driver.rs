@@ -504,3 +504,62 @@ async fn constructors_select_either_cc_orientation_and_preserve_good_crc_revisio
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn attach_configured_keeps_the_callers_registers_and_enables_sop_prime() {
+    let bus = Bus::default();
+    {
+        let mut m = bus.0.lock().unwrap();
+        m.registers[2] = 0x44; // Rp on CC1, measure CC1: the caller's setup.
+        m.registers[3] = 0b1011_0101; // source, DFP, AUTO_CRC, TXCC1.
+    }
+    let _driver = Fusb302b::attach_configured(bus.clone(), SilentIrq)
+        .await
+        .unwrap();
+    let m = bus.0.lock().unwrap();
+    assert_eq!(m.registers[2], 0x44);
+    assert_eq!(m.registers[3], 0b1011_0101);
+    assert_eq!(m.registers[7] & 3, 3, "ENSOP1 and ENSOP2");
+    assert_eq!(m.reads[0x0c], 0, "no reset");
+}
+
+#[tokio::test]
+async fn transmit_sop_uses_the_sop_prime_and_double_prime_sync_sets() {
+    let (mut driver, bus) = driver().await;
+    driver
+        .transmit_sop(fusb302b::Sop::SopPrime, &[0x80, 0])
+        .await
+        .unwrap();
+    driver
+        .transmit_sop(fusb302b::Sop::SopDoublePrime, &[0x80, 0])
+        .await
+        .unwrap();
+    let m = bus.0.lock().unwrap();
+    assert_eq!(&m.tx_frames[0][..5], &[0x12, 0x12, 0x1b, 0x1b, 0x82]);
+    assert_eq!(&m.tx_frames[1][..5], &[0x12, 0x1b, 0x12, 0x1b, 0x82]);
+}
+
+#[tokio::test]
+async fn receive_sop_reports_the_token_and_receive_skips_cable_frames() {
+    let (mut driver, bus) = driver().await;
+    {
+        let mut m = bus.0.lock().unwrap();
+        m.push_frame(&[0x41, 0x4f]);
+        m.fifo[0] = 0xc0; // SOP'
+        m.push_frame(&[0x43, 0x03]); // SOP
+    }
+    let mut buffer = [0; 30];
+    assert_eq!(
+        driver.receive_sop(&mut buffer).await.unwrap(),
+        (2, fusb302b::Sop::SopPrime)
+    );
+    assert_eq!(&buffer[..2], &[0x41, 0x4f]);
+    {
+        let mut m = bus.0.lock().unwrap();
+        m.push_frame(&[0x41, 0x4f]);
+        m.fifo[0] = 0xa0; // SOP''
+        m.push_frame(&[0x43, 0x03]);
+    }
+    assert_eq!(driver.receive(&mut buffer).await.unwrap(), 2);
+    assert_eq!(&buffer[..2], &[0x43, 0x03], "SOP frame after the cable one");
+}
