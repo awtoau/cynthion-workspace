@@ -349,6 +349,98 @@ pub fn source_target(bus: &mut Bus, current: HostCurrent) -> Result<(), bus::Err
     write(bus, port, REG_CONTROL2, CONTROL2_SOURCE_TOGGLE)
 }
 
+// ---- USB PD on TARGET-C (source role). Policy is `src/pd_src.rs`; glue `src/pd.rs`. ----
+
+const REG_SWITCHES1: u8 = 0x03;
+const REG_CONTROL1: u8 = 0x07;
+const REG_CONTROL3: u8 = 0x09;
+const REG_STATUS1: u8 = 0x41;
+const REG_FIFOS: u8 = 0x43;
+
+/// `POWER`: all four blocks, including the internal oscillator PD needs to send.
+const POWER_PD: u8 = 0b0000_1111;
+/// `SWITCHES1`: source, data role DFP, `SPECREV` 2.0 (the chip's GoodCRC says
+/// 2.0 at most), `AUTO_CRC`. The `TXCCn` bit is added per orientation.
+const SWITCHES1_SOURCE: u8 = (1 << 7) | (1 << 5) | (1 << 4) | (1 << 2);
+/// `CONTROL3`: `AUTO_RETRY`, `N_RETRIES` = 2 (PD nRetryCount, §6.7.2).
+const CONTROL3_RETRY: u8 = (2 << 1) | 1;
+const CONTROL3_SEND_HARD_RESET: u8 = 1 << 6;
+const CONTROL0_TX_FLUSH: u8 = 1 << 6;
+const CONTROL1_RX_FLUSH: u8 = 1 << 2;
+const RESET_PD: u8 = 1 << 1;
+const STATUS1_RX_EMPTY: u8 = 1 << 5;
+/// `MASK`: `I_VBUSOK` only. `MASKA`: `I_HARDRST`, `I_TXSENT`, `I_HARDSENT`,
+/// `I_RETRYFAIL`. `MASKB`: `I_GCRCSENT` (a packet was received and acked);
+/// the RX FIFO is drained on every interrupt, whichever bit announced it.
+const MASK_PD: u8 = !(1 << 7);
+const MASKA_PD: u8 = !0b0001_1101;
+const MASKB_PD: u8 = !1;
+
+/// Which CC the part's source toggle settled on: 1, 2, or 0 for not yet.
+pub fn source_cc(bus: &mut Bus) -> Result<u8, bus::Error> {
+    let togss = (read(bus, Port::Target, 0x3d)? >> 3) & 0b111;
+    Ok(if togss == 1 || togss == 2 { togss } else { 0 })
+}
+
+/// Is VBUS above vSafe5V on TARGET-C?
+pub fn target_vbus(bus: &mut Bus) -> Result<bool, bus::Error> {
+    Ok(read(bus, Port::Target, REG_STATUS0)? & STATUS0_VBUSOK != 0)
+}
+
+/// Switch TARGET-C to PD on the CC pin `cc` (1 or 2). Keeps `HOST_CUR`.
+pub fn pd_start(bus: &mut Bus, cc: u8) -> Result<(), bus::Error> {
+    let port = Port::Target;
+    let (pull_and_measure, tx) = if cc == 1 { (0x44, 1) } else { (0x88, 2) };
+    write(bus, port, REG_POWER, POWER_PD)?;
+    write(bus, port, REG_SWITCHES0, pull_and_measure)?;
+    write(bus, port, REG_SWITCHES1, SWITCHES1_SOURCE | tx)?;
+    write(bus, port, REG_CONTROL3, CONTROL3_RETRY)?;
+    write(bus, port, REG_CONTROL1, CONTROL1_RX_FLUSH)?;
+    let control0 = read(bus, port, REG_CONTROL0)?;
+    write(bus, port, REG_CONTROL0, control0 | CONTROL0_TX_FLUSH)?;
+    write(bus, port, REG_MASK, MASK_PD)?;
+    write(bus, port, REG_MASKA, MASKA_PD)?;
+    write(bus, port, REG_MASKB, MASKB_PD)?;
+    clear(bus, port).map(|_| ())
+}
+
+/// Queue one message and start the transmitter (the frame ends in `TXON`).
+pub fn pd_send(bus: &mut Bus, message: &crate::pd_msg::Message) -> Result<(), bus::Error> {
+    let mut frame = [0u8; crate::pd_msg::TX_MAX];
+    let length = crate::pd_msg::encode_tx(message, &mut frame);
+    bus.write_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &frame[..length])
+}
+
+pub fn pd_hard_reset(bus: &mut Bus) -> Result<(), bus::Error> {
+    let control3 = read(bus, Port::Target, REG_CONTROL3)?;
+    write(bus, Port::Target, REG_CONTROL3, control3 | CONTROL3_SEND_HARD_RESET)
+}
+
+/// After a received Hard Reset the part's PD logic must be reset by hand.
+pub fn pd_reset(bus: &mut Bus) -> Result<(), bus::Error> {
+    write(bus, Port::Target, REG_RESET, RESET_PD)
+}
+
+/// The next received packet, if the RX FIFO has one.
+pub fn pd_receive(bus: &mut Bus) -> Result<Option<crate::pd_msg::Message>, bus::Error> {
+    if read(bus, Port::Target, REG_STATUS1)? & STATUS1_RX_EMPTY != 0 {
+        return Ok(None);
+    }
+    let mut buffer = [0u8; 3 + 28 + 4];
+    bus.read_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &mut buffer[..3])?;
+    let rest = crate::pd_msg::rx_remaining(&[buffer[0], buffer[1], buffer[2]]);
+    bus.read_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &mut buffer[3..3 + rest])?;
+    // A packet the decoder refuses (not SOP) is consumed and dropped.
+    Ok(crate::pd_msg::decode_rx(&buffer[..3 + rest]).ok())
+}
+
+impl Interrupts {
+    pub fn hard_reset_received(&self) -> bool { self.interrupta & 1 != 0 }
+    pub fn tx_sent(&self) -> bool { self.interrupta & (1 << 2) != 0 }
+    pub fn hard_reset_sent(&self) -> bool { self.interrupta & (1 << 3) != 0 }
+    pub fn retry_failed(&self) -> bool { self.interrupta & (1 << 4) != 0 }
+}
+
 /// Read all three interrupt registers, and RETURN what they said.
 ///
 /// **This is what drops the `INT` line**, and all three have to be read: they
