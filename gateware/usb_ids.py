@@ -71,6 +71,9 @@ PRODUCTS = {
     "usb_serial":        (0x6181, "USB serial terminal",  "AUX"),
     "usb_bulk":          (0x6182, "USB bulk loopback",     "AUX"),
     "usb_oneway":        (0x6188, "USB one-way sink",      "AUX"),
+
+    # Device-mode bridge: AUX link (docs/aux-link.md), driver linux/cynthion_udc/cudc_aux.c.
+    "udc_bridge":        (0x6189, "USB device-mode bridge", "AUX"),
 }
 
 
