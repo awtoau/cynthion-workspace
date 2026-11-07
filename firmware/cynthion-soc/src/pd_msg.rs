@@ -15,6 +15,7 @@ const SPEC_REV_3: u16 = 2;
 pub const GOOD_CRC: u8 = 1;
 pub const ACCEPT: u8 = 3;
 pub const REJECT: u8 = 4;
+pub const PING: u8 = 5;
 pub const PS_RDY: u8 = 6;
 pub const GET_SOURCE_CAP: u8 = 7;
 pub const GET_SINK_CAP: u8 = 8;
