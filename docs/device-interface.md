@@ -9,7 +9,7 @@ shell on Linux ([#303](https://github.com/awtoau/cynthion-workspace/issues/303))
 - Frozen in [`../tests/test_soc_ops.py`](../tests/test_soc_ops.py) and
   [`../firmware/cynthion-soc-tests/tests/ops_golden.txt`](../firmware/cynthion-soc-tests/tests/ops_golden.txt).
 - Firmware: [`../firmware/cynthion-soc/src/ops.rs`](../firmware/cynthion-soc/src/ops.rs) and `ops/`.
-- Decision and scope: Dan, 2026-11-07, comments on #303. Steps 1-2 only; the text shell stays.
+- Decision and scope: Dan, 2026-11-07, comments on [#303](https://github.com/awtoau/cynthion-workspace/issues/303). Steps 1-2 only; the text shell stays.
 
 ## Rules
 
