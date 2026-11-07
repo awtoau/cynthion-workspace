@@ -3,7 +3,7 @@
 
 # TCPM / FUSB302 PD behaviour catalogue (Linux, read-only)
 
-Source tree: /mnt/2tb/git_mirror/linux/ (HEAD 2b895e613280d59b73586ffb9b8575b959c04343). Nothing was cloned or modified.
+Source tree: local Linux mirror (HEAD 2b895e613280d59b73586ffb9b8575b959c04343). Nothing was cloned or modified.
 Short names used below: `tcpm.c` = drivers/usb/typec/tcpm/tcpm.c, `fusb302.c` = drivers/usb/typec/tcpm/fusb302.c, `fusb302_reg.h` = drivers/usb/typec/tcpm/fusb302_reg.h, `pd.h` / `pd_vdo.h` / `pd_bdo.h` / `pd_ado.h` / `pd_ext_sdb.h` = include/linux/usb/..., `tcpm.h` = include/linux/usb/tcpm.h, `typec.h` = include/linux/usb/typec.h, `typec_dp.h`, `typec_tbt.h` = include/linux/usb/...
 Line refs marked "~" are approximate (enclosing block). Items marked INFERRED were not directly read, or are inferred from code paths.
 

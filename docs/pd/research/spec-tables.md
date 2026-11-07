@@ -2,7 +2,7 @@
 
 # USB PD R3.1 V1.6 (Oct 2022) message catalogue: extraction report
 
-**Source:** `/home/dan/vendors/usb-if/sources/USB_PD_R3_1_V1.6_2022-10.pdf` (868 pages, SHA-256 32a894764b2687b8429384df7962591bcd85fb4b57b8f62e5ed2d9cd5e131fc6, matches manifest `/home/dan/vendors/usb-if/README.md`). PDF page index = printed page number.
+**Source:** `~/vendors/usb-if/sources/USB_PD_R3_1_V1.6_2022-10.pdf` (868 pages; manifest `~/vendors/usb-if/README.md`). PDF page index = printed page number.
 
 **Method:** `pdftotext -layout -f N -l M <pdf> -` to stdout, read by page range. No output file was written, because the read-only rules bar creating files including in the scratchpad. The requested `scratchpad/pd-spec/` output file does not exist.
 
@@ -653,14 +653,14 @@ Phone context: a phone is typically Sink / UFP. Effects are from the spec text.
 | Mode-specific VDOs | DP, TBT and vendor mode VDO contents are outside this spec. |
 | Timer ambiguities | Some timers print two values in pdftotext layout (tDataResetFail, tDataResetFailUFP, tDiscoverIdentity). Not resolved against page images. |
 | Layout losses | pdftotext -layout dropped some NA/blank cells in Table 6-76 Accept/Reject rows; cable/VPD entries there are unreliable. |
-| Manifest analysis file | `/home/dan/vendors/usb-if/analysis/pd31.txt` is listed in the README as a regenerable text dump. Not opened. |
+| Manifest analysis file | `~/vendors/usb-if/analysis/pd31.txt` is listed in the README as a regenerable text dump. Not opened. |
 
 ---
 
 ## 9. RE-EXTRACTION COMMANDS (read-only, no file writes)
 
 ```
-F=/home/dan/vendors/usb-if/sources/USB_PD_R3_1_V1.6_2022-10.pdf
+F=~/vendors/usb-if/sources/USB_PD_R3_1_V1.6_2022-10.pdf
 pdftotext -layout -f 119 -l 120 "$F" -    # Table 6-5 control messages
 pdftotext -layout -f 128 -l 129 "$F" -    # Table 6-6 data messages
 pdftotext -layout -f 130 -l 146 "$F" -    # PDO and RDO layouts
