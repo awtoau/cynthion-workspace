@@ -126,7 +126,7 @@ impl Pd {
             result.n_replies,
             detail
         );
-        if result.outcome != Outcome::NotReady {
+        if result.outcome != Outcome::NotReady && x.op != Op::HardReset {
             let _ = writeln!(uart, "pdx sent {}", Decoded { frame: &result.sent, caps: &caps });
         }
         for index in 0..result.n_replies {

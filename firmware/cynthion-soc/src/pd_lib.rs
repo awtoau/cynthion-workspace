@@ -98,7 +98,7 @@ impl ErrorType for BusI2c {
     type Error = I2cError;
 }
 
-fn bus_ref() -> Option<&'static mut Bus> {
+fn bus_ref<'a>() -> Option<&'a mut Bus> {
     // SAFETY: set by `Pd::poll` for exactly the span of one poll.
     unsafe { (*BUS.0.get()).as_mut() }
 }
@@ -272,13 +272,13 @@ static CORE: Cell<Core> = Cell(UnsafeCell::new(Core {
     },
 }));
 
-fn core() -> &'static mut Core {
+fn core<'a>() -> &'a mut Core {
     // SAFETY: see `Cell`. Borrows are short and never held across an await that
     // another borrow could overlap: the PE and the raw path never run together.
     unsafe { &mut *CORE.0.get() }
 }
 
-fn phy() -> &'static mut Phy {
+fn phy<'a>() -> &'a mut Phy {
     core().phy.as_mut().expect("phy attached before the engine runs")
 }
 
@@ -592,13 +592,15 @@ async fn exchange_more(frame: Frame, sop: u8, timeout_ms: u32) {
     }
 }
 
-async fn hard_reset_now() {
+async fn hard_reset_now(keep_outcome: bool) {
     core().contract = None;
     let ok = phy().transmit_hard_reset().await.is_ok();
     let c = core();
     c.wire_id = 0;
     c.hard_resets += 1;
-    c.raw.outcome = if ok { Outcome::Sent } else { Outcome::TxFailed("hard reset signalling") };
+    if !keep_outcome {
+        c.raw.outcome = if ok { Outcome::Sent } else { Outcome::TxFailed("hard reset signalling") };
+    }
     if ok {
         vbus_command(VBUS_OFF).await;
         embassy_time::Timer::after_millis(800).await;
@@ -700,7 +702,7 @@ async fn execute() {
                 finish_reply();
                 if last_reply_is(dec::ACCEPT) {
                     core().raw.note = "Accept: roles not followed, hard reset to restore";
-                    hard_reset_now().await;
+                    hard_reset_now(true).await;
                 }
             }
         }
@@ -709,11 +711,11 @@ async fn execute() {
                 finish_reply();
                 if last_reply_is(dec::ACCEPT) {
                     core().raw.note = "Accept: not honoured (no sink path), hard reset to recover";
-                    hard_reset_now().await;
+                    hard_reset_now(true).await;
                 }
             }
         }
-        Op::HardReset => hard_reset_now().await,
+        Op::HardReset => hard_reset_now(false).await,
     }
     let r = &mut core().raw;
     if r.state == RawState::Running {
@@ -771,7 +773,7 @@ fn noop_waker() -> Waker {
     unsafe { Waker::from_raw(RawWaker::new(ptr::null(), &VTABLE)) }
 }
 
-type Held = Pin<&'static mut dyn Future<Output = &'static str>>;
+type Held = *mut dyn Future<Output = &'static str>;
 
 pub struct Pd {
     future: Option<SendHeld>,
@@ -809,7 +811,7 @@ impl Pd {
         let place = unsafe {
             let at = SLOT_BYTES.0.get() as *mut _;
             ptr::write(at, future);
-            Pin::new_unchecked(&mut *at as &mut dyn Future<Output = &'static str>)
+            at as Held
         };
         self.future = Some(SendHeld(place));
         used
@@ -825,9 +827,12 @@ impl Pd {
 
     /// Poll the session once. A finished session leaves its reason in `ended`.
     pub fn poll(&mut self, bus: &mut Bus) {
-        let Some(SendHeld(future)) = self.future.as_mut() else {
+        let Some(SendHeld(place)) = self.future.as_ref() else {
             return;
         };
+        // SAFETY: points into SLOT_BYTES, written by `start` and dropped only by
+        // `stop`/`start`/completion, never moved.
+        let mut future = unsafe { Pin::new_unchecked(&mut **place) };
         // SAFETY: cleared again before returning.
         unsafe { *BUS.0.get() = bus };
         let waker = noop_waker();

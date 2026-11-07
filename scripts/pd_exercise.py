@@ -43,12 +43,11 @@ LOG = ROOT / "tmp" / "logs" / "pd_exercise.log"
 COMMAND_BUDGET_S = 1.0
 RESET_BUDGET_S = 4.0
 
-# Waits for: the Cynthion to finish re-negotiating after a reset-class message
-# (caps resend 150 ms, request, accept, PS_RDY ~0.1 s; after a Hard Reset also the
-# 0.8 s VBUS-off). Polled by `pd target_c status`, not slept. Expected 1.5 s after
-# a hard reset; x2 for the phone's own restart. On expiry: step recorded as
-# "no contract after reset" and the run stops.
-RENEGOTIATE_S = 3.0
+# Waits for: a contract after a reset-class message. Polled by `pd target_c status`.
+# Expected: S20 answered the capabilities 7.7 s after a Hard Reset (46 unacknowledged
+# 167 ms capability sends, 2026-11-07); x1.25 -> 10 s. On expiry: "no contract after
+# reset" and the run stops.
+RENEGOTIATE_S = 10.0
 
 # Waits for: `adb` to answer one dumpsys. Expected 0.3 s over wifi. x5 for a link
 # that just lost VBUS. On expiry: phone fields are recorded as null.
@@ -96,10 +95,28 @@ def reply_of(record: dict, index: int = 0) -> str:
     return "\n".join(step.get("reply", "") for step in steps(record))
 
 
+def adb_address(adb: str) -> str:
+    """Wireless debugging re-advertises on a new port after a link drop: find it by mDNS."""
+    host = adb.split(":")[0]
+    try:
+        found = subprocess.run(["adb", "mdns", "services"], check=False, capture_output=True,
+                               text=True, timeout=ADB_S).stdout
+        match = re.search(rf"{re.escape(host)}:(\d+)", found)
+        if match:
+            address = f"{host}:{match.group(1)}"
+            subprocess.run(["adb", "connect", address], check=False, capture_output=True,
+                           text=True, timeout=ADB_S)
+            return address
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return adb
+
+
 def phone(adb: str | None) -> dict | None:
     """The phone end: battery state from `dumpsys battery` and the sysfs current."""
     if not adb:
         return None
+    adb = adb_address(adb)
     out: dict = {"level": None, "ac": None, "usb": None, "status": None, "current_ma": None}
     try:
         text = subprocess.run(["adb", "-s", adb, "shell", "dumpsys battery"],
@@ -159,7 +176,7 @@ def status_of(reply: str) -> dict:
 def settled_status(text: str) -> dict:
     """Status from the job's text, or from fresh jobs when the reply was cut off."""
     found = status_of(text)
-    for _ in range(3):
+    for _ in range(6):
         if found["known"]:
             break
         found = status_of(reply_of(board(["pd target_c status", "pd target_c status"],
@@ -271,16 +288,23 @@ def main() -> int:
         name = f"{verb}!" if row["destructive"] else verb
         flags = " --illegal" if row["source_may"] == "no" else ""
         budget = RESET_BUDGET_S if verb in DESTRUCTIVE_RESET else COMMAND_BUDGET_S
+        ready = settled_status("")
+        if not (ready["contract"] and ready["ready"]):
+            ready = wait_contract(RENEGOTIATE_S)
+        if not (ready["contract"] and ready["ready"]):
+            stopped = f"{verb}: no contract before the step ({ready['line']})"
+            say(f"STOP: {stopped}")
+            break
         phone_before = phone(args.adb)
         record = board([f"pd target_c send {name}{flags}", "pac1954 status",
                         "pd target_c status", "pd target_c status"], budget)
         text = reply_of(record)
         parsed = parse_pdx(text)
-        after = settled_status(text)
+        after = (wait_contract(RENEGOTIATE_S) if verb in DESTRUCTIVE_RESET
+                 else settled_status(text))
         rail = rail_of(text)
         phone_after = phone(args.adb)
-        if row["destructive"] and verb in DESTRUCTIVE_RESET:
-            after = wait_contract(RENEGOTIATE_S)
+        if verb in DESTRUCTIVE_RESET:
             phone_after = phone(args.adb)
         reply_types = [r["text"].split(" id")[0] for r in parsed["replies"]]
         entry = {

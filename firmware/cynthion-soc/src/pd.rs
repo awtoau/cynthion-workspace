@@ -29,6 +29,8 @@ macro_rules! say {
 /// Attach poll, ms: the part settles in tens of ms; this is I2C load while armed
 /// with nothing plugged in, so no faster than a person can plug.
 const ATTACH_POLL_MS: u32 = 50;
+/// Unanswered-capabilities bound, ms: nCapsCount 50 x 150 ms = 7.5 s (spec 6.7.3), x1.33.
+const NO_SINK_MS: u32 = 10_000;
 
 pub struct Pd {
     lib: pd_lib::Pd,
@@ -43,6 +45,7 @@ pub struct Pd {
     pub live: bool,
     printed: u32,
     session_bytes: usize,
+    session_started: u32,
 }
 
 fn current_ma(current: HostCurrent) -> u16 {
@@ -64,6 +67,7 @@ impl Pd {
             live: false,
             printed: 0,
             session_bytes: 0,
+            session_started: 0,
         }
     }
 
@@ -112,7 +116,8 @@ impl Pd {
         self.lib.poll(bus);
         match self.lib.take_vbus() {
             Some(false) => {
-                vbus::open_all();
+                // Drain TARGET A: a sink holds VBUS up for far longer than tSafe0V.
+                vbus::discharge();
                 monitor.vbus_disarm(bus);
                 self.lib.vbus_done();
                 say!(self, uart, "pd target_c vbus off");
@@ -149,6 +154,18 @@ impl Pd {
             return;
         }
         self.service(uart, bus, monitor);
+        // nCapsCount 50 x tTypeCSendSourceCap 150 ms = 7.5 s of unanswered capabilities
+        // puts the engine in Disabled for good; x1.33 and out: start over from attach.
+        if self.lib.contract().is_some() {
+            self.session_started = timer::millis();
+        }
+        if self.lib.running()
+            && self.lib.contract().is_none()
+            && timer::millis().wrapping_sub(self.session_started) > NO_SINK_MS
+        {
+            self.lib.stop();
+            self.lib.ended = "no sink answered the capabilities";
+        }
         if !self.lib.running() {
             say!(self, uart, "pd target_c session ended: {}", self.lib.ended);
             // Back to attach detection: the part toggles again, VBUS off.
@@ -176,6 +193,7 @@ impl Pd {
         // VBUSOK must be seen before the engine starts: the PHY waits for it.
         self.session_bytes = self.lib.start(current_ma(self.current));
         self.cc = cc;
+        self.session_started = timer::millis();
     }
 
     /// Run one raw exchange to completion (blocking the main loop for at most
