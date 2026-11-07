@@ -90,7 +90,22 @@ use crate::uart::Uart;
 /// pointer that may legally be written through. All zeroes, so it costs `.bss`
 /// and not a byte of the image.
 const RAM_WORDS: usize = 2 * 1024;
-static RAM: [AtomicU32; RAM_WORDS] = [const { AtomicU32::new(0) }; RAM_WORDS];
+#[repr(align(8))]
+struct Ram([AtomicU32; RAM_WORDS]);
+static RAM: Ram = Ram([const { AtomicU32::new(0) }; RAM_WORDS]);
+
+/// The PD AUX sink session is placed in this buffer while it runs (block RAM is full);
+/// the walks below refuse while it is lent.
+pub static LENT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub const LENT_BYTES: usize = RAM_WORDS * 4;
+
+pub fn lend() -> *mut u8 {
+    RAM.0.as_ptr() as *mut u8
+}
+
+pub fn lent() -> bool {
+    LENT.load(core::sync::atomic::Ordering::Relaxed)
+}
 
 /// The two working sets, in 32-bit words.
 ///
@@ -319,7 +334,7 @@ fn step(state: &mut u32, mask: usize, random: bool) -> usize {
 /// through it is what the interior mutability is for. Every index is masked into
 /// the array before use.
 fn ram_base() -> *mut u32 {
-    RAM.as_ptr() as *mut u32
+    RAM.0.as_ptr() as *mut u32
 }
 
 /// Read `accesses` words out of the first `mask + 1` of the buffer.
@@ -620,6 +635,10 @@ fn flash(uart: &mut Uart) {
 
 /// `bench`, `bench bram`, `bench flash`.
 pub fn command(uart: &mut Uart, rest: &[u8]) {
+    if lent() {
+        let _ = writeln!(uart, "bench: the RAM buffer is lent to the PD AUX session: pd proxy off first");
+        return;
+    }
     // A trailing number is the per-walk duration in seconds. `bench 5`,
     // `bench flash 5`, and the region alone keeps the 1 s default.
     let rest = crate::shell::parse::trim(rest);

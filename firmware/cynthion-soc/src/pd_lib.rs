@@ -993,8 +993,7 @@ unsafe impl<const N: usize> Sync for Slot<N> {}
 // `.uninit`: not counted by memory.x's `_min_stack` assert (RTIC resources live there too).
 #[link_section = ".uninit.pd_slot"]
 static SLOT_BYTES: Slot<SLOT> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
-#[link_section = ".uninit.pd_slot_aux"]
-static SLOT_BYTES_AUX: Slot<SLOT_AUX> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+
 
 fn noop_waker() -> Waker {
     fn clone(_: *const ()) -> RawWaker {
@@ -1041,9 +1040,12 @@ impl Pd {
         c.restart = false;
         c.hr_cmd = false;
         c.wire_id = 0;
-        // SAFETY: only written here, after the previous occupant was dropped.
+        // Lent bench buffer (8 KiB, 8-aligned): no RAM of its own, see `bench::lend`.
+        const { assert!(crate::bench::LENT_BYTES >= SLOT_AUX) };
+        crate::bench::LENT.store(true, core::sync::atomic::Ordering::Relaxed);
+        // SAFETY: the buffer is lent until `stop`; `bench` and `cpu stress` refuse meanwhile.
         let place = unsafe {
-            let at = SLOT_BYTES_AUX.0.get() as *mut _;
+            let at = crate::bench::lend() as *mut _;
             ptr::write(at, future);
             at as Held
         };
@@ -1157,6 +1159,9 @@ impl Pd {
     pub fn stop(&mut self) {
         select_port(self.port);
         self.future = None;
+        if self.port == AUX {
+            crate::bench::LENT.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
         let c = core();
         c.phy = None;
         c.ready = false;
@@ -1181,6 +1186,9 @@ impl Pd {
         if let Poll::Ready(reason) = result {
             self.ended = reason;
             self.future = None;
+            if self.port == AUX {
+                crate::bench::LENT.store(false, core::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 
