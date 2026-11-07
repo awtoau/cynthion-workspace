@@ -174,3 +174,29 @@ fn powered_follows_the_ports_own_view() {
     assert!(powered(CONTROL, EN | C) && !powered(CONTROL, EN | A));
     assert!(powered(AUX, EN | A) && !powered(AUX, 0));
 }
+
+#[test]
+fn window_for_5v_is_the_fixed_window() {
+    let w = Window::for_nominal(5_000);
+    assert_eq!((w.floor_mv, w.limit_mv), (FLOOR_MV, LIMIT_MV));
+    assert!(decide_in(w, AUX, 4_400, 0) == decide(AUX, 4_400, 0));
+    assert!(decide_in(w, AUX, 5_501, 0) == decide(AUX, 5_501, 0));
+}
+
+#[test]
+fn window_follows_a_9v_contract() {
+    let w = Window::for_nominal(9_000);
+    assert!(decide_in(w, AUX, 9_000, 0) == Ok(9_000));
+    assert!(decide_in(w, AUX, 8_550, 0) == Ok(8_550));
+    assert!(decide_in(w, AUX, w.limit_mv + 1, 0) == Err(Refusal::TooHigh(w.limit_mv + 1)));
+    assert!(decide_in(w, AUX, w.floor_mv - 1, 0) == Err(Refusal::TooLow(w.floor_mv - 1)));
+    // 5 V rail is out of a 9 V window, and 9 V out of the 5 V one.
+    assert!(decide_in(w, AUX, 5_000, 0) == Err(Refusal::TooLow(5_000)));
+    assert!(decide(AUX, 9_000, 0) == Err(Refusal::TooHigh(9_000)));
+}
+
+#[test]
+fn window_never_exceeds_the_spr_top() {
+    assert!(Window::for_nominal(20_000).limit_mv <= 21_000);
+    assert!(Window::for_nominal(9_000).limit_mv < 10_000);
+}
