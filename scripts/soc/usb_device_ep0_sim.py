@@ -570,13 +570,15 @@ def section_suspend_hs(checks):
         await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 8)
         checks.check("suspend_hs: resume returns to HS", bus.get(dev.suspended) == 0
                      and bus.get(u.xcvr_select) == 0 and bus.get(u.term_select) == 0)
-        # SE0 that outlasts the probe is a reset
+        # SE0 that outlasts the probe is a reset, not a suspend
+        await clear_events(bus)
         ctx.set(u.line_state, SE0)
         chirp = False
         for _ in range(SCALE["HS_RESET_CYCLES"] + SCALE["PROBE_CYCLES"] + 200):
             await bus.tick()
             chirp |= bool(bus.get(u.op_mode) == 2 and bus.get(u.tx_valid))
         checks.check("suspend_hs: SE0 still there after the probe -> reset, chirp", chirp and bus.get(dev.suspended) == 0)
+        checks.check("suspend_hs: ... and no suspend event on the way", not bus.get(dev.events) & EV_SUSPEND)
     build(body)
 
 

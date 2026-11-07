@@ -128,10 +128,11 @@ class PacketReader(wiring.Component):
         zlp = f.r_len == 0
         valid = active & primed
         adv = valid & s.ready
-        last = zlp | (idx == f.r_len - 1)
+        nxt = idx + 1
+        last = zlp | (nxt == f.r_len)
         m.d.comb += [
             s.valid.eq(valid), s.data.eq(f.r_data), s.zlp.eq(zlp), s.last.eq(last),
-            f.r_idx.eq(Mux(adv, idx + 1, idx)), f.r_pop.eq(adv & last),
+            f.r_idx.eq(Mux(adv, nxt, idx)), f.r_pop.eq(adv & last),
         ]
         with m.If(~active):
             with m.If(f.r_have):
@@ -142,7 +143,7 @@ class PacketReader(wiring.Component):
                 with m.If(last):
                     m.d.usb += [active.eq(0), primed.eq(0)]
                 with m.Else():
-                    m.d.usb += idx.eq(idx + 1)
+                    m.d.usb += idx.eq(nxt)
         with m.If(self.flush):
             m.d.usb += [active.eq(0), primed.eq(0)]
         return m

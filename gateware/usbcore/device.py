@@ -469,11 +469,12 @@ class Ep0Device(wiring.Component):
                         m.d.comb += [hs_tx.issue_nak.eq(1), nak_evt.eq(1)]
 
         # bulk OUT payload: written as it arrives, committed on a good CRC
+        cur_maxp = Array(maxp_o)[b_ep]
         for k in range(N):
             f = ofifo[k]
             m.d.comb += [f.w_idx.eq(rx_idx[0:f.iw]), f.w_data.eq(data_rx.stream.payload),
                          f.w_en.eq(data_rx.stream.next & (expect == 3) & (b_ep == k) & b_space
-                                   & (rx_idx < maxp_o[k]))]
+                                   & (rx_idx < cur_maxp))]
 
         # data packets from the host
         with m.If(data_rx.crc_mismatch):
@@ -514,7 +515,7 @@ class Ep0Device(wiring.Component):
                     with m.If(b_ep == k):
                         with m.If(halt_o[k]):
                             m.d.usb += resp.eq(3)
-                        with m.Elif((rx_idx > maxp_o[k]) | ~data_pid_ok):
+                        with m.Elif((rx_idx > cur_maxp) | ~data_pid_ok):
                             pass                                         # babble / wrong PID: no response
                         with m.Elif(~b_space):
                             m.d.usb += resp.eq(2)
@@ -536,7 +537,8 @@ class Ep0Device(wiring.Component):
         last_byte = tx_idx == (ilen - 1)
         b_zero = b_len == 0
         b_adv = b_sending & ~b_zero & stream.ready
-        m.d.comb += b_raddr.eq(Mux(b_adv, b_idx + 1, b_idx))
+        b_nxt = b_idx + 1
+        m.d.comb += b_raddr.eq(Mux(b_adv, b_nxt, b_idx))
         b_rdata = Array(ififo[k].r_data for k in range(N))[b_ep] if N > 1 else ififo[0].r_data
         b_tog = Array(tog_i[k] for k in range(4))[b_ep]
         m.d.comb += [
@@ -546,7 +548,7 @@ class Ep0Device(wiring.Component):
             stream.first.eq((sending & ~send_zlp & (ilen != 0) & (tx_idx == 0))
                             | (b_sending & ~b_zero & (b_idx == 0))),
             stream.last.eq((sending & (send_zlp | (ilen == 0) | last_byte))
-                           | (b_sending & (b_zero | (b_idx == b_len - 1)))),
+                           | (b_sending & (b_zero | (b_nxt == b_len)))),
             data_tx.data_pid.eq(Mux(b_sending, b_tog, Mux(send_zlp, 1, in_toggle))),
         ]
         zero_len = send_zlp | (ilen == 0)
@@ -561,8 +563,8 @@ class Ep0Device(wiring.Component):
             with m.If(b_zero):
                 m.d.usb += [b_sending.eq(0), b_wait.eq(1), b_ack_count.eq(0)]
             with m.Elif(stream.ready):
-                m.d.usb += b_idx.eq(b_idx + 1)
-                with m.If(b_idx == b_len - 1):
+                m.d.usb += b_idx.eq(b_nxt)
+                with m.If(b_nxt == b_len):
                     m.d.usb += [b_sending.eq(0), b_wait.eq(1), b_ack_count.eq(0)]
         with m.If(b_wait):
             m.d.usb += b_ack_count.eq(b_ack_count + 1)

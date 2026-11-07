@@ -32,11 +32,12 @@ from usb_device_ep0_sim import (K, J, SE0, SCALE, Bus, build, data_packet, hands
 from amaranth.sim import Simulator  # noqa: F401  (re-exported for ad-hoc scripts)
 from devlog import emit
 from sim_check_harness import Checks
-from usbcore.device import (CMD_EP_CLEAR, CMD_EP_DISABLE, CMD_EP_ENABLE, CMD_EP_FLUSH, CMD_EP_HALT, ep_code)
+from usbcore.device import (Ep0Device, CMD_EP_CLEAR, CMD_EP_DISABLE, CMD_EP_ENABLE, CMD_EP_FLUSH, CMD_EP_HALT, ep_code)
 from usbcore.pid import PID
 
 ACK, NAK, STALL, NYET = (handshake(p) for p in (PID.ACK, PID.NAK, PID.STALL, PID.NYET))
 SLOTS = 2               # engine default: two packet buffers per FIFO
+PRODUCER_LIMIT = 100_000   # cycles one producer beat may wait: a stalled engine ends the run instead of hanging it
 LOOP_LIMIT = 200        # host loops: retries per packet; a NAK storm longer than this is a hang
 NEGATIVE = False
 
@@ -263,6 +264,12 @@ def section_in(checks, hs):
         r = await e1.host_in()
         checks.check(f"in[{t}]: no ACK -> same packet again, same toggle", r == list(data_packet(PID.DATA1, pat(M, 1))),
                      f"{r and len(r)}")
+        await bus.tick(Ep0Device.ACK_WAIT_CYCLES + 50)
+        checks.check(f"in[{t}]: ACK wait expired: packet kept, toggle unchanged",
+                     e1.status("ep_level") == 1 and e1.status("ep_toggle") == 1)
+        r = await e1.host_in()
+        checks.check(f"in[{t}]: IN after the ACK window: same packet, same toggle",
+                     r == list(data_packet(PID.DATA1, pat(M, 1))), f"{r and len(r)}")
         await e1.host_ack()
         e1.tog = 0
         checks.check(f"in[{t}]: ACK frees it, toggle DATA0 next", e1.status("ep_toggle") == 0
@@ -540,6 +547,11 @@ def section_control(checks, hs):
         await bus.send(data_packet(PID.DATA0, b"x"))
         await bus.tick(60)
         checks.check(f"control[{t}]: disabled endpoint: no response", len(bus.tx_packets) == n)
+        await o1.host_out(pat(8, 6), toggle=o1.status("ep_toggle"))
+        await o1.cmd(CMD_EP_ENABLE, arg=M)
+        checks.check(f"control[{t}]: ENABLE of an enabled endpoint flushes and resets the toggle",
+                     o1.status("ep_level") == 0 and o1.status("ep_toggle") == 0)
+        await o1.cmd(CMD_EP_DISABLE)
         await o1.enable()
         checks.check(f"control[{t}]: re-enable: empty FIFO, toggle 0, not halted",
                      o1.status("ep_level") == 0 and o1.status("ep_toggle") == 0 and o1.status("ep_halted") == 0)
@@ -589,8 +601,8 @@ async def host_send(e, data, log):
     return True
 
 
-async def host_receive(e, log):
-    """Host side of a bulk IN transfer: packets until a short one (ZLP included)."""
+async def host_receive(e, log, count=None):
+    """Host side of a bulk IN transfer: packets until a short one (ZLP included), or `count` packets."""
     M = maxp(e.hs)
     pkts = []
     while True:
@@ -612,7 +624,7 @@ async def host_receive(e, log):
         await e.host_ack()
         e.tog ^= 1
         pkts.append(payload)
-        if len(payload) < M:
+        if len(payload) < M or len(pkts) == count:
             return pkts
 
 
@@ -664,7 +676,7 @@ def section_large(checks, hs):
                 ctx.set(s.last, int(i == len(blob) - 1))
                 ctx.set(s.zlp, 0)
                 ctx.set(s.valid, 1)
-                while True:
+                for _ in range(PRODUCER_LIMIT):
                     *_, ready = await ctx.tick("usb").sample(s.ready)
                     if ready:
                         break
@@ -709,6 +721,7 @@ def section_large(checks, hs):
 # ------------------------------------------------------------------ rate
 
 RATE_PACKETS = 12
+RATE_SIM_CYCLES = 40_000    # consumer lifetime: 12 packets take <= ~14k cycles with one buffer, x ~2.8
 RATE = {}               # slots -> (OUT cycles per packet, IN cycles per packet), filled by section_rate
 
 
@@ -723,7 +736,7 @@ def section_rate(checks):
             s = dev.ep_out[1]
             ctx.set(s.ready, 1)
             cur = bytearray()
-            while True:
+            for _ in range(RATE_SIM_CYCLES):
                 *_, v, d, lst, z = await ctx.tick("usb").sample(s.valid, s.data, s.last, s.zlp)
                 if v:
                     cur.append(d)
@@ -738,7 +751,7 @@ def section_rate(checks):
                 ctx.set(s.last, int(i == len(payload) - 1))
                 ctx.set(s.zlp, 0)
                 ctx.set(s.valid, 1)
-                while True:
+                for _ in range(PRODUCER_LIMIT):
                     *_, ready = await ctx.tick("usb").sample(s.ready)
                     if ready:
                         break
@@ -759,12 +772,13 @@ def section_rate(checks):
             await bus.tick(600)
             checks.check(f"rate[{slots} slot]: OUT data intact", ok and b"".join(got[:RATE_PACKETS]) == payload, " ".join(log))
             c0 = bus.cycles
-            pk = await host_receive(i2, log)
+            pk = await host_receive(i2, log, count=RATE_PACKETS)
             res["in"] = (bus.cycles - c0) / RATE_PACKETS
+            res["in_naks"] = bus.get(dev.n_nak)
             checks.check(f"rate[{slots} slot]: IN data intact", b"".join(pk) == payload, " ".join(log))
         build(body, extra=(consumer, producer), fifo_slots=slots)
         RATE[slots] = (res["out"], res["in"])
-        emit(f"  rate: {slots} slot(s) x 512 B per FIFO: OUT {res['out']:.0f} cycles/packet, IN {res['in']:.0f} cycles/packet")
+        emit(f"  rate: {slots} slot(s) x 512 B per FIFO: OUT {res['out']:.0f} cycles/packet, IN {res['in']:.0f} cycles/packet, NAKs sent {res['in_naks']}")
     wire = 512 + 40
     checks.check("rate: 2 buffers per FIFO run within 15 % of the wire (OUT and IN)",
                  all(v <= wire * 1.15 for v in RATE[2]), f"{RATE[2]} vs {wire}")
