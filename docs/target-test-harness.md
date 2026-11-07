@@ -26,6 +26,7 @@
 - Result kinds (driver level, what `usb <port> ...` prints): ack, nak (retry window spent), stall, timeout (handshake 4), crc (5), overflow (6), dropped, hang, noreset.
 - Profiles: `model` (HS), `model_fs`, `aoa_phone` (pre-AOA 18d1:4ee2), `generic` (any device: structure only).
 - `generic` (Dan, [#572](https://github.com/awtoau/cynthion-workspace/issues/572)): a `ctrl` step that may STALL also passes on NAK-until-limit; the case ends there and the bus is reset before the next (the Pixel's EP0 stays wedged until a reset). `nak_is_refusal` in the cases file.
+- `generic` ([#624](https://github.com/awtoau/cynthion-workspace/issues/624), Dan 2026-11-07): `ctrl_class_request_in` and `ctrl_vendor_request_in` accept STALL or ACK with at most wLength bytes (`either_in`, `Exp.max_length`); timeout, over-long data still fail; the LUNA model profiles keep STALL (`pin`).
 
 ## Board shell verbs used
 - Existing: `role`, `reset`, `setup`, `in`, `out`, `addr`, `aoa`, `desc`, `power [on|off]`.
