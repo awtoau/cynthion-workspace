@@ -228,6 +228,23 @@ for _op in OPS:
 
 CAPS_PAGE = 48
 
+# Board-side worst case per op in ms, from docs/device-interface.md. Estimates from
+# the drivers' own bounds, not measurements; selftest is a provisional guess.
+WORST_MS = {"sys.ping": 1, "sys.capabilities": 1, "sys.info": 1, "power.read": 3,
+            "power.limits": 1, "vbus.status": 1, "vbus.set": 5, "led.get": 1,
+            "led.set": 1, "typec.status": 3, "pd.status": 1, "usb.port": 3,
+            "hr.status": 1, "selftest.run": 200}
+assert set(WORST_MS) == set(BY_NAME), "every op needs a worst case"
+
+# The USB CDC round trip dominates anything the board does in a millisecond.
+LIMIT_FLOOR_MS = 50
+
+
+def limit_ms(op: "Op | int | str") -> int:
+    """Client timeout: 1.25 x the board's worst case, never under the floor."""
+    worst = WORST_MS[_op(op).name]
+    return max(LIMIT_FLOOR_MS, -(-worst * 5 // 4))
+
 
 # --------------------------------------------------------------------------
 # codec
