@@ -31,15 +31,12 @@
 
 
 use crate::bus::Bus;
-use crate::power;
+use crate::{fusb302, power};
 
-/// Bit positions, matching `gateware/soc/peripherals/vbus_csr.py` and upstream's
-/// analyzer state word. Bits 0-2 are upstream's own fields and are not ours.
-const BIT_TARGET_C: u8 = 3;
-const BIT_CONTROL: u8 = 4;
-const BIT_AUX: u8 = 5;
-const BIT_DISCHARGE: u8 = 6;
-const BIT_ENABLE: u8 = 7;
+use crate::vbus_gate::{
+    off_plan, on_plan, powered, OnPlan, PowerRefusal, BIT_AUX, BIT_CONTROL,
+    BIT_DISCHARGE, BIT_ENABLE, BIT_TARGET_C, TARGET_C,
+};
 
 /// Which port supplies the shared rail.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -267,3 +264,79 @@ pub fn discharge() {
 }
 
 
+
+/// Why a port power verb did not act.
+pub enum PowerError {
+    Gate(Refusal),
+    Port(PowerRefusal),
+    /// The FUSB302B did not take the Rp setting.
+    Cc,
+}
+
+/// What `power_on` did.
+pub struct On {
+    pub source: Source,
+    /// `None` when the port was already fed and nothing was re-closed.
+    pub millivolts: Option<u32>,
+    /// CONTROL was refused and AUX feeds the rail instead.
+    pub fell_back: bool,
+}
+
+/// Power `port` (`power::PORTS` index) on.
+///
+/// TARGET_A: CONTROL, which is 5 V by construction; AUX if the gate refuses it.
+/// Never TARGET_C, which can reach 20 V. TARGET_C: CONTROL through the rail with
+/// `current` advertised. AUX and CONTROL are inputs and are refused.
+pub fn power_on(
+    port: usize,
+    current: fusb302::HostCurrent,
+    monitor: &mut power::Monitor,
+    mut bus: Option<&mut Bus>,
+) -> Result<On, PowerError> {
+    let plan = on_plan(port, read()).map_err(PowerError::Port)?;
+    if port == TARGET_C {
+        let bus = bus.ok_or(PowerError::Gate(Refusal::Unreadable))?;
+        fusb302::source_target(bus, current).map_err(|_| PowerError::Cc)?;
+        return match charge_target_c(monitor, Some(&mut *bus)) {
+            Ok(mv) => Ok(On { source: Source::Control, millivolts: Some(mv), fell_back: false }),
+            Err(error) => {
+                let _ = fusb302::configure(bus, fusb302::Port::Target);
+                Err(PowerError::Gate(error))
+            }
+        };
+    }
+    if plan == OnPlan::AlreadyOn {
+        let source = closed_source().unwrap_or(Source::Control);
+        return Ok(On { source, millivolts: None, fell_back: false });
+    }
+    match close(Source::Control, monitor, bus.as_deref_mut()) {
+        Ok(mv) => Ok(On { source: Source::Control, millivolts: Some(mv), fell_back: false }),
+        Err(first) => match close(Source::Aux, monitor, bus) {
+            Ok(mv) => Ok(On { source: Source::Aux, millivolts: Some(mv), fell_back: true }),
+            Err(_) => Err(PowerError::Gate(first)),
+        },
+    }
+}
+
+/// Stop driving `port`. Opens every switch, but only when all closed ones are
+/// this port's own; not driven is not discharged (the switch FET has a body diode).
+pub fn power_off(
+    port: usize,
+    monitor: &mut power::Monitor,
+    bus: Option<&mut Bus>,
+) -> Result<(), PowerError> {
+    off_plan(port, read()).map_err(PowerError::Port)?;
+    open_all();
+    if let Some(bus) = bus {
+        monitor.vbus_disarm(bus);
+        if port == TARGET_C {
+            let _ = fusb302::configure(bus, fusb302::Port::Target);
+        }
+    }
+    Ok(())
+}
+
+/// Is `port` driven, by the register. Not a measurement.
+pub fn power_state(port: usize) -> bool {
+    powered(port, read())
+}

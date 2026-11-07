@@ -110,3 +110,96 @@ pub fn alert_action(fired: u32, armed: Option<usize>, closed: bool) -> AlertActi
         gate_bits,
     }
 }
+
+// ---- port power plans (#625) ----
+//
+// Pure: the register byte in, a verdict out. `vbus.rs` does the I2C and the write.
+
+/// Register bit positions, matching `gateware/soc/peripherals/vbus_csr.py`.
+pub const BIT_TARGET_C: u8 = 3;
+pub const BIT_CONTROL: u8 = 4;
+pub const BIT_AUX: u8 = 5;
+pub const BIT_DISCHARGE: u8 = 6;
+pub const BIT_ENABLE: u8 = 7;
+
+/// Ports, as `power::PORTS` indexes them (the PAC1954 channel).
+pub const TARGET_A: usize = 0;
+pub const TARGET_C: usize = 1;
+pub const AUX: usize = 2;
+pub const CONTROL: usize = 3;
+
+const SOURCES: u8 = 1 << BIT_TARGET_C | 1 << BIT_CONTROL | 1 << BIT_AUX;
+
+/// The source switches that are closed, in register positions.
+pub const fn closed_mask(reg: u8) -> u8 {
+    if reg & (1 << BIT_ENABLE) == 0 { 0 } else { reg & SOURCES }
+}
+
+/// Switches `port`'s power verbs may close and open. TARGET_A is the shared
+/// rail's far end, so CONTROL or AUX feed it; TARGET_C's charge path is CONTROL
+/// through the rail plus its own switch.
+const fn own(port: usize) -> u8 {
+    match port {
+        TARGET_A => 1 << BIT_CONTROL | 1 << BIT_AUX,
+        TARGET_C => 1 << BIT_TARGET_C | 1 << BIT_CONTROL,
+        _ => 0,
+    }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum PowerRefusal {
+    /// AUX and CONTROL are inputs: they have no power verbs.
+    NotOutput,
+    /// The closed-switch mask (register bit positions) that is not this port's.
+    Other(u8),
+}
+
+#[derive(PartialEq, Eq)]
+pub enum OnPlan {
+    /// Already fed by CONTROL or AUX; re-closing would drop VBUS under the device.
+    AlreadyOn,
+    Close,
+}
+
+pub const fn on_plan(port: usize, reg: u8) -> Result<OnPlan, PowerRefusal> {
+    let closed = closed_mask(reg);
+    match port {
+        TARGET_A => {
+            if closed == 0 {
+                Ok(OnPlan::Close)
+            } else if closed == 1 << BIT_CONTROL || closed == 1 << BIT_AUX {
+                Ok(OnPlan::AlreadyOn)
+            } else {
+                Err(PowerRefusal::Other(closed))
+            }
+        }
+        TARGET_C => {
+            if closed == 0 || closed == own(TARGET_C) {
+                Ok(OnPlan::Close)
+            } else {
+                Err(PowerRefusal::Other(closed))
+            }
+        }
+        _ => Err(PowerRefusal::NotOutput),
+    }
+}
+
+/// Off is allowed when every closed switch is this port's own.
+pub const fn off_plan(port: usize, reg: u8) -> Result<(), PowerRefusal> {
+    if port != TARGET_A && port != TARGET_C {
+        return Err(PowerRefusal::NotOutput);
+    }
+    let foreign = closed_mask(reg) & !own(port);
+    if foreign == 0 { Ok(()) } else { Err(PowerRefusal::Other(foreign)) }
+}
+
+/// Is `port` driven according to the register? Not a measurement.
+pub const fn powered(port: usize, reg: u8) -> bool {
+    let closed = closed_mask(reg);
+    match port {
+        TARGET_A => closed != 0,
+        TARGET_C => closed & (1 << BIT_TARGET_C) != 0,
+        AUX => closed & (1 << BIT_AUX) != 0,
+        _ => closed & (1 << BIT_CONTROL) != 0,
+    }
+}
