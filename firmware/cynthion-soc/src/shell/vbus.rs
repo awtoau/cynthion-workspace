@@ -88,6 +88,9 @@ pub(crate) fn power_on(
     }
     match crate::vbus::power_on(port, current, &mut devices.power, devices.bus.as_mut()) {
         Ok(on) => {
+            if port == TARGET_C {
+                devices.type_c.pd.arm(current);
+            }
             let _ = write!(uart, "on {}", on.source.name());
             match on.millivolts {
                 Some(mv) => {
@@ -110,6 +113,9 @@ pub(crate) fn power_on(
 pub(crate) fn power_off(uart: &mut Uart, port: usize, devices: &mut Devices) {
     match crate::vbus::power_off(port, &mut devices.power, devices.bus.as_mut()) {
         Ok(()) => {
+            if port == TARGET_C {
+                devices.type_c.pd.disarm();
+            }
             let _ = writeln!(uart, "off");
         }
         Err(error) => power_error(uart, error),

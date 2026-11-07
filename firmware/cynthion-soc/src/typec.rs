@@ -77,6 +77,8 @@ pub struct Controllers {
     /// is a statement about which connector something is happening on, which a
     /// single total could not make.
     pub serviced: [u32; 2],
+    /// USB PD on TARGET-C, once `usb target_c power on` has armed it.
+    pub pd: crate::pd::Pd,
 }
 
 /// What [`Controllers::init`] established.
@@ -94,6 +96,7 @@ impl Controllers {
             fault: [false; 2],
             last_poll: Instant::ZERO,
             serviced: [0; 2],
+            pd: crate::pd::Pd::new(),
         }
     }
 
@@ -215,6 +218,14 @@ impl Controllers {
                     // the middle of this loop. A full ring drops it and counts the
                     // drop, which is the bargain every other event takes.
                     events::push(events::TYPE_C_CAUSE, cause.payload(index) as u64);
+
+                    // PD owns TARGET's registers once running; the orientation
+                    // sweep below would move SWITCHES0 under a receive.
+                    if port == Port::Target && self.pd.running() {
+                        self.pd.interrupt(uart, bus, cause);
+                        irq::resume_type_c(index);
+                        continue;
+                    }
 
                     // An interrupt latched, so something moved: this is the one
                     // place worth paying for a sweep. The poll below does not.

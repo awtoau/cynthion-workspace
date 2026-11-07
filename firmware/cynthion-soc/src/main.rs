@@ -140,6 +140,9 @@ mod sideband;
 mod staging;
 mod target;
 mod timer;
+mod pd;
+mod pd_msg;
+mod pd_src;
 mod typec;
 mod uart;
 mod usb_desc;
@@ -313,6 +316,7 @@ fn housekeeping(console: &mut Uart, devices: &mut Devices) {
     if let Some(bus) = devices.bus.as_mut() {
         devices.type_c.service(console, bus);
         devices.type_c.poll(console, bus);
+        devices.type_c.pd.tick(console, bus, &mut devices.power);
     }
 }
 
