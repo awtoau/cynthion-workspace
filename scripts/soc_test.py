@@ -2324,6 +2324,12 @@ def main():
             # image stamped from a state that no longer exists.
             build_firmware()
 
+    # The binary op protocol, on an emulator of its own: binary frames carry bare
+    # LF bytes, which the transcript check above forbids on the text path.
+    if not args.board:
+        import soc_ops_gate
+        soc_ops_gate.run(check, Session, ELF, BOOT_S, PROMPT, expect_line, show)
+
     # Last, after every session has had its chance to be closed.
     assert_no_orphans(check)
 
