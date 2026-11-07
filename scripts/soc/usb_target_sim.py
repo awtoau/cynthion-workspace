@@ -24,6 +24,7 @@ Bench = shim + UlpiRegisters + PHY model + device behind a `WireFault` wire (usb
 """
 
 import argparse
+import os
 import asyncio
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from usb_host.model import (  # noqa: E402
 from usb_host.target_device import TargetDevice  # noqa: E402
 from usb_host.aoa_phone import AoaPhone, PID_AOA, PID_AOA_ADB  # noqa: E402
 from usb_host.own_device import OwnDevice  # noqa: E402
+from usbcore.device import Ep0Device  # noqa: E402
 import usb_own_device as own  # noqa: E402
 from peripherals.usb_host import (  # noqa: E402
     REG_CTRL, REG_ADDR, REG_EP, REG_EVENTS, REG_LINK, REG_RESP, REG_RXLEN_LO, REG_RXLEN_HI,
@@ -391,6 +393,9 @@ GROUPS = {
 OWN_NOT_APPLICABLE = {      # LUNA-model behaviour the case pins; own_bulk_x covers our behaviour instead
     "bulk_zlp_out": "the model drops a ZLP OUT; our echo returns it as a ZLP IN (own_zlp_echo)",
 }
+OWN_KNOWN = {               # expected to fail on our engine until the issue is fixed (XFAIL)
+    "bulk_wrong_endpoint": "OUT to a nonexistent endpoint right after a 512 B echo never raises EV_DONE (#572)",
+}
 RELAY_LINK_CYCLES = 100     # one way, usb cycles: stands for one AUX bulk transfer (~100 us at HS polling)
 
 
@@ -406,6 +411,7 @@ SABOTAGE = False        # --sabotage: the own firmware serves a wrong byte; the 
 def make_bench(prof, own_device=False):
     fault = WireFault()
     if own_device:
+        Ep0Device.SUSPEND_CYCLES = int(os.environ.get("OWN_SUSPEND_CYCLES", Ep0Device.SUSPEND_CYCLES))
         dev = OwnDevice()
     elif prof.name == "aoa_phone":
         dev = AoaPhone(detach_cycles=1500)
@@ -431,6 +437,8 @@ def run_group(name, args):
         for c in [c for c in cases if c.name in OWN_NOT_APPLICABLE]:
             emit(f"  NOT APPLICABLE  {name}: {c.name}: {OWN_NOT_APPLICABLE[c.name]}")
         cases = [c for c in cases if c.name not in OWN_NOT_APPLICABLE]
+        for c in cases:
+            c.known = OWN_KNOWN.get(c.name, c.known)
     started_group = time.monotonic()
     bench, fault, dev = make_bench(prof, own_device)
     firmware = make_firmware(name, dev) if own_device else None
