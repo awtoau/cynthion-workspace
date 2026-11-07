@@ -2,7 +2,8 @@
 
 - Purpose: every PD message, vendor message, quirk and reply seen in the main open stacks and the spec, for the TARGET_C PD source ([#633](https://github.com/awtoau/cynthion-workspace/issues/633)) and its exerciser.
 - Stack decision: adopt [elagil/usbpd](https://github.com/elagil/usbpd) + [okhsunrog/fusb302b](https://github.com/okhsunrog/fusb302b) (Dan, 2026-11-07).
-- Machine-readable catalogue: `messages.toml` (schema owned by the exerciser, `scripts/pd_exercise.py`, when it lands).
+- Machine-readable catalogue: [messages.toml](messages.toml) (schema in its header), read by [scripts/pd_exercise.py](../../scripts/pd_exercise.py).
+- The adopted stack, its patch and the shell: [stack.md](stack.md).
 
 ## Reports (Haiku, read-only, 2026-11-07; leads not verified facts)
 

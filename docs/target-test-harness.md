@@ -13,7 +13,8 @@
 
 ## Use
 - Sim: `./scripts/soc/usb_target_sim.py [group...] [--only name...] [--seed N --fuzz K] [-v]`.
-- Board: `./scripts/soc/usb_target_cases.py --board --port target_a --profile generic|aoa_phone [--fuzz K --seed N] [--allow-vbus]`.
+- Board: `./scripts/soc/usb_target_cases.py --board --port target_a --profile generic|aoa_phone [--fuzz K --seed N] [--power] [--allow-vbus]`.
+- Power ([#625](https://github.com/awtoau/cynthion-workspace/issues/625)): before `role host` the board run reads `usb <port> power`. Off and no `--power`: exit 2 with the command that fixes it. `--power`: `usb <port> power on` (CONTROL, else AUX), restored to the prior state when the run ends. `--allow-vbus`: the power-cycle case (`usb <port> power off|on`).
 - Table: `./scripts/soc/usb_target_cases.py --list` (support per backend and the reason).
 
 ## Case
@@ -25,7 +26,7 @@
 - `generic` (Dan, [#572](https://github.com/awtoau/cynthion-workspace/issues/572)): a `ctrl` step that may STALL also passes on NAK-until-limit; the case ends there and the bus is reset before the next (the Pixel's EP0 stays wedged until a reset). `nak_is_refusal` in the cases file.
 
 ## Board shell verbs used
-- Existing: `role`, `reset`, `setup`, `in`, `out`, `addr`, `aoa`, `desc`.
+- Existing: `role`, `reset`, `setup`, `in`, `out`, `addr`, `aoa`, `desc`, `power [on|off]`.
 - Added for this harness: `usb <port> ctrl <8 setup bytes> [out bytes]` (whole control transfer, `Host::control`) and `usb <port> enum <addr>` (`Host::enumerate`, prints `vid:pid`).
 - `Host::control` now restarts both toggles after a successful SET_CONFIGURATION.
 - Board limits: `out` takes up to 64 bytes, `ctrl` OUT data up to 56, `in` reads up to 64.

@@ -7,6 +7,7 @@ use crate::shell::parse::trim;
 use crate::uart::Uart;
 use crate::vbus::*;
 use crate::shell::console::board_absent;
+use crate::vbus_gate::{PowerRefusal, TARGET_C};
 use crate::{ fusb302, Devices};
 
 /// `vbus` -- pass host power through to a target, or report the switches.
@@ -54,24 +55,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         _ => None,
     };
     if let Some(current) = charge {
-        let bus = match devices.bus.as_mut() {
-            Some(bus) => bus,
-            None => return board_absent(uart),
-        };
-        if fusb302::source_target(bus, current).is_err() {
-            let _ = writeln!(uart, "?");
-            return;
-        }
-        match charge_target_c(&mut devices.power, Some(&mut *bus)) {
-            Ok(mv) => {
-                let _ = writeln!(uart, "on {} mV", mv);
-            }
-            Err(error) => {
-                let _ = fusb302::configure(bus, fusb302::Port::Target);
-                vbus_refusal(uart, error);
-            }
-        }
-        return;
+        return power_on(uart, TARGET_C, current, devices);
     }
     if argument.starts_with(b"input") {
         // Kept as a message rather than dropped to `?`: the verb was documented
@@ -89,6 +73,79 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             }
             Err(error) => vbus_refusal(uart, error),
         },
+    }
+}
+
+/// `usb <port> power on` and `vbus charge`: the driver acts, this reports.
+pub(crate) fn power_on(
+    uart: &mut Uart,
+    port: usize,
+    current: fusb302::HostCurrent,
+    devices: &mut Devices,
+) {
+    if devices.bus.is_none() {
+        return board_absent(uart);
+    }
+    match crate::vbus::power_on(port, current, &mut devices.power, devices.bus.as_mut()) {
+        Ok(on) => {
+            if port == TARGET_C {
+                devices.type_c.pd.arm(current);
+            }
+            let _ = write!(uart, "on {}", on.source.name());
+            match on.millivolts {
+                Some(mv) => {
+                    let _ = write!(uart, " {} mV", mv);
+                }
+                None => {
+                    let _ = write!(uart, " (already)");
+                }
+            }
+            if on.fell_back {
+                let _ = write!(uart, " (control refused)");
+            }
+            let _ = writeln!(uart);
+        }
+        Err(error) => power_error(uart, error),
+    }
+}
+
+/// `usb <port> power off`.
+pub(crate) fn power_off(uart: &mut Uart, port: usize, devices: &mut Devices) {
+    match crate::vbus::power_off(port, &mut devices.power, devices.bus.as_mut()) {
+        Ok(()) => {
+            if port == TARGET_C {
+                devices.type_c.pd.disarm();
+            }
+            let _ = writeln!(uart, "off");
+        }
+        Err(error) => power_error(uart, error),
+    }
+}
+
+/// `usb <port> power`: the register's view, not a measurement.
+pub(crate) fn power_status(uart: &mut Uart, port: usize) {
+    let _ = writeln!(
+        uart,
+        "{}  c{} a{} t{}",
+        if power_state(port) { "on" } else { "off" },
+        is_closed(Source::Control) as u8,
+        is_closed(Source::Aux) as u8,
+        is_closed(Source::TargetC) as u8,
+    );
+}
+
+fn power_error(uart: &mut Uart, error: PowerError) {
+    match error {
+        PowerError::Gate(refusal) => vbus_refusal(uart, refusal),
+        PowerError::Cc => {
+            let _ = writeln!(uart, "?");
+        }
+        PowerError::Port(PowerRefusal::NotOutput) => {
+            let _ = writeln!(uart, "no: input port");
+        }
+        PowerError::Port(PowerRefusal::Other(_)) => {
+            let _ = writeln!(uart, "no: another source is closed; `vbus off`");
+        }
     }
 }
 

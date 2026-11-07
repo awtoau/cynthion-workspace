@@ -100,3 +100,77 @@ fn gate_bits_are_split_from_a_mixed_word() {
     assert!(a.gate_bits == ov_bit(AUX));
     assert!(mixed & !a.gate_bits == 1 << 23);
 }
+
+// ---- port power plans (#625): register byte in, verdict out ----
+
+const EN: u8 = 1 << BIT_ENABLE;
+const C: u8 = 1 << BIT_CONTROL;
+const A: u8 = 1 << BIT_AUX;
+const T: u8 = 1 << BIT_TARGET_C;
+
+#[test]
+fn closed_mask_needs_the_gate_bit() {
+    assert_eq!(closed_mask(0), 0);
+    assert_eq!(closed_mask(C | A | T), 0); // switch bits with enable off: all open
+    assert_eq!(closed_mask(EN | C), C);
+    assert_eq!(closed_mask(EN | 1 << BIT_DISCHARGE), 0); // discharge is not a source
+}
+
+#[test]
+fn target_a_on_from_open_closes_and_a_live_control_or_aux_is_left_alone() {
+    assert!(on_plan(TARGET_A, 0) == Ok(OnPlan::Close));
+    assert!(on_plan(TARGET_A, EN | C) == Ok(OnPlan::AlreadyOn));
+    assert!(on_plan(TARGET_A, EN | A) == Ok(OnPlan::AlreadyOn));
+}
+
+#[test]
+fn target_a_on_refuses_when_target_c_or_two_sources_are_closed() {
+    assert!(on_plan(TARGET_A, EN | T) == Err(PowerRefusal::Other(T)));
+    assert!(on_plan(TARGET_A, EN | C | T) == Err(PowerRefusal::Other(C | T)));
+    assert!(on_plan(TARGET_A, EN | C | A) == Err(PowerRefusal::Other(C | A)));
+}
+
+#[test]
+fn target_c_on_allows_open_or_its_own_charge_path_only() {
+    assert!(on_plan(TARGET_C, 0) == Ok(OnPlan::Close));
+    assert!(on_plan(TARGET_C, EN | C | T) == Ok(OnPlan::Close)); // Rp change in place
+    assert!(on_plan(TARGET_C, EN | A) == Err(PowerRefusal::Other(A)));
+    assert!(on_plan(TARGET_C, EN | C) == Err(PowerRefusal::Other(C)));
+}
+
+#[test]
+fn inputs_have_no_power_verbs() {
+    for port in [AUX, CONTROL] {
+        assert!(on_plan(port, 0) == Err(PowerRefusal::NotOutput));
+        assert!(off_plan(port, EN | C) == Err(PowerRefusal::NotOutput));
+    }
+}
+
+#[test]
+fn target_a_off_opens_only_its_own_sources() {
+    assert!(off_plan(TARGET_A, 0) == Ok(()));
+    assert!(off_plan(TARGET_A, EN | C) == Ok(()));
+    assert!(off_plan(TARGET_A, EN | A) == Ok(()));
+    assert!(off_plan(TARGET_A, EN | T) == Err(PowerRefusal::Other(T)));
+    assert!(off_plan(TARGET_A, EN | C | T) == Err(PowerRefusal::Other(T)));
+}
+
+#[test]
+fn target_c_off_covers_its_charge_path_and_refuses_aux() {
+    assert!(off_plan(TARGET_C, EN | C | T) == Ok(()));
+    assert!(off_plan(TARGET_C, EN | T) == Ok(()));
+    assert!(off_plan(TARGET_C, EN | A) == Err(PowerRefusal::Other(A)));
+    assert!(off_plan(TARGET_C, EN | A | T) == Err(PowerRefusal::Other(A)));
+}
+
+#[test]
+fn powered_follows_the_ports_own_view() {
+    assert!(!powered(TARGET_A, 0));
+    assert!(powered(TARGET_A, EN | C));
+    assert!(powered(TARGET_A, EN | A));
+    assert!(powered(TARGET_A, EN | T)); // something is driving the rail
+    assert!(!powered(TARGET_C, EN | C));
+    assert!(powered(TARGET_C, EN | C | T));
+    assert!(powered(CONTROL, EN | C) && !powered(CONTROL, EN | A));
+    assert!(powered(AUX, EN | A) && !powered(AUX, 0));
+}

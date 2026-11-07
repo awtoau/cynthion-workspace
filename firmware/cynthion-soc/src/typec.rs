@@ -77,6 +77,8 @@ pub struct Controllers {
     /// is a statement about which connector something is happening on, which a
     /// single total could not make.
     pub serviced: [u32; 2],
+    /// USB PD on TARGET-C, once `usb target_c power on` has armed it.
+    pub pd: crate::pd::Pd,
 }
 
 /// What [`Controllers::init`] established.
@@ -94,6 +96,7 @@ impl Controllers {
             fault: [false; 2],
             last_poll: Instant::ZERO,
             serviced: [0; 2],
+            pd: crate::pd::Pd::new(),
         }
     }
 
@@ -188,6 +191,12 @@ impl Controllers {
                 continue;
             }
             self.serviced[index] = self.serviced[index].wrapping_add(1);
+
+            // The PD engine reads and clears TARGET itself; the source stays
+            // masked and the engine polls INT_N through the mux lines.
+            if port == Port::Target && self.pd.running() {
+                continue;
+            }
 
             match fusb302::clear(bus, port) {
                 Err(error) => {
