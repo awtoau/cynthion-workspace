@@ -224,7 +224,7 @@ fn vdm(f: &mut fmt::Formatter<'_>, frame: &Frame) -> fmt::Result {
     };
     let kind = ["REQ", "ACK", "NAK", "BUSY"][((h >> 6) & 3) as usize];
     write!(f, " svid={:04x} {} {} objpos={} vdm={}.{}", svid, command, kind, (h >> 8) & 7,
-        (h >> 13) & 3, (h >> 11) & 3)?;
+        ((h >> 13) & 3) + 1, (h >> 11) & 3)?;
     if (h & 0x1f) == 1 && ((h >> 6) & 3) == 1 && frame.objects() >= 2 {
         let id = frame.object(1);
         write!(f, " | id_header={:08x} host={} device={} ufp_type={} dfp_type={} modal={} vid={:04x}",
@@ -260,8 +260,17 @@ fn extended_data(f: &mut fmt::Formatter<'_>, frame: &Frame) -> fmt::Result {
     match frame.kind() {
         2 => write!(f, " temp={}C input={:02x} batt={:02x} events={:02x} tempst={:02x} power={:02x} \
             state={:02x}", b(0), b(1), b(2), b(3), b(4), b(5), b(6)),
-        5 => write!(f, " vid={:04x} pid={:04x} design={}00mWh lastfull={}00mWh type={:02x}",
-            w(0), w(2), w(4), w(6), b(8)),
+        5 => {
+            write!(f, " vid={:04x} pid={:04x} type={:02x}", w(0), w(2), b(8))?;
+            for (name, v) in [("design", w(4)), ("lastfull", w(6))] {
+                match v {
+                    0xffff => write!(f, " {}=unknown", name)?,
+                    0 => write!(f, " {}=none", name)?,
+                    v => write!(f, " {}={}00mWh", name, v)?,
+                }
+            }
+            Ok(())
+        }
         7 => {
             write!(f, " vid={:04x} pid={:04x} \"", w(0), w(2))?;
             for &c in d.iter().skip(4).take_while(|&&c| c != 0) {
@@ -328,7 +337,11 @@ impl fmt::Display for Decoded<'_> {
             (_, VENDOR_DEFINED) => vdm(f, m),
             (_, 5) => {
                 let o = m.object(0);
-                write!(f, " present={}00mWh info={:02x}", o >> 16, (o >> 8) & 0xff)
+                if o >> 16 == 0xffff {
+                    write!(f, " present=unknown info={:02x}", (o >> 8) & 0xff)
+                } else {
+                    write!(f, " present={}00mWh info={:02x}", o >> 16, (o >> 8) & 0xff)
+                }
             }
             (_, 6) => {
                 let o = m.object(0);

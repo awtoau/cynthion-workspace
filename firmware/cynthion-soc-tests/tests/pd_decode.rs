@@ -92,6 +92,7 @@ fn discover_identity_ack() {
     let f = from(SOP, 0x4f | (4 << 12), &p);
     let line = text(&f, &[]);
     assert!(line.contains("Discover_Identity ACK"), "{line}");
+    assert!(line.contains("vdm=2.0"), "{line}");
     assert!(line.contains("host=1 device=1 ufp_type=2"), "{line}");
     assert!(line.contains("vid=04e8"), "{line}");
 }

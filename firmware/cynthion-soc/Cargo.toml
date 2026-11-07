@@ -44,6 +44,7 @@ fusb302b = "0.2.0"
 embassy-time = { version = "0.5.1", default-features = false, features = ["tick-hz-1_000"] }
 embassy-time-driver = "0.2.2"
 embassy-futures = "0.1"
+heapless9 = { package = "heapless", version = "0.9" }
 embedded-hal-async = "1"
 
 # Build the same shell against QEMU's `-M virt` instead of the FPGA.

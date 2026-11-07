@@ -252,6 +252,7 @@ dependencies = [
  "embedded-io",
  "fugit",
  "fusb302b",
+ "heapless 0.9.3",
  "riscv 0.16.1",
  "riscv-rt",
  "rtic",

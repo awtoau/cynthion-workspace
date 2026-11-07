@@ -79,7 +79,6 @@ pub struct Controllers {
     pub serviced: [u32; 2],
     /// USB PD on TARGET-C, once `usb target_c power on` has armed it.
     pub pd: crate::pd::Pd,
-    pub pdl: crate::pd_lib::Pd,
 }
 
 /// What [`Controllers::init`] established.
@@ -98,7 +97,6 @@ impl Controllers {
             last_poll: Instant::ZERO,
             serviced: [0; 2],
             pd: crate::pd::Pd::new(),
-            pdl: crate::pd_lib::Pd::new(),
         }
     }
 
@@ -194,6 +192,12 @@ impl Controllers {
             }
             self.serviced[index] = self.serviced[index].wrapping_add(1);
 
+            // The PD engine reads and clears TARGET itself; the source stays
+            // masked and the engine polls INT_N through the mux lines.
+            if port == Port::Target && self.pd.running() {
+                continue;
+            }
+
             match fusb302::clear(bus, port) {
                 Err(error) => {
                     // Stamped, like every line nobody asked for: this is the
@@ -220,14 +224,6 @@ impl Controllers {
                     // the middle of this loop. A full ring drops it and counts the
                     // drop, which is the bargain every other event takes.
                     events::push(events::TYPE_C_CAUSE, cause.payload(index) as u64);
-
-                    // PD owns TARGET's registers once running; the orientation
-                    // sweep below would move SWITCHES0 under a receive.
-                    if port == Port::Target && self.pd.running() {
-                        self.pd.interrupt(uart, bus, cause);
-                        irq::resume_type_c(index);
-                        continue;
-                    }
 
                     // An interrupt latched, so something moved: this is the one
                     // place worth paying for a sweep. The poll below does not.

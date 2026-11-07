@@ -406,13 +406,6 @@ pub fn pd_start(bus: &mut Bus, cc: u8) -> Result<(), bus::Error> {
     clear(bus, port).map(|_| ())
 }
 
-/// Queue one message and start the transmitter (the frame ends in `TXON`).
-pub fn pd_send(bus: &mut Bus, message: &crate::pd_msg::Message) -> Result<(), bus::Error> {
-    let mut frame = [0u8; crate::pd_msg::TX_MAX];
-    let length = crate::pd_msg::encode_tx(message, &mut frame);
-    bus.write_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &frame[..length])
-}
-
 /// Registers 0x01..=0x0f and 0x3c..=0x42 in order, for `pd target_c regs`.
 /// Reads nothing that clears (the INTERRUPT registers are 0x3e, 0x3f, 0x42).
 pub fn pd_registers(bus: &mut Bus, out: &mut [u8; 26]) -> Result<(), bus::Error> {
@@ -422,29 +415,6 @@ pub fn pd_registers(bus: &mut Bus, out: &mut [u8; 26]) -> Result<(), bus::Error>
     out[17] = read(bus, Port::Target, 0x40)?;
     out[18] = read(bus, Port::Target, 0x41)?;
     Ok(())
-}
-
-pub fn pd_hard_reset(bus: &mut Bus) -> Result<(), bus::Error> {
-    let control3 = read(bus, Port::Target, REG_CONTROL3)?;
-    write(bus, Port::Target, REG_CONTROL3, control3 | CONTROL3_SEND_HARD_RESET)
-}
-
-/// After a received Hard Reset the part's PD logic must be reset by hand.
-pub fn pd_reset(bus: &mut Bus) -> Result<(), bus::Error> {
-    write(bus, Port::Target, REG_RESET, RESET_PD)
-}
-
-/// The next received packet, if the RX FIFO has one.
-pub fn pd_receive(bus: &mut Bus) -> Result<Option<crate::pd_msg::Message>, bus::Error> {
-    if read(bus, Port::Target, REG_STATUS1)? & STATUS1_RX_EMPTY != 0 {
-        return Ok(None);
-    }
-    let mut buffer = [0u8; 3 + 28 + 4];
-    bus.read_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &mut buffer[..3])?;
-    let rest = crate::pd_msg::rx_remaining(&[buffer[0], buffer[1], buffer[2]]);
-    bus.read_registers(Port::Target.bus(), ADDRESS, REG_FIFOS, &mut buffer[3..3 + rest])?;
-    // A packet the decoder refuses (not SOP) is consumed and dropped.
-    Ok(crate::pd_msg::decode_rx(&buffer[..3 + rest]).ok())
 }
 
 impl Interrupts {
