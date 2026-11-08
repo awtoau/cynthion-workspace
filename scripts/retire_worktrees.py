@@ -23,7 +23,8 @@ through one project's data directory.
 ## Three conditions, all required
 
 1. the branch is an ancestor of `main` -- its work is IN main, not merely similar
-2. the branch exists on `origin` -- so the history survives this machine
+2. its history survives this machine: the branch is on `origin` by name, or is an
+   ancestor of `origin/main` (agent branches are merged, never pushed by name)
 3. no uncommitted changes to TRACKED files
 
 Untracked files are reported but do not block: `sources/**` is gitignored by
@@ -109,7 +110,9 @@ def judge(path, branch):
     if not merged:
         ahead = git("log", "--oneline", f"main..{branch}", check=False)
         return False, f"NOT MERGED -- {len(ahead.splitlines())} commit(s) not on main"
-    if not on_origin(branch):
+    in_origin_main = subprocess.run(("git", "merge-base", "--is-ancestor", branch, "origin/main"),
+                                    cwd=ROOT, capture_output=True).returncode == 0
+    if not (in_origin_main or on_origin(branch)):
         return False, "NOT ON ORIGIN -- moving it would leave one copy"
     tracked = git("status", "--porcelain", "--untracked-files=no",
                   cwd=path, check=False)
@@ -140,7 +143,8 @@ def main():
     emit(f"\nKEEPING {len(kept)}:")
     for path, branch, reason in kept:
         emit(f"  {branch:44s} {reason}")
-    emit(f"\nELIGIBLE {len(eligible)}: merged into main AND on origin, no tracked changes")
+    emit(f"\nELIGIBLE {len(eligible)}: merged into main AND on origin (by name or in origin/main), "
+         "no tracked changes")
 
     if not args.move:
         emit("\nreport only -- pass --move to retire the eligible ones")
