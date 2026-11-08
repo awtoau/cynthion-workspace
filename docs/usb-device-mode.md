@@ -206,6 +206,104 @@ Cells ([`scripts/soc/usb_device_area.py`](../scripts/soc/usb_device_area.py), yo
 - The two 64 B buffers are distributed RAM (16 x DPR16X4), no block RAM. One DP16KD for both buffers is the alternative; the SoC has 2 spare ([`soc-size-review.md`](soc-size-review.md)).
 - Not counted: CSR wrapper, `usb`/`sync` crossing, EPn FIFOs. Against 24288 LUT4 the engine is about 2.5 % (LUT4 + 2 x CCU2C); the SoC is routing-bound at 92 % ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)), so whether it fits depends on the host engine leaving a device-mode build (open question 6).
 
+## Device-mode bitstream
+
+Decision (Dan, 2026-11-07, [#612](https://github.com/awtoau/cynthion-workspace/issues/612)): a SEPARATE bitstream, the current SoC plus the device engine. Nothing is removed. The SoC bitstream is unchanged with the variables below unset.
+
+- Build: `CYNTHION_DEVICE_MODE=1 [CYNTHION_AUX_BRIDGE=1] [CYNTHION_CORE=lean|min] ./scripts/soc_run.py --build-only --skip-tests`; variant dir `tmp/awto_soc/build/ck180-sync60-devmode1[-bridge1][-core<name>]` (table: `gateware/soc/variant.py`). Utilisation: `scripts/soc/soc_util_report.py`.
+- `CYNTHION_DEVICE_MODE`: adds `usb_dev` ([`peripherals/usb_device.py`](../gateware/soc/peripherals/usb_device.py): `Ep0Device` + ULPI translator + CSR wrapper) beside `usb_host`. Pins chain PHY -> `usb_dev` -> `usb_host` -> register window; `ROLE` hands the PHY over only when `dir` is quiet.
+- `CYNTHION_AUX_BRIDGE`: adds [`AuxCsrBridge`](../gateware/soc/peripherals/aux_csr_bridge.py), a 4th bus master: Linux reads and writes every peripheral over AUX. `aux_select` bit 0 hands the one AUX CDC pipe from the console (default) to the bridge until the AUX device has a second interface.
+- `CYNTHION_CORE`: core profile, [`riscv-core-build.md`](riscv-core-build.md#core-profiles-cynthion_core-612).
+- Bulk endpoint FIFOs and the AUX device engine belong to another agent; they are not in these numbers.
+- Sims: `scripts/soc/usb_device_csr_sim.py` (11 checks), `scripts/soc/aux_csr_bridge_sim.py` (6 checks).
+
+### Memory and CSR map (additions to the SoC's map)
+
+| window | base | size | what |
+|---|---|---|---|
+| `usb_dev` | `0xf0001040` | 64 B | device engine CSRs (map in the `usb_device.py` docstring) |
+| `aux_select` | `0xf0001080` | 4 B | bit 0: AUX pipe owner (0 console, 1 bridge); bridge builds only |
+| IRQ 11 | | | `usb_dev` events, level, via `intc` |
+
+Everything else is as in `gateware/soc/top.py`: RAM `0x0` (32 KiB), flash XIP `0x10000000`, CSR block `0xf0000000` (console `+0x0`, apollo_uart `+0x500`, board `+0x600`, hyperram `+0x800`, intc `+0xc00`, usb_host `+0x1000`, CLINT `+0x10000`, hyperram window `+0x20000`, flash `+0x21000`).
+
+### Fit (synthesis + place and route, no board)
+
+nextpnr `Device utilisation` (`scripts/soc/soc_util_report.py`), 2026-11-07, this worktree, `--build-only`; every build below routed and wrote a bitstream. COMB under ~200 is mapper noise ([`soc-size-review.md`](soc-size-review.md)). Of 24,288 COMB / 24,288 FF / 56 DP16KD.
+
+| build | COMB | FF | DP16KD | LUTRAM (DPR16X4) |
+|---|---:|---:|---:|---:|
+| (a) current SoC (unchanged by this work: rebuilt after the changes, same four numbers) | 18,945 | 11,485 | 54 | 20 |
+| device engine on the current core | 20,081 | 12,113 | 54 | 36 |
+| (b) + AUX CSR bridge, current core (`full`) | 20,273 | 12,230 | 54 | 36 |
+| (c) + AUX CSR bridge, `lean` core (runs the shipping image) | 20,412 | 12,227 | 53 | 34 |
+| (c') + AUX CSR bridge, `min` core (rv32imc, I-cache only; firmware rebuild) | 19,296 | 11,554 | 49 | 24 |
+
+- Device engine, wrapper and translator: +1,136 COMB, +628 FF, +16 LUTRAM, 0 DP16KD. Bridge + `aux_select`: +192 COMB, +117 FF.
+- (b) is 83% COMB, 50% FF, 54/56 DP16KD: it fits, with the same 2 spare blocks as the SoC.
+- `lean` frees 1 DP16KD (53). `min` frees 5 (49) and ~1,000 COMB but does not run today's image ([core cuts](#core-cuts)).
+- Shortfall: the bulk endpoint FIFOs are not in these builds. At one DP16KD per pipe ([Block RAM](#block-ram)), 8 pipes need 8 blocks: (b) 62 of 56 (6 short), (c) 61 (5 short), (c') 57 (1 short).
+- Options if the FIFOs must fit, nothing removed, none applied (Dan decides):
+  1. `min` core (-5, firmware rebuild without A, uncached `.rodata`); 1 block still short.
+  2. Two pipes per DP16KD (1 KiB each = 2 packets): 8 pipes in 4 blocks: (b) 58, (c) 57, (c') 53.
+  3. Fewer mapped pipes first (4 pipes = 4 blocks, same totals as 2); 4 pipes at two per block = 2 blocks: (b) 56, (c) 55, (c') 51.
+  4. Register file in registers: -2 DP16KD, +1,753 COMB, +847 FF measured on the core alone; COMB would reach ~22,000 (91%), where [#619](https://github.com/awtoau/cynthion-workspace/issues/619) says routing binds.
+  5. Per-endpoint buffers in HyperRAM (open question 4): 0 blocks, costs latency; not measured here.
+  6. RAM 32 -> 24 KiB frees 4 blocks but the image needs `.data` + `.bss` + `.uninit` + stack = 31.7 KB, so `.bss` (20 KB) must shrink first; firmware work.
+  7. USB host SIE FIFOs (2 blocks, #619) to LUTRAM: cell cost not measured.
+
+### Core cuts
+
+What the existing firmware needs (`firmware/cynthion-soc` release ELF, `llvm-objdump`, this worktree):
+
+- 51,831 instructions: 40 AMO (RTIC runtime, `MachineExternal`, `MachineTimer`, ...), 186 `mul*`, 154 `div*`/`rem*`. So A and M are needed.
+- Image: `.text` 157,012 B and `.rodata` 61,556 B in flash (XIP); `.data` 1,320, `.bss` 20,256, `.uninit` 4,408, stack 5,760 in the 32 KiB RAM.
+- XIP `.text` needs the I-cache; A needs the D-cache (`LsuCachelessBridge` asserts `!withAmo`, `cpu.py`). No cache can go without changing the firmware.
+
+Core alone, `yosys synth_ecp5` (`scripts/soc/soc_cpu_knobs.py`, 2026-11-07, no place and route; COMB under ~200 is mapper noise, [`soc-size-review.md`](soc-size-review.md)):
+
+| core | COMB | FF | DP16KD | LUTRAM | DSP | runs existing firmware |
+|---|---:|---:|---:|---:|---:|---|
+| `full` (shipping, 4 KiB I + 4 KiB D, 1 way) | 5702 | 3353 | 11 | 20 | 4 | yes |
+| `lean` (2 KiB I + 2 KiB D) | 5843 | 3350 | 10 | 18 | 4 | yes |
+| no A (cached) | 5322 | 3235 | 11 | 20 | 4 | no (AMO) |
+| `min`-like `nd`: no A, no D-cache, 4 KiB I | 4796 | 2677 | 6 | 8 | 4 | no (AMO), needs rv32imc rebuild |
+| `nd`, 2 KiB I | 4970 | 2675 | 5 | 8 | 4 | same |
+| no caches (`nl`), for reference | 4663 | 2445 | 3 | 17 | 4 | no (XIP .text) |
+
+Single knobs from `nl` (each a delta against 4663 COMB / 2445 FF): perf counters 4 -> 0: -30 / -79 (noise in COMB); debug JTAG module: -347 / -633 and 8 LUTRAM; M: -261 / -377 and 4 DSP; divider only: -107 / -171; C: -214 / -99; iterative shifter: +153 (worse); register file in registers: +1753 / +847 and -2 DP16KD.
+
+- Shipping 8 KiB L1 figures in older docs are not the current core (`top.py` `CACHE_SETS` 64 x 1 way).
+- `lean` is the smallest core that runs the shipping image unchanged: it frees 1 DP16KD and no logic. Cells did not move with half the cache; only the data and tag arrays shrank.
+- `min` (rv32imc, I-cache kept, no D-cache) frees 5 DP16KD and ~900 COMB in the core, at the price of a firmware rebuild without A and uncached `.rodata`.
+- Code size: dropping C costs 25% of `.text` (18.8 KB of 75 KB, measured earlier, `chips/vexiiriscv-cpu.md`), so C stays. Dropping A or the D-cache changes no instruction bytes except the AMO sites.
+- Speed effect of `lean`: not measured (needs the CPU's own counters on a board). `rtic.md` measured +1,700 B of hot `.text` moving frontend stalls from 44 to 452 per 1,000 cycles through a 4 KiB direct-mapped I-cache, so a 2 KiB I-cache is expected to stall more.
+
+### Firmware crate skeleton plan (relay firmware is not written)
+
+- Same crate (`firmware/cynthion-soc`), feature `device`; shell, PD and RTIC stay.
+- `src/usb_dev.rs`: driver over the `usb_dev` CSRs: `snapshot()`, `command(cmd, seq, len, last, addr)`, `push_in(buf)`, `read_out(buf)`, `events()`; stage operands, write `OP`, poll `STATUS.op_busy` (bound 40 sync cycles, from `usb_device_csr_sim.py`).
+- `src/relay.rs` (after the AUX link spec lands): SETUP / EP0 data / status messages <-> `usb_dev`; `seq` rules as in [Increments 1 and 2](#increments-1-and-2-sim-status).
+- PAC: `soc_generate_pac.py` under `CYNTHION_DEVICE_MODE=1` emits the device map; second SVD beside `soc.svd`, selected by the `device` feature; `target.rs` gets the two window addresses.
+- Shell command `usbdev` (syntax only; logic in the driver).
+
+### Risks
+
+- Entering the device role: PHY function control (0x04) must be restored through the register window first (`usb_device.py`); unproven on a PHY.
+- Leaving the host role: `usb_dev` checks `target_ulpi.usb_idle` only; firmware sets the `usb_host` ROLE off before `usb_dev` ROLE.
+- Chirp and turnaround timing of `Ep0Device` on a real USB3343: sim only.
+- `min` core has no A: the RTIC runtime and atomic RMW (40 AMO instructions in today's image) need a `riscv32imc` rebuild (target not installed here; `portable-atomic` or critical-section), and `.rodata` reads from flash go uncached.
+- The AUX bridge framing is a stand-in for the AUX link spec.
+
+### Bench steps for later (not done: loading a device bitstream drops the S20's power and PD)
+
+1. Put the S20 on its own supply or accept the PD drop; load the bitstream with `board.py` as for any SoC variant.
+2. `info`: USERCODE and `misa` match the build record; read the PHY ID through the ULPI window.
+3. `usb_dev` ROLE=1: `STATUS.role` set, `EVENTS.reset` on a bus reset from a second host cabled to TARGET.
+4. Second host: `lsusb` sees the device once relay firmware exists; before that, the EP0 table firmware of increment 1.
+5. Core cut: `ICACHE_MISS` and `STALLED_CYCLES_FRONTEND` under the shell workload, `full` vs `lean` ([`chips/vexiiriscv-cpu.md`](chips/vexiiriscv-cpu.md)).
+6. Bridge: set `aux_select`, drive `R`/`W` frames over AUX, compare with the shell's `peek`.
+
 ## Open questions
 
 Each becomes an issue.
@@ -215,7 +313,7 @@ Each becomes an issue.
 3. luna's role: sim oracle only (no luna in `gateware/soc`, [#612](https://github.com/awtoau/cynthion-workspace/issues/612)); confirm it is not used on AUX during increments 1-2.
 4. HyperRAM role, if any: deep per-endpoint buffering (mass storage bursts, PC scheduling jitter) vs BRAM only.
 5. Console on AUX while the bridge runs: keep CDC-ACM in the AUX composite or move it.
-6. Device-mode build: SoC role on `target_phy` vs separate bitstream; decides which BRAM is freed.
+6. Device-mode build: decided, a separate bitstream ([Device-mode bitstream](#device-mode-bitstream)).
 7. Non-Linux remote hosts with control timeouts below the spec: measure, then decide whether a cache is ever needed.
 8. Isochronous: AUX iso pipes or framed bulk; UAC/UVC gadgets depend on it.
 9. Name.

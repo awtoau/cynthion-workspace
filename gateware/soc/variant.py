@@ -51,6 +51,7 @@ from pathlib import Path
 # Flags top.py treats as "" == "0" == off, versus values it parses.
 FLAG = "flag"
 TEXT = "text"
+OPTION = "option"       # text, left out of the slug at its default
 
 # HyperRAM CK, MHz: clean in the #581 sweep, decided in #588.
 CK_DEFAULT_MHZ = "180"
@@ -66,6 +67,12 @@ VARIANT_ENV = (
     ("CYNTHION_SYNC_MHZ",           "60",  "sync",      TEXT),
     # Debug: 1024-entry ULPI trace in the usb_host shim. Off = shipping image.
     ("CYNTHION_USB_TRACE",          "0",    "utrace",   FLAG),
+    # USB device mode (#612): a separate bitstream, `device_top.DeviceSoc`. Off = the SoC.
+    ("CYNTHION_DEVICE_MODE",        "0",    "devmode",  FLAG),
+    # Core profile (`cpu.cpu.CORES`): full | lean | min. Applies to either bitstream.
+    ("CYNTHION_CORE",               "full", "core",     OPTION),
+    # AUX byte stream -> Wishbone master (`peripherals/aux_csr_bridge.py`); core "none" implies it.
+    ("CYNTHION_AUX_BRIDGE",         "0",    "bridge",   FLAG),
 )
 
 _BY_NAME = {name: (default, tag, kind) for name, default, tag, kind in VARIANT_ENV}
@@ -106,6 +113,8 @@ def slug(env=None):
     parts = []
     for name, _default, tag, kind in VARIANT_ENV:
         if kind is FLAG and _resolve(name, env) == "0":
+            continue
+        if kind is OPTION and _resolve(name, env) == _BY_NAME[name][0]:
             continue    # a flag at its default adds no tag: shipping slugs unchanged
         # A comma (two CK rungs in one bitstream) and a decimal point both reach
         # here; keep the point, which reads, and flatten the rest.

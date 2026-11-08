@@ -169,6 +169,38 @@ def isa_generated(flags=None):
                                ("c", "rvc"), ("rdtime", "rdtime"))}
 
 
+# Core profiles (#612). `full` is the SoC's core; the others are for the device-mode bitstream.
+# - lean: what the EXISTING firmware (imac, XIP .text, RTIC amo*) still runs on: smaller L1s.
+# - min:  rv32imc, I-cache only. Needs a firmware rebuild (no A: LsuCachelessBridge asserts
+#   !withAmo) and reads flash .rodata uncached.
+CORES = {
+    "full": {"drop": (), "sets": None},
+    "lean": {"drop": (), "sets": 32},
+    "min":  {"drop": ("--with-rva", "--with-lsu-l1", "--lsu-l1-wishbone"), "sets": None},
+}
+VALUED = ("--fetch-l1-sets", "--fetch-l1-ways", "--lsu-l1-sets", "--lsu-l1-ways")
+
+
+def generate_flags(core="full"):
+    """`GENERATE_FLAGS` for a core profile (cache geometry is applied by `generate`)."""
+    drop = CORES[core]["drop"]
+    out, skip = [], False
+    for flag in GENERATE_FLAGS:
+        if skip:
+            skip = False
+        elif flag in VALUED and (("--with-fetch-l1" in drop and "fetch" in flag)
+                                 or ("--with-lsu-l1" in drop and "lsu" in flag)):
+            skip = True
+        elif flag not in drop:
+            out.append(flag)
+    return out
+
+
+def has_l1(flags):
+    """(fetch L1, LSU L1) present in a flag list."""
+    return "--with-fetch-l1" in flags, "--with-lsu-l1" in flags
+
+
 # The SoC's address map, as PMA regions. Anything not listed here is
 # unreachable rather than merely uncached.
 #
@@ -228,7 +260,7 @@ def _generator_lock():
 
 
 def generate(reset_addr, cache_sets=64, output=None, regions=None,
-             cache_ways=1):
+             cache_ways=1, core="full"):
     """Run the Scala generator and return the path to the Verilog.
 
     Regenerating is a few seconds, so this is called at elaboration rather than
@@ -253,7 +285,9 @@ def generate(reset_addr, cache_sets=64, output=None, regions=None,
             f"cache_ways must be a power of two, not {cache_ways}: SpinalHDL's "
             f"Plru asserts isPow2 on it (lib/misc/Plru.scala:15). Use 1, 2 or 4.")
     regions = regions if regions is not None else DEFAULT_REGIONS
-    flags = list(GENERATE_FLAGS)
+    flags = generate_flags(core)
+    if CORES[core]["sets"] is not None:
+        cache_sets = CORES[core]["sets"]
     for index, flag in enumerate(flags):
         if cache_sets is not None and flag in ("--fetch-l1-sets", "--lsu-l1-sets"):
             flags[index + 1] = str(cache_sets)
@@ -352,7 +386,8 @@ class VexiiRiscv(wiring.Component):
     data_width = 32
 
     def __init__(self, *, reset_addr=0x00000000, cache_sets=128,
-                 regions=None, cache_ways=1, netlist=None):
+                 regions=None, cache_ways=1, netlist=None, core="full"):
+        self._core = core
         self._reset_addr = reset_addr
         self._cache_sets = cache_sets
         self._cache_ways = cache_ways
@@ -431,7 +466,7 @@ class VexiiRiscv(wiring.Component):
         verilog = generate(self._reset_addr, self._cache_sets,
                            regions=self._regions,
                            cache_ways=self._cache_ways,
-                           output=self._netlist)
+                           output=self._netlist, core=self._core)
         if platform is not None:
             platform.add_file("VexiiRiscv.v", verilog.read_text())
 
@@ -451,8 +486,7 @@ class VexiiRiscv(wiring.Component):
         # `jtag_rstn` is active low, and `capture` is the non-shift half of the enable
         # window -- JTAGG gives an enable and a shift phase rather than a discrete
         # capture strobe.
-        m.submodules.cpu = Instance(
-            "VexiiRiscv",
+        ports = dict(
             i_clk=ClockSignal("sync"),
             i_reset=ResetSignal("sync") | self.ext_reset,
 
@@ -470,46 +504,51 @@ class VexiiRiscv(wiring.Component):
             i_PrivilegedPlugin_logic_harts_0_int_m_external=self.irq_external,
             i_PrivilegedPlugin_logic_harts_0_int_m_timer=self.irq_timer,
             i_PrivilegedPlugin_logic_harts_0_int_m_software=self.irq_software,
-
-            # Instruction bus.
-            o_FetchL1WishbonePlugin_logic_bus_CYC=self.ibus.cyc,
-            o_FetchL1WishbonePlugin_logic_bus_STB=self.ibus.stb,
-            o_FetchL1WishbonePlugin_logic_bus_WE=self.ibus.we,
-            o_FetchL1WishbonePlugin_logic_bus_ADR=self.ibus.adr,
-            o_FetchL1WishbonePlugin_logic_bus_SEL=self.ibus.sel,
-            o_FetchL1WishbonePlugin_logic_bus_DAT_MOSI=self.ibus.dat_w,
-            o_FetchL1WishbonePlugin_logic_bus_CTI=self.ibus.cti,
-            o_FetchL1WishbonePlugin_logic_bus_BTE=self.ibus.bte,
-            i_FetchL1WishbonePlugin_logic_bus_DAT_MISO=self.ibus.dat_r,
-            i_FetchL1WishbonePlugin_logic_bus_ACK=self.ibus.ack,
-            i_FetchL1WishbonePlugin_logic_bus_ERR=self.ibus.err,
-
-            # Data bus.
-            o_LsuL1WishbonePlugin_logic_bus_CYC=self.dbus.cyc,
-            o_LsuL1WishbonePlugin_logic_bus_STB=self.dbus.stb,
-            o_LsuL1WishbonePlugin_logic_bus_WE=self.dbus.we,
-            o_LsuL1WishbonePlugin_logic_bus_ADR=self.dbus.adr,
-            o_LsuL1WishbonePlugin_logic_bus_SEL=self.dbus.sel,
-            o_LsuL1WishbonePlugin_logic_bus_DAT_MOSI=self.dbus.dat_w,
-            o_LsuL1WishbonePlugin_logic_bus_CTI=self.dbus.cti,
-            o_LsuL1WishbonePlugin_logic_bus_BTE=self.dbus.bte,
-            i_LsuL1WishbonePlugin_logic_bus_DAT_MISO=self.dbus.dat_r,
-            i_LsuL1WishbonePlugin_logic_bus_ACK=self.dbus.ack,
-            i_LsuL1WishbonePlugin_logic_bus_ERR=self.dbus.err,
-
-            # Uncached I/O bus. Same geometry as dbus -- 30-bit word address,
-            # 4-bit select -- so it decodes identically; only the routing
-            # differs.
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_CYC=self.iobus.cyc,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_STB=self.iobus.stb,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_WE=self.iobus.we,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_ADR=self.iobus.adr,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_SEL=self.iobus.sel,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MOSI=self.iobus.dat_w,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_CTI=self.iobus.cti,
-            o_LsuCachelessWishbonePlugin_logic_bridge_down_BTE=self.iobus.bte,
-            i_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MISO=self.iobus.dat_r,
-            i_LsuCachelessWishbonePlugin_logic_bridge_down_ACK=self.iobus.ack,
-            i_LsuCachelessWishbonePlugin_logic_bridge_down_ERR=self.iobus.err,
         )
+
+        fetch_l1, lsu_l1 = has_l1(generate_flags(self._core))
+        # Cacheless fetch has its own plugin and port prefix.
+        fetch = ("FetchCachelessWishbonePlugin_logic_bridge_bus" if not fetch_l1
+                 else "FetchL1WishbonePlugin_logic_bus")
+        for suffix, port, direction in (
+                ("CYC", self.ibus.cyc, "o"), ("STB", self.ibus.stb, "o"),
+                ("WE", self.ibus.we, "o"), ("ADR", self.ibus.adr, "o"),
+                ("SEL", self.ibus.sel, "o"), ("DAT_MOSI", self.ibus.dat_w, "o"),
+                ("CTI", self.ibus.cti, "o"), ("BTE", self.ibus.bte, "o"),
+                ("DAT_MISO", self.ibus.dat_r, "i"), ("ACK", self.ibus.ack, "i"),
+                ("ERR", self.ibus.err, "i")):
+            ports[f"{direction}_{fetch}_{suffix}"] = port
+
+        # Without the LSU L1 there is no cached data bus; `dbus` stays idle.
+        if lsu_l1:
+            ports.update(dict(
+                o_LsuL1WishbonePlugin_logic_bus_CYC=self.dbus.cyc,
+                o_LsuL1WishbonePlugin_logic_bus_STB=self.dbus.stb,
+                o_LsuL1WishbonePlugin_logic_bus_WE=self.dbus.we,
+                o_LsuL1WishbonePlugin_logic_bus_ADR=self.dbus.adr,
+                o_LsuL1WishbonePlugin_logic_bus_SEL=self.dbus.sel,
+                o_LsuL1WishbonePlugin_logic_bus_DAT_MOSI=self.dbus.dat_w,
+                o_LsuL1WishbonePlugin_logic_bus_CTI=self.dbus.cti,
+                o_LsuL1WishbonePlugin_logic_bus_BTE=self.dbus.bte,
+                i_LsuL1WishbonePlugin_logic_bus_DAT_MISO=self.dbus.dat_r,
+                i_LsuL1WishbonePlugin_logic_bus_ACK=self.dbus.ack,
+                i_LsuL1WishbonePlugin_logic_bus_ERR=self.dbus.err,
+            ))
+
+        # Uncached I/O bus, same geometry as dbus. Without the LSU L1 it carries RAM too.
+        ports.update(dict(
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_CYC=self.iobus.cyc,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_STB=self.iobus.stb,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_WE=self.iobus.we,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_ADR=self.iobus.adr,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_SEL=self.iobus.sel,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MOSI=self.iobus.dat_w,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_CTI=self.iobus.cti,
+                o_LsuCachelessWishbonePlugin_logic_bridge_down_BTE=self.iobus.bte,
+                i_LsuCachelessWishbonePlugin_logic_bridge_down_DAT_MISO=self.iobus.dat_r,
+                i_LsuCachelessWishbonePlugin_logic_bridge_down_ACK=self.iobus.ack,
+                i_LsuCachelessWishbonePlugin_logic_bridge_down_ERR=self.iobus.err,
+        ))
+
+        m.submodules.cpu = Instance("VexiiRiscv", **ports)
         return m
