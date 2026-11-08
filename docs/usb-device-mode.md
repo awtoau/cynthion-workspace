@@ -365,7 +365,7 @@ nextpnr `Device utilisation` (`scripts/soc/soc_util_report.py`), 2026-11-07, thi
   4. Register file in registers: -2 DP16KD, +1,753 COMB, +847 FF measured on the core alone; COMB would reach ~22,000 (91%), where [#619](https://github.com/awtoau/cynthion-workspace/issues/619) says routing binds.
   5. Per-endpoint buffers in HyperRAM (open question 4): 0 blocks, costs latency; not measured here.
   6. RAM 32 -> 24 KiB frees 4 blocks but the image needs `.data` + `.bss` + `.uninit` + stack = 31.7 KB, so `.bss` (20 KB) must shrink first; firmware work.
-  7. USB host SIE FIFOs (2 blocks, #619) to LUTRAM: cell cost not measured.
+  7. USB host SIE FIFOs (2 blocks, [#619](https://github.com/awtoau/cynthion-workspace/issues/619)) to LUTRAM: cell cost not measured.
 
 ### Core cuts
 
