@@ -174,6 +174,15 @@ Skeleton with the Cynthion **stubbed**: [`linux/cynthion_udc/`](../linux/cynthio
 - dummy_hcd reference: ACM, NCM, ACM+NCM present identical device and configuration descriptors on the stub and on dummy_hcd, except `bEndpointAddress` numbers (the stub has ep1-4 in/out, dummy_hcd 15 endpoints); directions and positions match.
 - Still not covered: AUX link / URBs (backend is in-kernel); FS fallback; isochronous; real bus timing (the stub has no inter-packet delays).
 
+### AUX backend status
+
+`cudc_aux` ([`linux/cynthion_udc/cudc_aux.c`](../linux/cynthion_udc/cudc_aux.c)) implements `struct cudc_backend_ops` over the AUX link ([`aux-link.md`](aux-link.md)); the stub stays for tests.
+
+- Test: `cudc_vm_test.py --backend aux`, VM only; a Python model of the Cynthion (virtual USB device on `vhci_hcd`) stands in for firmware relay, FIFOs and `Ep0Device`. Every stub group passes through the real backend; added groups: 512 B / 4102 B control messages, stale control reply, stale endpoint command, AUX console coexistence.
+- Differences from the stub that the groups accommodate: commands reach the Cynthion asynchronously (state is polled), and the endpoint FIFO absorbs 4 packets before the remote host sees a NAK.
+- Relay timing in the VM is a MODEL: SETUP sent -> reply received median 0.2 ms, max 21 ms at host loadavg ~30 (Python model and vhci; not USB timing).
+- Not done: FS per-packet pipes, CSR/IRQ frames (reserved in the spec), HELLO-reset on reconnect, board.
+
 ### Increments 1 and 2: sim status
 
 Device engine: [`gateware/usbcore/device.py`](../gateware/usbcore/device.py) (`Ep0Device`), our L1 codecs plus EP0 and a CPU command port. luna stays a sim oracle only (the harness runs the same case table against luna's model device and against this engine).

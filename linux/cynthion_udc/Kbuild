@@ -1,3 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0
 obj-m := cynthion_udc.o
-cynthion_udc-y := cudc_core.o cudc_stub.o
+cynthion_udc-y := cudc_core.o cudc_stub.o cudc_aux.o
+ccflags-y += $(CUDC_CFLAGS)

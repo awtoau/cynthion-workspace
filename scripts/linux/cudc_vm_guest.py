@@ -3,9 +3,12 @@
 # Gadget test for cynthion_udc, as root: inside the vng VM (cudc_vm_test.py) or on the host.
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Load cynthion_udc (stub backend), enumerate configfs gadgets on it, unload, scan dmesg.
+"""Load cynthion_udc, enumerate configfs gadgets on it, unload, scan dmesg.
 
-    python3 -I cudc_vm_guest.py --ko <path>/cynthion_udc.ko
+    python3 -I cudc_vm_guest.py --ko <path>/cynthion_udc.ko [--backend stub|aux]
+
+- stub: the in-kernel fake host (debugfs ctl). aux: the AUX backend (cudc_aux) bound to the Python
+  model of the Cynthion (cudc_aux_model.py on vhci_hcd); the same cases run through the real link.
 
 - Cases: ACM, NCM, ACM+NCM; each binds, waits for the stub host to configure it, loops data.
 - Output: stdout only (the host side logs it); last line `CUDC_VM_TEST RESULT: PASS|FAIL`.
@@ -29,8 +32,11 @@ import traceback
 import tty
 from pathlib import Path
 
-UDC = "cynthion_udc"
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # python -I: script dir is not on the path
+
+UDC = "cynthion_udc"            # aux backend: the interface's device name, found after probe
 UDC_SYSFS = Path("/sys/class/udc") / UDC
+MODEL = None                    # aux backend: the AuxModel (host() goes there instead of debugfs)
 CONFIGFS = Path("/sys/kernel/config")
 GADGET = CONFIGFS / "usb_gadget" / "cudc"
 VID, PID = 0x1D6B, 0x0104       # Linux Foundation multifunction composite gadget
@@ -45,13 +51,13 @@ ENUM_MS = int(1.25 * (4 * 500 + 50 + 2 * 50))
 # (IN queue -> stub workqueue -> OUT giveback -> function rx work; NCM adds a 300 us TX timer).
 # Expected well under 1 ms (docs/usb-device-mode.md#increment-3-status); 10 ms covers the vCPU
 # being descheduled once on the shared host. Expiry: check fails with bytes back + elapsed.
-LOOP_MS = 10
+LOOP_MS = 10          # aux backend: set in main() (relay adds socket/thread hops, MODEL)
 
 BAD = re.compile(r"WARNING:|BUG:|Oops|Call Trace|general protection|UBSAN|KASAN|refcount_t:|"
                  r"list_(add|del) corruption|scheduling while atomic|sleeping function called|"
                  r"circular locking|inconsistent lock state|blocked for more than|stack-protector|"
                  r"Kernel panic")
-OUR_ERRORS = re.compile(r"stub host: (?!ctl: ).*(failed|STALL|no ep0|signalled but empty)")
+OUR_ERRORS = re.compile(r"(stub|model) host: (?!ctl: ).*(failed|STALL|no ep0|signalled but empty|VIOLATION)")
 
 FAILS = []
 
@@ -123,6 +129,42 @@ class Kmsg:
 
     def close(self):
         os.close(self.fd)
+
+
+class ModelLog:
+    """The model's host log (it does not write /dev/kmsg: userspace writes there are rate limited)."""
+
+    def wait_for(self, pattern, limit_ms, what):
+        rx = re.compile(pattern)
+        t0 = time.monotonic()
+        with MODEL.m:
+            hit = MODEL._wait(lambda: any(rx.search(ln) for ln in MODEL.lines),
+                              t0 + limit_ms / 1000)
+            line = next((ln for ln in MODEL.lines if rx.search(ln)), None) if hit else None
+        log(f"{what}: {'after %.1f ms' % (1000 * (time.monotonic() - t0)) if hit else 'NOT seen'}")
+        return line
+
+    def drain(self):
+        with MODEL.m:
+            return list(MODEL.lines)
+
+
+def host_log(km):
+    """Host-side enumeration log lines: dmesg for the stub, the model's list for the aux backend."""
+    if MODEL is None:
+        return km
+    with MODEL.m:
+        del MODEL.lines[:]
+    return ModelLog()
+
+
+def wait_enum(what):
+    """aux: the model's remote host finished its enumeration (the stub's is synchronous)."""
+    if MODEL is None:
+        return True
+    ok = MODEL.enum_done.wait(ENUM_MS / 1000)
+    check(ok, f"{what}: remote host enumeration done")
+    return ok
 
 
 def udc_state():
@@ -226,8 +268,15 @@ ETH_P_CUDC = 0x88B5      # IEEE local experimental ethertype
 
 
 def ncm_loopback(case):
-    ifname = (GADGET / "functions/ncm.usb0/ifname").read_text().strip()
-    run("ip", "link", "set", ifname, "up")
+    def current():      # udev may rename the interface right after creation: re-read, never cache
+        return (GADGET / "functions/ncm.usb0/ifname").read_text().strip()
+    def link(state):
+        try:
+            run("ip", "link", "set", current(), state)
+        except RuntimeError:        # udev renamed it between the read and ip: once more, fresh name
+            run("ip", "link", "set", current(), state)
+    link("up")
+    ifname = current()
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_CUDC))
     try:
         s.bind((ifname, ETH_P_CUDC))
@@ -248,19 +297,20 @@ def ncm_loopback(case):
         check(back, f"NCM loopback {ifname}: frame received back, {ms:.1f} ms (limit {LOOP_MS} ms)")
     finally:
         s.close()
-        run("ip", "link", "set", ifname, "down")
+        link("down")
 
 
 def run_case(case, functions):
     log(f"=== case {case}: {'+'.join(functions)} ===")
     make_gadget(case, functions)
     km = Kmsg()
+    hk = host_log(km)
     try:
         write(GADGET / "UDC", UDC)
         check(wait_state("configured", ENUM_MS, "enumeration"), "gadget state 'configured'")
-        done = km.wait_for(r"stub host: enumeration (done|failed)", ENUM_MS, "stub enumeration")
-        check(done is not None and "done" in done, "stub host: enumeration done")
-        text = "\n".join(km.drain())
+        done = hk.wait_for(r"(stub|model) host: enumeration (done|failed)", ENUM_MS, "enumeration")
+        check(done is not None and "done" in done, "host: enumeration done")
+        text = "\n".join(hk.drain())
         check(re.search(rf"device descriptor {VID:04x}:{PID:04x} bcdUSB 0200 .*"
                         r"bMaxPacketSize0 64", text) is not None, "device descriptor read")
         check("configuration 1 set" in text, "SET_CONFIGURATION(1)")
@@ -294,8 +344,11 @@ def pattern(n, start=0):
 
 def host(cmd):
     """One stub-host command; returns (status, {k: v}). Blocks until the stub is done (it bounds itself)."""
-    CTL.write_text(cmd + "\n")
-    parts = CTL.read_text().split()
+    if MODEL is not None:
+        parts = MODEL.command(cmd).split()
+    else:
+        CTL.write_text(cmd + "\n")
+        parts = CTL.read_text().split()
     kv = dict(p.partition("=")[::2] for p in parts[2:])
     log(f"  host `{cmd}` -> {' '.join(parts)[:160]}")
     return (parts[1] if len(parts) > 1 else "none"), kv
@@ -333,6 +386,16 @@ def devstat():
     return {k: int(v) for k, v in kv.items()} if st == "ok" else {}
 
 
+def wait_devstat(pred):
+    """Polls devstat until pred holds (the aux backend's commands reach the Cynthion asynchronously)."""
+    t0 = time.monotonic()
+    while True:
+        d = devstat()
+        if pred(d) or time.monotonic() - t0 > FN_MS / 1000:
+            return d
+        select.select([], [], [], 0.002)
+
+
 def pkts(kv):
     return [int(x) for x in kv.get("pkts", "").split(",") if x]
 
@@ -345,7 +408,7 @@ def bind_and_configure(what):
     write(GADGET / "UDC", UDC)
     ok = wait_state("configured", ENUM_MS, what)
     check(ok, f"{what}: state 'configured'")
-    return ok
+    return ok and wait_enum(what)
 
 
 def unbind():
@@ -607,6 +670,12 @@ def case_packets_out():
         seq.extend(togs(kv))
         check(r1.result() is not None and len(r1.data) == 1024, "OUT exactly-full request completes")
         push(1024, [0], 0, "ZLP after a full request lands in the next request")
+        if MODEL is not None:
+            # the FIFO takes FIFO_PKTS packets before the remote host sees a NAK (aux-link.md section 8)
+            for i in range(4):
+                st, kv = host(f"out 0x01 {NAK_MS} 100")
+                seq.extend(togs(kv))
+                check(st == "ok", f"OUT into the FIFO with no request queued: packet {i + 1} accepted ({st})")
         # NAK: no request queued
         s0 = stat(0x01)
         st, kv = host(f"out 0x01 {NAK_MS} 100")
@@ -637,7 +706,7 @@ def case_halt_dequeue():
             os.read(f.ein, 512)
         except OSError as e:
             log(f"  read on IN ep -> errno {e.errno} (expected: halted)")
-        s = stat(0x81)
+        s = wait_stat(0x81, lambda s: s["halted"] == 1, "set_halt reaches the Cynthion")
         check(s["halted"] == 1, f"usb_ep_set_halt reaches the stub: {s}")
         st, kv = host(f"in 0x81 {NAK_MS} 1")
         check(st == "stall", f"IN token to a halted endpoint: STALL (got {st})")
@@ -656,7 +725,7 @@ def case_halt_dequeue():
         st, kv = host(f"out 0x01 {NAK_MS} 100")
         check(st == "stall", f"OUT token to a host-halted endpoint: STALL (got {st})")
         fcntl.ioctl(f.eout, FUNCTIONFS_CLEAR_HALT)
-        s = stat(0x01)
+        s = wait_stat(0x01, lambda s: s["halted"] == 0, "clear_halt reaches the Cynthion")
         check(s["halted"] == 0 and s["tog"] == 0, f"usb_ep_clear_halt reaches the stub: {s}")
 
         # dequeue: a blocked read is interrupted, the request leaves the stub
@@ -671,7 +740,8 @@ def case_halt_dequeue():
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
             signal.signal(signal.SIGALRM, old)
-        check(stat(0x01)["dequeues"] == d0 + 1, "stub saw the dequeue")
+        s = wait_stat(0x01, lambda s: s["dequeues"] == d0 + 1, "dequeue reaches the Cynthion")
+        check(s["dequeues"] == d0 + 1, "stub saw the dequeue")
         r = Reader(f.eout, 1024)
         st, kv = host(f"out 0x01 {NAK_MS} 64")
         check(st == "ok" and r.result() is not None and len(r.data) == 64,
@@ -796,7 +866,7 @@ def case_power():
         check(wait_state("configured", 100, "resume"), "host resume: state 'configured'")
         d0 = devstat()
         (UDC_SYSFS / "srp").write_text("1")
-        d1 = devstat()
+        d1 = wait_devstat(lambda d: d["refused"] > d0["refused"] or d["wakeups"] > d0["wakeups"])
         check(d1["refused"] == d0["refused"] + 1 and d1["wakeups"] == d0["wakeups"],
               f"wakeup refused while the host has not enabled it: {d0} -> {d1}")
         ctrl(0x00, 0x03, 1, 0, 0)
@@ -804,15 +874,19 @@ def case_power():
         wait_state("suspended", 100, "suspend")
         (UDC_SYSFS / "srp").write_text("1")
         check(wait_state("configured", 100, "remote wakeup"), "remote wakeup resumes the bus")
-        d2 = devstat()
+        d2 = wait_devstat(lambda d: d["wakeups"] > d1["wakeups"])
         check(d2["wakeups"] == d1["wakeups"] + 1, f"wakeup counted: {d2}")
         # VBUS off: gadget detaches; VBUS on: re-attach and re-enumerate
         host("vbus 0")
         check(wait_state("not attached", 500, "vbus off"), "VBUS off: state 'not attached'")
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < FN_MS / 1000 and devstat()["detaches"] <= d2["detaches"]:
+            select.select([], [], [], 0.002)
         d3 = devstat()
         check(d3["detaches"] > d2["detaches"], f"stub saw the disconnect: {d3}")
         host("vbus 1")
         check(wait_state("configured", ENUM_MS, "vbus on"), "VBUS on: re-enumerates to 'configured'")
+        wait_enum("vbus on")
         acm_loopback(40)
         unbind()
     finally:
@@ -895,13 +969,208 @@ def scfg_eps(cfg):
     return out
 
 
+# ---- AUX backend only: link rules the stub cannot show (docs/aux-link.md) ----
+
+def model_wait(pred, limit_ms, what):
+    """Waits on the model's condition for pred(), bounded; the model notifies on every change."""
+    t0 = time.monotonic()
+    deadline = t0 + limit_ms / 1000
+    with MODEL.m:
+        ok = MODEL._wait(pred, deadline)
+    log(f"{what}: {'reached' if ok else 'NOT reached'} after {1000 * (time.monotonic() - t0):.1f} ms")
+    return ok
+
+
+def ffs_setup_event(f):
+    """Blocks until FunctionFS delivers a SETUP event (bounded by the caller's own timers)."""
+    while True:
+        ev = os.read(f.ep0, 12)
+        if len(ev) == 12 and ev[8] == 4:
+            return
+
+
+def ffs_drain(f):
+    for _ in range(8):
+        if not select.select([f.ep0], [], [], 0)[0]:
+            return
+        os.read(f.ep0, 12)
+
+
+@wrap("link: control messages of 512 B (ZLP) and 4102 B, both directions")
+def case_aux_messages():
+    f = ffs_gadget(60)
+    try:
+        ffs_drain(f)
+
+        def answer(fn):
+            def run_thread():
+                ffs_setup_event(f)
+                fn()
+            t = threading.Thread(target=run_thread, daemon=True)
+            t.start()
+            return t
+        for n in (506, 4090, 4096):     # 6 + n = 512 (needs a ZLP), 4096, 4102
+            t = answer(lambda n=n: os.write(f.ep0, pattern(n)))
+            st, d, _ = ctrl(0xC1, 0x5A, 0, 0, 4096)
+            t.join(1)
+            check(st == "ok" and d == pattern(n), f"vendor IN reply of {n} B through the link ({st}, {len(d)} B)")
+        for n in (506, 4090, 4096):
+            got = []
+            t = answer(lambda: got.append(os.read(f.ep0, 4096)))
+            st, _, _ = ctrl(0x41, 0x5B, 0, 0, n, pattern(n))
+            t.join(1)
+            check(st == "ok" and got == [pattern(n)], f"vendor OUT data of {n} B through the link ({st})")
+    finally:
+        ffs_teardown(f)
+
+
+@wrap("link: stale control reply is dropped and counted")
+def case_aux_stale_ctl():
+    f = ffs_gadget(61)
+    try:
+        ffs_drain(f)
+        base = MODEL.stats["stale_ctl"]
+        res = {}
+        first = threading.Thread(target=lambda: res.setdefault("a", ctrl(0xC1, 0x5A, 0, 0, 8)), daemon=True)
+        first.start()
+        ffs_setup_event(f)
+        with MODEL.m:
+            MODEL.hold_events = True            # SETUP #2 is acked by the gateware but late on the wire
+        second = threading.Thread(target=lambda: res.setdefault("b", ctrl(0xC1, 0x5B, 0, 0, 8)), daemon=True)
+        second.start()
+        check(model_wait(lambda: len(MODEL.held) == 1, 1000, "SETUP #2 held"), "SETUP #2 reached the gateware")
+        os.write(f.ep0, pattern(8))              # the function answers #1 with the epoch it knows
+        check(model_wait(lambda: MODEL.stats["stale_ctl"] == base + 1, 1000, "stale count"),
+              f"late reply for the aborted transfer counted stale ({MODEL.stats['stale_ctl'] - base})")
+        first.join(1)
+        check(res.get("a", ("?",))[0] == "err", f"aborted transfer ended without data: {res.get('a')}")
+        MODEL.release_held()
+        ffs_setup_event(f)
+        os.write(f.ep0, pattern(8, 3))
+        second.join(1)
+        check(res.get("b", ("?",))[0] == "ok" and res["b"][1] == pattern(8, 3),
+              f"the next transfer completes normally: {res.get('b')}")
+        check(MODEL.stats["stale_ctl"] == base + 1, "exactly one stale reply in total")
+    finally:
+        MODEL.release_held()
+        ffs_teardown(f)
+
+
+@wrap("link: endpoint command from before a bus reset is dropped and counted")
+def case_aux_stale_ep():
+    f = ffs_gadget(62)
+    try:
+        base = MODEL.stats["stale_ep"]
+        with MODEL.m:
+            MODEL.hold_events = True            # RESET is on the wire late
+        MODEL.bus_reset()
+        try:
+            os.read(f.ein, 512)                 # wrong direction: the function halts the IN endpoint
+        except OSError:
+            pass
+        check(model_wait(lambda: MODEL.stats["stale_ep"] == base + 1, 1000, "stale endpoint command"),
+              f"EP_HALT with the old reset epoch counted stale ({MODEL.stats['stale_ep'] - base})")
+        MODEL.release_held()
+        ctrl(0x80, 0x06, 0x0100, 0, 18)     # round trip through the ordered event queue: RESET is handled
+        check(not stat(0x81)["halted"], "the dropped EP_HALT did not halt the endpoint")
+    finally:
+        MODEL.release_held()
+        ffs_teardown(f)
+
+
+def console_tty():
+    for d in Path("/sys/bus/usb/devices").glob("[0-9]*"):
+        if (d / "serial").exists() and (d / "serial").read_text().strip() == "MODEL0001":
+            for t in d.glob("*/tty/ttyACM*"):
+                return f"/dev/{t.name}"
+    return None
+
+
+@wrap("link: AUX console keeps working next to the bridge")
+def case_aux_console():
+    host("autoloop 1")
+    tty_dev = console_tty()
+    check(tty_dev is not None, f"AUX console tty found: {tty_dev}")
+    if not tty_dev:
+        return
+    make_gadget(63, ["acm"])
+    fd = os.open(tty_dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        tty.setraw(fd)
+
+        def echo(tag):
+            msg = f"console {tag}\n".encode()
+            os.write(fd, msg)
+            got, deadline = b"", time.monotonic() + LOOP_MS / 1000
+            while len(got) < len(msg) and time.monotonic() < deadline:
+                if select.select([fd], [], [], max(0, deadline - time.monotonic()))[0]:
+                    got += os.read(fd, 256)
+            check(got == msg, f"console echo {tag}: {got!r}")
+        echo("before")
+        bind_and_configure("console coexistence")
+        acm_loopback(63)
+        echo("during")
+        unbind()
+        echo("after")
+    finally:
+        os.close(fd)
+        cleanup_gadget(["acm"])
+
+
 EXTRA_CASES = [case_control, case_packets_in, case_packets_out, case_halt_dequeue, case_ep0,
                case_wedge, case_power, case_dummy]
+AUX_CASES = [case_aux_messages, case_aux_stale_ctl, case_aux_stale_ep, case_aux_console]
+
+
+# Waits for: vhci port connect + usb core enumeration of the model + cudc_aux probe (HELLO).
+# Expected ~0.3 s (hub reset/recovery delays dominate); limit 2 s. Expiry: check fails, elapsed logged.
+PROBE_MS = 2000
+
+
+def start_aux(args):
+    global UDC, UDC_SYSFS, MODEL, LOOP_MS
+    from cudc_aux_model import AuxModel
+    run("insmod", str(args.ko), "stub=0", "dyndbg=+p")
+    LOOP_MS = 100           # 3x the worst loopback seen over 8 runs (34 ms, host loadavg ~30); MODEL
+    MODEL = AuxModel(log, mutate=args.model_mutate)
+    km = Kmsg()
+    t0 = time.monotonic()
+    MODEL.attach()
+    ok = MODEL.hello_ev.wait(PROBE_MS / 1000)
+    check(ok, f"cudc_aux probed the model and exchanged HELLO ({1000 * (time.monotonic() - t0):.0f} ms)")
+    km.wait_for(r"UDC registered, backend aux", 500, "UDC registered")
+    km.close()
+    names = [n for n in os.listdir("/sys/class/udc") if not n.startswith("dummy_udc")]
+    check(len(names) == 1, f"one cynthion UDC listed: {names}")
+    UDC = names[0] if names else UDC
+    UDC_SYSFS = Path("/sys/class/udc") / UDC
+
+
+def finish_aux():
+    st = MODEL.stats
+    bad = [ln for ln in MODEL.all_lines if re.search(r"failed|VIOLATION", ln)]
+    check(not bad, f"model host log clean: {bad[:3]}")
+    check(not MODEL.violations, f"no link protocol violations by the kernel: {MODEL.violations[:3]}")
+    check(st["stale_ctl"] == 1 and st["stale_ep"] == 1 and st["bad_msg"] == 0,
+          f"only the two deliberate stale commands were dropped, no malformed ones: {st}")
+    rel = sorted(us for _, us in MODEL.relay_us)
+    if rel:
+        log(f"MODEL relay SETUP -> reply received: n={len(rel)} median {rel[len(rel) // 2]:.0f} us "
+            f"p90 {rel[int(len(rel) * 0.9)]:.0f} us max {rel[-1]:.0f} us (software model, not USB timing)")
+    MODEL.detach()
+    deadline = time.monotonic() + 2         # waits for: usb disconnect -> cudc_aux disconnect -> UDC gone
+    while time.monotonic() < deadline and any(not n.startswith("dummy_udc")
+                                              for n in os.listdir("/sys/class/udc")):
+        select.select([], [], [], 0.01)
 
 
 def main():
+    global UDC, UDC_SYSFS, MODEL, LOOP_MS
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--ko", required=True, type=Path)
+    ap.add_argument("--backend", choices=("stub", "aux"), default="stub")
+    ap.add_argument("--model-mutate", action="append", default=[],
+                    help="aux: break one model rule (stale_ctl, stale_ep, console) - the run must FAIL")
     args = ap.parse_args()
 
     if os.getuid() != 0 or not Path("/dev/kmsg").exists():
@@ -916,11 +1185,16 @@ def main():
                               check=False).returncode == 0
     mods = ["udc_core", "libcomposite", "usb_f_acm", "usb_f_fs", "usb_f_mass_storage"] + (
         ["usb_f_ncm"] if have_ncm else [])
+    if args.backend == "aux":
+        mods += ["vhci_hcd", "cdc_acm"]
     if not os.path.ismount("/sys/kernel/debug"):
         run("mount", "-t", "debugfs", "none", "/sys/kernel/debug")
     for m in mods:
         run("modprobe", m)
-    run("insmod", str(args.ko), "dyndbg=+p")
+    if args.backend == "aux":
+        start_aux(args)
+    else:
+        run("insmod", str(args.ko), "dyndbg=+p")
     check(UDC in os.listdir("/sys/class/udc"), f"/sys/class/udc lists {UDC}")
 
     cases = [["acm"]] + ([["ncm"], ["acm", "ncm"]] if have_ncm else [])
@@ -932,9 +1206,11 @@ def main():
         except Exception as e:  # noqa: BLE001  (one case failing must not hide the rest)
             check(False, f"case {case} {'+'.join(functions)}: {type(e).__name__}: {e}")
 
-    for case_fn in EXTRA_CASES:
+    for case_fn in EXTRA_CASES + (AUX_CASES if args.backend == "aux" else []):
         case_fn()
 
+    if MODEL is not None:
+        finish_aux()
     run("rmmod", "cynthion_udc")
     check(not UDC_SYSFS.exists(), "UDC gone after rmmod")
     for m in reversed(mods):
@@ -944,6 +1220,10 @@ def main():
     session.close()
     for ln in lines:
         log(f"  dmesg: {ln}")
+    pc = sorted(int(m.group(1)) for ln in lines for m in [re.search(r"relay: .* after (\d+) us", ln)] if m)
+    if pc:
+        log(f"MODEL kernel SETUP received -> reply submitted: n={len(pc)} median {pc[len(pc) // 2]} us "
+            f"p90 {pc[int(len(pc) * 0.9)]} us max {pc[-1]} us (driver + gadget + function, no USB)")
     bad = [ln for ln in lines if BAD.search(ln) or OUR_ERRORS.search(ln)]
     for ln in bad:
         log(f"  bad dmesg: {ln}")

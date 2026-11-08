@@ -7,6 +7,8 @@
 
     ./scripts/linux/cudc_vm_test.py            # build + VM test
     ./scripts/linux/cudc_vm_test.py --no-build # reuse tmp/cudc-build/cynthion_udc.ko
+    ./scripts/linux/cudc_vm_test.py --backend aux            # real AUX backend vs the Python model
+    ./scripts/linux/cudc_vm_test.py --backend aux --mutate seq   # must FAIL (mutation proof)
 
 - NEVER loads the module on the host: the host is a shared dev box. Only the VM does.
 - Kernel: the running host kernel (`vng --run`), headers /usr/src/kernels/$(uname -r).
@@ -39,6 +41,8 @@ ROOT = repo_root()
 SRC = ROOT / "linux" / "cynthion_udc"
 BUILD = ROOT / "tmp" / "cudc-build"
 KO = BUILD / "cynthion_udc.ko"
+MUTATIONS = ("seq", "zlp", "flush", "stale_ep")      # -DCUDC_MUTATE_<NAME> in cudc_aux.c
+MODEL_MUTATIONS = ("model_stale_ctl", "model_stale_ep", "model_console")   # broken model rule
 GUEST = Path(__file__).resolve().parent / "cudc_vm_guest.py"
 LOG = ROOT / "tmp" / "logs" / "cudc_vm_test.log"
 SENTINEL = "CUDC_VM_TEST RESULT: "
@@ -47,7 +51,7 @@ STALL_S = 60        # dev-box rule: no output line for 60 s = hung (awto-dan#53)
 # Backstop per step: 3x measured cold worst case (awto-dan#53), rounded up to whole seconds;
 # measurements in docs/usb-device-mode.md#increment-3-status. Expiry: kill, log last line.
 BUILD_LIMIT_S = 10
-VM_LIMIT_S = 18
+VM_LIMIT_S = 32
 
 _log = None
 
@@ -100,14 +104,19 @@ def stream(cmd, limit_s, what):
     return rc, lines
 
 
-def build():
+def build(mutate=None):
+    global BUILD, KO
+    BUILD = ROOT / "tmp" / (f"cudc-build-mutate-{mutate}" if mutate else "cudc-build")
+    KO = BUILD / "cynthion_udc.ko"
     BUILD.mkdir(parents=True, exist_ok=True)
     kdir = Path("/usr/src/kernels") / os.uname().release
     if not kdir.is_dir():
         log(f"no kernel headers at {kdir}")
         return False
-    rc, _ = stream(["make", "-C", SRC, f"KDIR={kdir}", f"MO={BUILD}", "W=1"],
-                   BUILD_LIMIT_S, "build")
+    cmd = ["make", "-C", SRC, f"KDIR={kdir}", f"MO={BUILD}", "W=1"]
+    if mutate:
+        cmd.append(f"CUDC_CFLAGS=-DCUDC_MUTATE_{mutate.upper()}")
+    rc, _ = stream(cmd, BUILD_LIMIT_S, "build")
     if rc != 0 or not KO.is_file():
         return False
     vermagic = subprocess.run(["modinfo", "-F", "vermagic", KO], capture_output=True,
@@ -117,28 +126,44 @@ def build():
     return ok
 
 
-def vm_test():
+def vm_test(backend, model_mutate=None):
+    extra = f" --model-mutate {model_mutate}" if model_mutate else ""
     cmd = ["vng", "--run", "--user", "root", "--cpus", "2", "--rodir", str(ROOT),
-           "--cwd", str(ROOT), "--exec", f"python3 -I {GUEST} --ko {KO}"]
+           "--cwd", str(ROOT), "--exec", f"python3 -I {GUEST} --ko {KO} --backend {backend}{extra}"]
     rc, lines = stream(cmd, VM_LIMIT_S, "vm")
     results = [ln.split(SENTINEL, 1)[1].strip() for ln in lines if SENTINEL in ln]
     passed = rc == 0 and results == ["PASS"]
-    log(f"vm test: rc {rc}, guest result {results or 'missing'}")
-    return passed
+    failed = [ln.split("] FAIL ", 1)[1] for ln in lines if "] FAIL " in ln]
+    log(f"vm test ({backend}): rc {rc}, guest result {results or 'missing'}, "
+        f"{len(failed)} failed checks")
+    return passed, failed
 
 
 def main():
     global _log
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--no-build", action="store_true", help="reuse the built module")
+    ap.add_argument("--backend", choices=("stub", "aux", "both"), default="stub")
+    ap.add_argument("--mutate", choices=MUTATIONS + MODEL_MUTATIONS,
+                    help="build cudc_aux with one deliberate bug; the run must FAIL (exit 0 if it does)")
     args = ap.parse_args()
     LOG.parent.mkdir(parents=True, exist_ok=True)
     _log = LOG.open("a")
     log(f"=== cudc_vm_test start, root {ROOT} ===")
-    if not args.no_build and not build():
+    if args.mutate:
+        args.backend = "aux"
+    kernel_mutation = args.mutate if args.mutate in MUTATIONS else None
+    if not args.no_build and not build(kernel_mutation):
         log("RESULT: FAIL (build)")
         return 1
-    ok = vm_test()
+    ok = True
+    for backend in (("stub", "aux") if args.backend == "both" else (args.backend,)):
+        passed, failed = vm_test(backend, args.mutate[6:] if args.mutate in MODEL_MUTATIONS else None)
+        ok = ok and passed
+    if args.mutate:
+        log(f"mutation {args.mutate}: {'caught' if not ok else 'NOT CAUGHT'}; "
+            f"{len(failed)} failing checks, first: {failed[:3]}")
+        return 0 if not ok else 1
     log(f"RESULT: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
