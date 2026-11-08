@@ -9,6 +9,7 @@ use crate::uart::Uart;
 use crate::Devices;
 
 const USAGE: &str = "usage: pd target_c status|caps|log|live|regs|list\n       \
+    pd proxy on confirm|off|status|log\n       \
     pd target_c send <name>[!] [svid] [--force] [--illegal]\n       \
     pd target_c raw <hex> [sop|sop1|sop2]";
 
@@ -30,6 +31,9 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
     }
     let mut w: [&[u8]; 6] = [&[]; 6];
     let n = words(rest, &mut w);
+    if w[0] == b"proxy" {
+        return proxy(uart, &w[1..n], devices);
+    }
     if w[0] != b"target_c" {
         let _ = writeln!(uart, "only target_c has a PD controller we drive");
         return;
@@ -72,6 +76,38 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
             }
         }
         b"send" | b"raw" if n > 2 => send(uart, devices, &w[..n]),
+        _ => {
+            let _ = writeln!(uart, "{}", USAGE);
+        }
+    }
+}
+
+fn proxy(uart: &mut Uart, w: &[&[u8]], devices: &mut Devices) {
+    let pd = &mut devices.type_c.pd;
+    match w.first().copied().unwrap_or(&b"status"[..]) {
+        b"on" => {
+            let Some(bus) = devices.bus.as_mut() else {
+                let _ = writeln!(uart, "no I2C bus");
+                return;
+            };
+            let confirmed = w.get(1).copied() == Some(&b"confirm"[..]);
+            match pd.proxy_on(bus, confirmed) {
+                Ok(()) => {
+                    let _ = writeln!(uart, "pd proxy on");
+                }
+                Err(why) => {
+                    let _ = writeln!(uart, "pd proxy refused: {}", why);
+                }
+            }
+        }
+        b"off" => {
+            if let Some(bus) = devices.bus.as_mut() {
+                pd.proxy_off(bus, &mut devices.power);
+            }
+            let _ = writeln!(uart, "pd proxy off");
+        }
+        b"status" => pd.bridge.status(uart),
+        b"log" => pd.dump_proxy_log(uart),
         _ => {
             let _ = writeln!(uart, "{}", USAGE);
         }

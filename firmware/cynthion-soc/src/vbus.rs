@@ -101,7 +101,15 @@ impl Source {
 }
 
 pub use crate::vbus_gate::Refusal;
-use crate::vbus_gate::{decide, FLOOR_MV};
+use crate::vbus_gate::{decide_in, Window, FLOOR_MV};
+use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Nominal volts of the closed source's contract; its window stays armed.
+static NOMINAL_MV: AtomicU32 = AtomicU32::new(5_000);
+
+fn closed_window() -> Window {
+    Window::for_nominal(NOMINAL_MV.load(Ordering::Relaxed))
+}
 
 // INPUT SELECTION IS GONE, and it never worked. `control_vbus_in_en` (K13) and
 // `aux_vbus_in_en` (L13) reach no pin: neither appears among the 126 `LOCATE`
@@ -126,18 +134,19 @@ fn write(value: u8) {
 /// so `charge_target_c` can look at a second channel from the same instant.
 fn gate(
     source: Source,
+    window: Window,
     monitor: &mut power::Monitor,
     bus: Option<&mut Bus>,
 ) -> Result<(u32, power::Sample), Refusal> {
     let bus = bus.ok_or(Refusal::Unreadable)?;
-    let (sample, flags) = monitor.vbus_read(bus, source.channel())?;
+    let (sample, flags) = monitor.vbus_read(bus, source.channel(), window)?;
     let millivolts = sample.readings[source.channel()].bus_mv;
-    match decide(source.channel(), millivolts, flags) {
+    match decide_in(window, source.channel(), millivolts, flags) {
         Ok(mv) => Ok((mv, sample)),
         Err(refusal) => {
             // Refused: whatever was closed before stays closed, so its limits
             // must be the armed ones, not the ones just tried.
-            monitor.vbus_restore(bus, closed_source().map(Source::channel));
+            monitor.vbus_restore(bus, closed_source().map(Source::channel), closed_window());
             Err(refusal)
         }
     }
@@ -161,6 +170,7 @@ fn closed_source() -> Option<Source> {
 /// combinational precisely so this is one write and cannot half-succeed.
 pub fn open_all() {
     write(0);
+    NOMINAL_MV.store(5_000, Ordering::Relaxed);
 }
 
 /// What [`init`] read back. Zero is every switch open; nothing else is.
@@ -208,7 +218,18 @@ pub fn close(
     monitor: &mut power::Monitor,
     bus: Option<&mut Bus>,
 ) -> Result<u32, Refusal> {
-    let (millivolts, _) = gate(source, monitor, bus)?;
+    close_at(source, 5_000, monitor, bus)
+}
+
+/// [`close`] for a rail expected at `nominal_mv` (a negotiated contract).
+pub fn close_at(
+    source: Source,
+    nominal_mv: u32,
+    monitor: &mut power::Monitor,
+    bus: Option<&mut Bus>,
+) -> Result<u32, Refusal> {
+    let (millivolts, _) = gate(source, Window::for_nominal(nominal_mv), monitor, bus)?;
+    NOMINAL_MV.store(nominal_mv, Ordering::Relaxed);
 
     // ONE SOURCE AT A TIME, and this write is what enforces it.
     //
@@ -234,6 +255,21 @@ pub fn close(
     Ok(millivolts)
 }
 
+/// Proxy path: AUX feeds the node, TARGET_C takes from it, CONTROL stays open.
+///
+/// The caller has checked that no other source is live (`pd_proxy::check_path`).
+pub fn close_proxy(monitor: &mut power::Monitor, bus: Option<&mut Bus>) -> Result<u32, Refusal> {
+    let (millivolts, _) = gate(Source::Aux, Window::V5, monitor, bus)?;
+    NOMINAL_MV.store(5_000, Ordering::Relaxed);
+    write((1 << BIT_ENABLE) | (1 << BIT_AUX) | (1 << BIT_TARGET_C));
+    Ok(millivolts)
+}
+
+/// Arm the AUX channel's limits to `window` while the proxy path is closed.
+pub fn arm_aux(monitor: &mut power::Monitor, bus: &mut Bus, window: Window) {
+    monitor.vbus_restore(bus, Some(Source::Aux.channel()), window);
+}
+
 /// Route CONTROL through the shared rail to TARGET-C.
 ///
 /// TARGET-C must not already be powered by another source. Repeating this while
@@ -242,7 +278,7 @@ pub fn charge_target_c(
     monitor: &mut power::Monitor,
     bus: Option<&mut Bus>,
 ) -> Result<u32, Refusal> {
-    let (millivolts, sample) = gate(Source::Control, monitor, bus)?;
+    let (millivolts, sample) = gate(Source::Control, Window::V5, monitor, bus)?;
     let wanted = (1 << BIT_ENABLE) | (1 << BIT_CONTROL) | (1 << BIT_TARGET_C);
     if read() != wanted {
         let target_mv = sample.readings[Source::TargetC.channel()].bus_mv;
@@ -251,6 +287,7 @@ pub fn charge_target_c(
         }
     }
     write(wanted);
+    NOMINAL_MV.store(5_000, Ordering::Relaxed);
     Ok(millivolts)
 }
 

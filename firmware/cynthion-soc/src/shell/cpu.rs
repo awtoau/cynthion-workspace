@@ -120,6 +120,10 @@ const TRAPS_PER_PASS: u32 = 64;
 ///     handler recorded must equal the count issued
 ///   * **timer interrupts** -- the 1 ms tick, which must still be arriving
 fn stress(uart: &mut Uart, args: &[u8]) {
+    if crate::bench::lent() {
+        let _ = writeln!(uart, "cpu stress: the RAM buffer is lent to the PD AUX session: pd proxy off first");
+        return;
+    }
     if target::BOARD.is_none() {
         return crate::shell::console::board_absent(uart);
     }

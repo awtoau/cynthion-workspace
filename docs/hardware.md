@@ -259,22 +259,21 @@ From GSG's [Cynthion Hardware Design Update](https://www.crowdsupply.com/great-s
 
 The board defends itself; firmware defends the attached device. 20 V passthrough is designed behaviour. A USB-A peripheral on TARGET A cannot refuse 20 V, so a firmware guard there is user protection, built on the PAC1954 (slower than OVP, the only option for passthrough).
 
-### Pass elements — open question
+### Pass elements
 
-`repos/cynthion-hardware/power_distribution.kicad_sch` is the authority:
+`repos/cynthion-hardware/power_distribution.kicad_sch` is the authority; pad nets from `cynthion.kicad_pcb`:
 
 | what | count | designators |
 |---|---|---|
-| pass MOSFET, `SIA483ADJ-T1-GE3`, P-channel | **6** | Q1, Q2, Q4, Q5, Q6, Q7 |
+| pass MOSFET, `SIA483ADJ-T1-GE3`, P-channel, single | **6** | Q1, Q2, Q4, Q5, Q6, Q7 |
 | `BC847BS` dual NPN, gate drive | 6 | |
 | `PAC195X-1-VQFN` monitor | 1 | same sheet |
 
-- Six devices for six functions (3 passthroughs, 2 input shutoffs, discharge): one per function, not back-to-back pairs.
-- **Open:** a single P-FET's body diode conducts regardless of gate, so if these are singles, "switch open" is one-direction-only, not isolation.
-  - Symbol `Transistor_FET:SiA449DJ` has 3 pins (D, G, S): a single device.
-  - Part number `SIA483ADJ-T1-GE3` differs from the symbol name; Vishay's `DJ` suffix is used on duals in this package.
-  - The Vishay `SIA483ADJ` datasheet is not in `sources/`; it settles it.
-- Until settled, treat an open switch as "not driven", not "isolated"; no firmware or self-test may rely on an open switch blocking current.
+- SiA483ADJ is a single P-channel device, 30 V, body diode V_SD 0.85 V typ / 1.2 V max at 10 A ([datasheet](https://www.vishay.com/docs/77080/sia483adj.pdf), `~/vendors/vishay/sia483adj.pdf`, 9 pp). Pins: 1,2 drain; 3 gate; 4,5 source.
+- Each passthrough is a **back-to-back pair, common source, shared gate**: pad 1 (drain) on the port's `*_VBUS_IN`, pads 3/4 (gate/source) on the shared `D27`/`D28`/`D29` nodes.
+  - AUX = Q4 + Q5 (drains: `AUX_VBUS_IN`, `TARGET_A_VBUS_IN`); CONTROL = Q1 + Q2; TARGET_C = Q7 + Q6.
+  - The two body diodes oppose, so an open switch blocks both directions (below 30 V Vds). AUX at 9 V does not leak onto TARGET A with `aux_vbus_en` open.
+- The input shutoffs (`aux_vbus_in_en`, `control_vbus_in_en`) are Q12 / Q9 (dual footprints), not part of the count above.
 
 ### What is safe to command
 

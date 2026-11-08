@@ -382,6 +382,11 @@ pub fn source_cc(bus: &mut Bus) -> Result<u8, bus::Error> {
     Ok(if togss == 1 || togss == 2 { togss } else { 0 })
 }
 
+/// Is TARGET-C's measured CC open (source role: Rp alone, no Rd)? `BC_LVL` 3.
+pub fn target_cc_open(bus: &mut Bus) -> Result<bool, bus::Error> {
+    Ok(read(bus, Port::Target, REG_STATUS0)? & STATUS0_BC_LVL == STATUS0_BC_LVL)
+}
+
 /// Is VBUS above vSafe5V on TARGET-C?
 pub fn target_vbus(bus: &mut Bus) -> Result<bool, bus::Error> {
     Ok(read(bus, Port::Target, REG_STATUS0)? & STATUS0_VBUSOK != 0)

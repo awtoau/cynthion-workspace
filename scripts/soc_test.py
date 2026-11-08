@@ -927,6 +927,20 @@ def main():
                         f"`usb target_c {verb}` is registered and reports no engine")
         command("usb target_c bogus", [b"usage: usb target_c [status|"],
                 "an unknown `usb <port>` verb prints the usage line")
+        # PD proxy (#633): syntax and refusals only; the engines need the FUSB302B parts.
+        command("pd", [b"pd"], "`pd` lists its verbs")
+        command("pd proxy status", [b"pd proxy  off", b"phone contract  none"],
+                "`pd proxy status` reports off with no contract")
+        command("pd proxy log", [], "`pd proxy log` is registered")
+        command("pd proxy sideways", [b"pd proxy on confirm|off|status|log"],
+                "an unknown `pd proxy` verb prints the usage")
+        command("pd proxy on", [b"pd proxy refused", b"add 'confirm'"] if board
+                else [b"no I2C bus"],
+                "`pd proxy on` without `confirm` is refused (AUX carries the console)")
+        if not board:
+            command("pd proxy on confirm", [b"no I2C bus"],
+                    "`pd proxy on confirm` needs the I2C bus")
+        command("pd proxy off", [b"pd proxy off"], "`pd proxy off` is idempotent")
         command("usb target_a disable", [b"usage: usb target_a [status|power|"],
                 "the `disable` stub is gone: it falls to the usage line (#625)")
         command("usb target_a power sideways", [b"usage: usb target_a power [status|on|off]"],

@@ -48,6 +48,7 @@ pub struct Snapshot {
 
 pub struct Pd {
     lib: pd_lib::Pd,
+    pub bridge: crate::pd_bridge::Bridge,
     armed: bool,
     current: HostCurrent,
     /// 1 or 2 once PD is running on that CC pin; 0 while waiting for attach.
@@ -73,7 +74,8 @@ fn current_ma(current: HostCurrent) -> u16 {
 impl Pd {
     pub const fn new() -> Pd {
         Pd {
-            lib: pd_lib::Pd::new(),
+            lib: pd_lib::Pd::new(pd_lib::TARGET),
+            bridge: crate::pd_bridge::Bridge::new(),
             armed: false,
             current: HostCurrent::Default,
             cc: 0,
@@ -87,14 +89,42 @@ impl Pd {
 
     /// PD owns the part's registers; `typec` must not sweep them.
     pub fn running(&self) -> bool {
-        self.cc != 0
+        self.cc != 0 || self.bridge.active
+    }
+
+    pub fn bridge_active(&self) -> bool {
+        self.bridge.active
     }
 
     pub fn arm(&mut self, current: HostCurrent) {
         self.lib.stop();
+        self.lib.set_proxy(false);
         self.armed = true;
         self.cc = 0;
         self.current = current;
+    }
+
+    /// `pd proxy on`: AUX becomes a PD sink (Rd on), TARGET_C a PD source.
+    pub fn proxy_on(&mut self, bus: &mut Bus, confirmed: bool) -> Result<(), &'static str> {
+        if !confirmed {
+            return Err("AUX will present Rd and run PD toward what is on it; the console is on AUX: add 'confirm'");
+        }
+        if self.bridge.active {
+            return Err("already on");
+        }
+        if self.armed || self.cc != 0 {
+            return Err("TARGET_C PD is armed: usb target_c power off first");
+        }
+        if vbus::any_closed() {
+            return Err("a VBUS switch is closed: usb target_c power off / vbus off first");
+        }
+        self.bridge.on(bus, &mut self.lib)
+    }
+
+    pub fn proxy_off(&mut self, bus: &mut Bus, monitor: &mut power::Monitor) {
+        if self.bridge.active {
+            self.bridge.off(bus, monitor, &mut self.lib);
+        }
     }
 
     pub fn disarm(&mut self) {
@@ -153,6 +183,10 @@ impl Pd {
 
     /// Attach detection, then the engine. Every main-loop pass.
     pub fn tick(&mut self, uart: &mut Uart, bus: &mut Bus, monitor: &mut power::Monitor) {
+        if self.bridge.active {
+            self.bridge.tick(uart, bus, monitor, &mut self.lib);
+            return;
+        }
         if !self.armed {
             return;
         }
@@ -289,6 +323,10 @@ impl Pd {
             contract: self.lib.contract(),
             session_bytes: self.session_bytes as u32,
         }
+    }
+
+    pub fn dump_proxy_log(&self, uart: &mut Uart) {
+        self.bridge.dump_log(uart, &self.lib);
     }
 
     pub fn caps(&self, uart: &mut Uart) {

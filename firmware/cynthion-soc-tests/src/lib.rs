@@ -56,3 +56,5 @@ pub mod hyperram;
 #[path = "ops_pure.rs"]
 pub mod ops;
 
+#[path = "../../cynthion-soc/src/pd_proxy.rs"]
+pub mod pd_proxy;
