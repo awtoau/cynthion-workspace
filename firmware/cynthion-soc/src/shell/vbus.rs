@@ -38,13 +38,7 @@ pub(crate) fn command(uart: &mut Uart, rest: &[u8], devices: &mut Devices) {
         return;
     }
     if argument == b"off" {
-        open_all();
-        if let Some(bus) = devices.bus.as_mut() {
-            devices.power.vbus_disarm(bus);
-        }
-        if let Some(bus) = devices.bus.as_mut() {
-            let _ = fusb302::configure(bus, fusb302::Port::Target);
-        }
+        crate::portctl::open_all(devices);
         let _ = writeln!(uart, "open");
         return;
     }
@@ -86,11 +80,8 @@ pub(crate) fn power_on(
     if devices.bus.is_none() {
         return board_absent(uart);
     }
-    match crate::vbus::power_on(port, current, &mut devices.power, devices.bus.as_mut()) {
+    match crate::portctl::power_on(devices, port, current) {
         Ok(on) => {
-            if port == TARGET_C {
-                devices.type_c.pd.arm(current);
-            }
             let _ = write!(uart, "on {}", on.source.name());
             match on.millivolts {
                 Some(mv) => {
@@ -111,11 +102,8 @@ pub(crate) fn power_on(
 
 /// `usb <port> power off`.
 pub(crate) fn power_off(uart: &mut Uart, port: usize, devices: &mut Devices) {
-    match crate::vbus::power_off(port, &mut devices.power, devices.bus.as_mut()) {
+    match crate::portctl::power_off(devices, port) {
         Ok(()) => {
-            if port == TARGET_C {
-                devices.type_c.pd.disarm();
-            }
             let _ = writeln!(uart, "off");
         }
         Err(error) => power_error(uart, error),

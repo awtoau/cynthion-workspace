@@ -12,3 +12,8 @@ publish = false
 [dependencies]
 embedded-cli = { version = "0.2.1", features = ["autocomplete", "history", "help"] }
 embedded-io = "0.6"
+
+# `hyperram.rs` is shared in for its CRC only. The QEMU branch avoids the PAC.
+[features]
+default = ["qemu"]
+qemu = []

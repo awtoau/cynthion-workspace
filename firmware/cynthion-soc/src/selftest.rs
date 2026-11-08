@@ -68,10 +68,20 @@ enum Outcome {
     Skip,
 }
 
-struct Report {
-    passed: u32,
-    failed: u32,
-    skipped: u32,
+/// Item names, by wire index (`docs/device-interface.md`). Order is the wire's.
+const NAMES: [&str; 11] = [
+    "alu", "muldiv", "comp", "atomic", "ram", "clock", "uart", "gateware", "flash", "phy", "rail",
+];
+
+pub struct Report {
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    /// Print each item. Off for the op protocol, which reports `items` instead.
+    print: bool,
+    pub n: usize,
+    /// (index into `NAMES`, 0 pass / 1 fail / 2 skip), in run order.
+    pub items: [(u8, u8); crate::ops::proto::SELFTEST_MAX_ITEMS],
 }
 
 impl Report {
@@ -96,7 +106,14 @@ impl Report {
                 "skip"
             }
         };
-        let _ = writeln!(uart, "{:8} {}  {}", name, label, detail);
+        if let Some(slot) = self.items.get_mut(self.n) {
+            let index = NAMES.iter().position(|&known| known == name).unwrap_or(0);
+            *slot = (index as u8, outcome as u8);
+        }
+        self.n += 1;
+        if self.print {
+            let _ = writeln!(uart, "{:8} {}  {}", name, label, detail);
+        }
     }
 
     fn ok(&mut self, uart: &mut Uart, name: &str, passed: bool, detail: core::fmt::Arguments) {
@@ -116,10 +133,19 @@ fn opaque(value: u32) -> u32 {
 }
 
 pub fn command(uart: &mut Uart, power: &Monitor) {
+    let report = run(uart, power, true);
+    summary(uart, &report);
+}
+
+/// Every check. `print` false records the items and prints nothing.
+pub fn run(uart: &mut Uart, power: &Monitor, print: bool) -> Report {
     let mut report = Report {
         passed: 0,
         failed: 0,
         skipped: 0,
+        print,
+        n: 0,
+        items: [(0, 0); crate::ops::proto::SELFTEST_MAX_ITEMS],
     };
 
     alu(uart, &mut report);
@@ -133,7 +159,10 @@ pub fn command(uart: &mut Uart, power: &Monitor) {
     flash(uart, &mut report);
     phy(uart, &mut report);
     rails(uart, &mut report, power);
+    report
+}
 
+fn summary(uart: &mut Uart, report: &Report) {
     let total = report.passed + report.failed;
     if report.failed == 0 {
         let _ = writeln!(

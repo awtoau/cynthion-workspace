@@ -127,6 +127,7 @@ mod irq;
 mod log;
 mod memory;
 mod metrics;
+mod ops;
 mod power;
 mod power_rails;
 // THE dispatcher. `#[rtic::app]` emits this firmware's `#[no_mangle] fn main`,
@@ -144,6 +145,7 @@ mod pd;
 mod pd_decode;
 mod pd_lib;
 mod pd_verbs;
+mod portctl;
 mod typec;
 mod uart;
 mod usb_desc;

@@ -9,9 +9,10 @@ Host side: [`../scripts/soc/soc_stream.py`](../scripts/soc/soc_stream.py) — de
 reference encoder, and the golden frames the firmware is checked against.
 Frozen byte-for-byte in [`../tests/test_soc_stream.py`](../tests/test_soc_stream.py).
 
-**Nothing on the board emits records yet.** No firmware producer, no shell
-command to enter binary mode. This file is the contract both sides are written
-against; the order of work is at the end.
+**The board emits SESSION, TEXT, DROP and ERROR records and answers REQ with
+RSP** once a console enters binary mode with `ops`
+([`device-interface.md`](device-interface.md)). No producer (POWER, EVENT) streams
+yet. This file is the contract for the envelope; the order of work is at the end.
 
 ## What it is, and is not
 
@@ -200,7 +201,8 @@ decodes. That is the property length-prefixed framing does not have.
 
 ## Host to board
 
-Two raw bytes, unframed, in binary mode only. The board's receive path is a
+Two raw bytes, unframed, in binary mode only, and only between frames
+(`ops/frame.rs`). Requests are framed REQ records, `device-interface.md`. The board's receive path is a
 byte-at-a-time state machine and this is the whole of it.
 
 | byte | meaning |

@@ -225,17 +225,13 @@ fn report(uart: &mut Uart, what: &str, code: u8) {
 
 #[cfg(not(feature = "qemu"))]
 fn status(uart: &mut Uart) {
-    let s = hw::status();
-    let ck_khz = hw::r32(offset::CK_KHZ);
-    let count = hw::r32(offset::CK_COUNT);
-    // CK_COUNT counts hr cycles over 2^19 cycles of the 60 MHz oscillator.
-    let khz = (count as u64 * 60_000) >> 19;
+    let s = hw::snapshot();
     let _ = writeln!(
         uart,
         "hyperram id {:08x} ck {} kHz requested, {} kHz measured\n  \
          ready {} locked {} calibrated {} busy {} hr_busy {}  last op {} {}",
-        hw::r32(offset::ID), ck_khz, khz, (s >> 1) & 1, (s >> 2) & 1, (s >> 3) & 1,
-        s & 1, (s >> 5) & 1, s >> 12, code_name(((s >> 8) & 0xf) as u8)
+        s.id, s.ck_khz_req, s.ck_khz_meas, s.ready as u8, s.locked as u8,
+        s.calibrated as u8, s.busy as u8, s.hr_busy as u8, s.last_op, code_name(s.last_code)
     );
     calibration(uart);
     errors(uart, false);
@@ -243,9 +239,8 @@ fn status(uart: &mut Uart) {
 
 #[cfg(not(feature = "qemu"))]
 fn calibration(uart: &mut Uart) {
-    let cal = hw::r32(offset::CAL);
-    let _ = write!(uart, "  cal tap {} width {} valid {}\n  taps ", cal & 0x7f,
-                   (cal >> 8) & 0xff, (cal >> 16) & 1);
+    let (tap, width, valid) = hw::calibration();
+    let _ = write!(uart, "  cal tap {} width {} valid {}\n  taps ", tap, width, valid as u8);
     for i in 0..4 {
         let map = hw::r32(offset::CAL_MAP0 + 4 * i);
         for bit in 0..32 {

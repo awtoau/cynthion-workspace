@@ -76,6 +76,14 @@ static DROPPED: AtomicU32 = AtomicU32::new(0);
 /// writing more than a line between newlines.
 static SPLIT: AtomicU32 = AtomicU32::new(0);
 
+/// Takes a finished line headed for `base`; true if it did.
+pub type Divert = fn(usize, &[u8]) -> bool;
+static DIVERT: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_divert(hook: Divert) {
+    DIVERT.store(hook as usize, Ordering::Relaxed);
+}
+
 /// `(lines dropped, lines cut)`.
 pub fn stats() -> (u32, u32) {
     (DROPPED.load(Ordering::Relaxed), SPLIT.load(Ordering::Relaxed))
@@ -162,6 +170,16 @@ pub fn submit(base: usize, line: &[u8]) {
 
 /// Bytes straight to the wire. The caller owns the claim.
 fn raw(base: usize, line: &[u8]) {
+    // A console in binary mode has one writer; text becomes TEXT records.
+    // Registered, not named: the model binaries share this file without `ops`.
+    let hook = DIVERT.load(Ordering::Relaxed);
+    if hook != 0 {
+        // SAFETY: only `set_divert` stores here, and it stores a `Divert`.
+        let hook: Divert = unsafe { core::mem::transmute(hook) };
+        if hook(base, line) {
+            return;
+        }
+    }
     for &byte in line {
         crate::uart::put_at(base, byte);
     }

@@ -54,9 +54,8 @@ pub fn command(uart: &mut Uart, rest: &[u8], controllers: &mut Controllers, bus:
         // when the cable moved, and `service` read it then. Sweeping here would
         // re-answer a settled question at the cost of an interrupt per invocation,
         // and `board` and the 50 ms poll would each pay it too.
-        match fusb302::state(bus, port, fusb302::Bands::Skip) {
+        match controllers.live(bus, port) {
             Ok(state) => {
-                let state = controllers.carry_bands(port, state);
                 // The orientation and the two bands it was derived from, in that
                 // order. The verdict is what a reader wants and the bands are how
                 // they check it -- `cc2` beside `0/2` says which pin and why,

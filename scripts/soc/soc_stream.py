@@ -101,6 +101,12 @@ CATALOGUE = 0x02
 TEXT = 0x03
 ERROR = 0x04
 
+# Op protocol (docs/device-interface.md). The header `seq` of these carries the
+# request id, not the stream counter, so they stay out of gap detection.
+REQ = 0x08
+RSP = 0x09
+REQUEST_ID_KINDS = (REQ, RSP)
+
 SESSION_S = struct.Struct("<BBHIIII")   # 20 bytes
 DROP_S = struct.Struct("<III")
 CATALOGUE_S = struct.Struct("<BBBB")
@@ -110,7 +116,7 @@ SESSION_FIELDS = ["format_version", "kinds", "reserved", "firmware_git",
                   "gateware_git", "time_hz", "session_id"]
 
 RESERVED_NAMES = {SESSION: "SESSION", DROP: "DROP", CATALOGUE: "CATALOGUE",
-                  TEXT: "TEXT", ERROR: "ERROR"}
+                  TEXT: "TEXT", ERROR: "ERROR", REQ: "REQ", RSP: "RSP"}
 
 # Producer kinds. The numbers, names and units are fixed by the spec; the
 # layouts are NOT -- they arrive in CATALOGUE records. These entries are the
@@ -350,6 +356,8 @@ class Decoder:
         overran its own producer, this is the wire losing what the board sent.
         Either can be the only one that fires.
         """
+        if record.kind in REQUEST_ID_KINDS:
+            return
         if self._last_seq is not None and not record.resync:
             missing = (record.seq - self._last_seq - 1) & 0xFFFFFFFF
             if missing:
@@ -625,8 +633,8 @@ def listen(seconds: float) -> int:
     for line in decoder.summary():
         emit(line)
     if decoder.counters.records == 0:
-        emit("no records: nothing on this board emits them yet, and the shell has "
-             "no command to enter binary mode. See docs/binary-protocol.md.")
+        emit("no records: the console is in text mode. `ops` enters binary mode "
+             "(docs/device-interface.md); this listener does not send it.")
         return 1
     return 0 if decoder.counters.clean() else 1
 

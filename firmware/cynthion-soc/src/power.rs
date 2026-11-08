@@ -748,6 +748,21 @@ impl Monitor {
         self.state[channel] = None;
     }
 
+    /// The sample a status view shows: one on-demand read while the standing poll
+    /// is off (#552), else the cache. Shared by `usb <port>` and the op protocol.
+    pub fn current(&mut self, bus: Option<&mut Bus>) -> Option<Sample> {
+        if interval_ms() != RATE_OFF {
+            return self.latest();
+        }
+        bus.and_then(|bus| self.read_now(bus).ok())
+    }
+
+    /// Is `channel` drawing: |current| at or above its floor, both in whole mA.
+    /// Below the floor the reading is the part's own offset, not a device.
+    pub fn drawing(&self, channel: usize, reading: &Reading) -> bool {
+        (reading.current_ua / 1000).unsigned_abs() >= self.floor[channel] / 1000
+    }
+
     /// The most recent sample, or `None` if there has not been one.
     ///
     /// What `power` prints. It reaches no bus, so it cannot collide with the
