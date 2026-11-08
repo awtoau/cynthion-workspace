@@ -16,17 +16,23 @@ Sections (each its own simulation):
 - address: SET_ADDRESS applies only after the host ACKs the status ZLP.
 - outdata: OUT data stage, NAK while the buffer is held, duplicate ACKed but dropped.
 - stale: commands carrying an old `seq` are dropped and counted; a new SETUP aborts the transfer.
+- sof: SOF tokens give frame / microframe / count; bad CRC5 ignored; no response.
+- suspend: 3 ms idle -> suspended + event; activity defers it; K resume (host) and remote wakeup
+  (device drives K) return to the prior speed; SE0 while suspended = reset; HS probes via FS first.
+- vbus: session loss detaches (term off, address and endpoints cleared); return re-attaches.
+- Bulk endpoints (EP1-4), PING, NYET, halt, toggles, FIFOs: `usb_device_bulk_sim.py`.
 - `--negative`: the `stale` section's "old" commands carry the current seq instead; it must FAIL
   (the stale checks can fail).
 
 Time constants are divided down (the engine's class attributes), like model.py does for the host.
 """
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT / "gateware"))
+sys.path.insert(0, os.environ.get("USB_DEVICE_GATEWARE", str(ROOT / "gateware")))     # mutants: usb_device_mutants.py
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from amaranth import ClockDomain, Module
@@ -34,11 +40,13 @@ from amaranth.sim import Simulator
 from devlog import emit
 from sim_check_harness import Checks
 from usbcore.crc import crc5_reference, crc16_reference
-from usbcore.device import CMD_IN, CMD_OACK, CMD_STALL, CMD_STATUS, Ep0Device, Stage
+from usbcore.device import (CMD_IN, CMD_OACK, CMD_STALL, CMD_STATUS, CMD_WAKEUP, EV_RESUME, EV_SUSPEND,
+                            EV_VBUS, EV_SETUP, EV_RESET, EV_SOF, EV_FIFO, CMD_EP_ENABLE, ep_code, Ep0Device, Stage)
 from usbcore.pid import PID
 
 USB_PERIOD = 1 / 60e6
-SCALE = {"CHIRP_K_CYCLES": 300, "CHIRP_WAIT_CYCLES": 400, "HS_RESET_CYCLES": 500, "FS_RESET_CYCLES": 40}
+SCALE = {"CHIRP_K_CYCLES": 300, "CHIRP_WAIT_CYCLES": 400, "HS_RESET_CYCLES": 500, "FS_RESET_CYCLES": 40,
+         "SUSPEND_CYCLES": 600, "PROBE_CYCLES": 60, "RESUME_K_CYCLES": 200, "DEBOUNCE_CYCLES": 16}
 K, J, SE0 = 0b10, 0b01, 0b00
 GET_DESC_DEV = bytes([0x80, 6, 0, 1, 0, 0, 18, 0])
 DEV18 = bytes(range(0x40, 0x40 + 18))
@@ -118,6 +126,8 @@ class Bus:
         c.set(e.cmd_last, kw.get("last", 0))
         c.set(e.cmd_addr, kw.get("addr", 0))
         c.set(e.cmd_addr_valid, int("addr" in kw))
+        c.set(e.cmd_ep, kw.get("ep", 0))
+        c.set(e.cmd_arg, kw.get("arg", 0))
         c.set(e.cmd_valid, 1)
         await self.tick()
         c.set(e.cmd_valid, 0)
@@ -148,17 +158,22 @@ async def setup(bus, addr, req8, *, bad_crc=False):
     return await bus.transact(token(PID.SETUP, addr, 0), data_packet(PID.DATA0, req8, bad_crc=bad_crc))
 
 
-def build(sim_body, *, negative=False):
+def build(sim_body, *, extra=(), **dev_kw):
+    """`extra`: further testbench coroutines `f(ctx, dev)` running beside `sim_body`."""
     m = Module()
     m.domains.usb = ClockDomain("usb")
-    dev = Ep0Device()
+    dev = Ep0Device(**dev_kw)
     m.submodules.dev = dev
     sim = Simulator(m)
     sim.add_clock(USB_PERIOD, domain="usb")
 
-    async def tb(ctx):
-        await sim_body(ctx, dev)
-    sim.add_testbench(tb)
+    def wrap(fn):
+        async def tb(ctx):
+            await fn(ctx, dev)
+        return tb
+    sim.add_testbench(wrap(sim_body))
+    for fn in extra:
+        sim.add_testbench(wrap(fn))
     sim.run()
 
 
@@ -382,8 +397,266 @@ def section_stale(checks):
     build(body)
 
 
-SECTIONS = {"speed": section_speed, "control": section_control, "address": section_address,
-            "outdata": section_outdata, "stale": section_stale}
+def sof_token(frame, *, bad_crc=False):
+    raw = bytearray(token(PID.SOF, frame & 0x7F, frame >> 7))
+    if bad_crc:
+        raw[2] ^= 0x08
+    return bytes(raw)
+
+
+async def reset_to(bus, hs):
+    """Bus reset from the current state, then chirp with three host pairs (HS) or none (FS)."""
+    ctx, dev = bus.ctx, bus.dev
+    u = dev.utmi
+    ctx.set(u.line_state, SE0)
+    for _ in range(SCALE["HS_RESET_CYCLES"] + SCALE["PROBE_CYCLES"] + SCALE["CHIRP_K_CYCLES"]):
+        await bus.tick()
+        if bus.get(u.op_mode) == 2 and bus.get(u.tx_valid):
+            break
+    while bus.get(u.tx_valid):
+        await bus.tick()
+    ctx.set(u.line_state, SE0)
+    await bus.tick(20)
+    for _ in range(3 if hs else 0):
+        ctx.set(u.line_state, K)
+        await bus.tick(10)
+        ctx.set(u.line_state, J)
+        await bus.tick(10)
+    ctx.set(u.line_state, J)
+    await bus.tick(SCALE["CHIRP_WAIT_CYCLES"] + 50)
+    ctx.set(dev.reset_ack, 1)
+    await bus.tick()
+    ctx.set(dev.reset_ack, 0)
+
+
+async def clear_events(bus, mask=0xFF):
+    bus.ctx.set(bus.dev.ev_clr, mask)
+    await bus.tick()
+    bus.ctx.set(bus.dev.ev_clr, 0)
+    await bus.tick()
+
+
+def section_sof(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        n0 = bus.get(dev.sof_count)
+        await bus.send(sof_token(0x2A5))
+        await bus.tick(4)
+        checks.check("sof: frame number from the token", bus.get(dev.frame) == 0x2A5, f"{bus.get(dev.frame):#x}")
+        checks.check("sof: count +1, microframe 0", bus.get(dev.sof_count) == n0 + 1 and bus.get(dev.uframe) == 0)
+        for want in range(1, 8):
+            await bus.send(sof_token(0x2A5))
+            await bus.tick(4)
+            checks.check(f"sof: same frame again -> microframe {want}", bus.get(dev.uframe) == want
+                         and bus.get(dev.frame) == 0x2A5, f"{bus.get(dev.uframe)}")
+        await bus.send(sof_token(0x2A6))
+        await bus.tick(4)
+        checks.check("sof: next frame number -> microframe 0", bus.get(dev.frame) == 0x2A6 and bus.get(dev.uframe) == 0)
+        checks.check("sof: count counts every SOF", bus.get(dev.sof_count) == (n0 + 9) & 0xFF, f"{bus.get(dev.sof_count)}")
+        await bus.send(sof_token(0x111, bad_crc=True))
+        await bus.tick(4)
+        checks.check("sof: bad CRC5 ignored", bus.get(dev.frame) == 0x2A6 and bus.get(dev.sof_count) == (n0 + 9) & 0xFF)
+        await bus.send(sof_token(0x7FF))
+        await bus.tick(4)
+        await bus.send(sof_token(0))
+        await bus.tick(4)
+        checks.check("sof: frame wraps 0x7FF -> 0", bus.get(dev.frame) == 0 and bus.get(dev.uframe) == 0)
+        checks.check("sof: no response on the wire", not bus.tx_packets)
+        seq0 = bus.get(dev.seq)
+        await bus.send(sof_token(5))
+        await bus.tick(4)
+        checks.check("sof: does not bump seq", bus.get(dev.seq) == seq0)
+    build(body)
+
+
+def section_suspend(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        u = dev.utmi
+        S = SCALE["SUSPEND_CYCLES"]
+        await bus.tick(S // 2)
+        checks.check("suspend: half the idle time: not suspended", bus.get(dev.suspended) == 0)
+        await bus.send(sof_token(1))
+        await bus.tick(S - 100)
+        checks.check("suspend: a SOF restarts the idle count", bus.get(dev.suspended) == 0)
+        await bus.tick(200)
+        checks.check("suspend: idle for SUSPEND_CYCLES -> suspended", bus.get(dev.suspended) == 1)
+        checks.check("suspend: event raised", bus.get(dev.events) & EV_SUSPEND)
+        await clear_events(bus)
+        checks.check("suspend: ev_clr clears the event", bus.get(dev.events) == 0)
+        checks.check("suspend: FS terminations kept", bus.get(u.term_select) == 1 and bus.get(u.xcvr_select) == 1)
+
+        # host resume: K for longer than the debounce, then back to idle
+        ctx.set(u.line_state, K)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 4)
+        checks.check("suspend: host K -> resumed + event", bus.get(dev.suspended) == 0 and bus.get(dev.events) & EV_RESUME)
+        await bus.tick(40)
+        ctx.set(u.line_state, J)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 8)
+        await clear_events(bus)
+        r = await setup(bus, 0, GET_DESC_DEV)
+        checks.check("suspend: answers a SETUP after resume", r == handshake(PID.ACK), f"{r}")
+
+        # a glitch shorter than the debounce is not a resume
+        await bus.tick(S + 50)
+        checks.check("suspend: suspended again", bus.get(dev.suspended) == 1)
+        await clear_events(bus)
+        ctx.set(u.line_state, K)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] // 2)
+        ctx.set(u.line_state, J)
+        await bus.tick(40)
+        checks.check("suspend: K glitch below the debounce: still suspended",
+                     bus.get(dev.suspended) == 1 and not bus.get(dev.events) & EV_RESUME)
+
+        # remote wakeup: the device drives K for RESUME_K_CYCLES
+        seq = bus.get(dev.seq)
+        await bus.cpu(CMD_WAKEUP, seq)
+        driven = 0
+        for _ in range(SCALE["RESUME_K_CYCLES"] + 60):
+            ctx.set(u.line_state, K if bus.get(u.tx_valid) else J)
+            await bus.tick()
+            driven += int(bus.get(u.tx_valid) and bus.get(u.op_mode) == 2 and bus.get(u.tx_data) == 0)
+        checks.check("suspend: wakeup drives K for RESUME_K_CYCLES",
+                     SCALE["RESUME_K_CYCLES"] - 4 <= driven <= SCALE["RESUME_K_CYCLES"] + 8, f"{driven}")
+        checks.check("suspend: wakeup ends suspended, event raised",
+                     bus.get(dev.suspended) == 0 and bus.get(dev.events) & EV_RESUME)
+        ctx.set(u.line_state, J)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 8)
+        # wakeup while not suspended does nothing
+        n = len(bus.tx_packets)
+        await bus.cpu(CMD_WAKEUP, bus.get(dev.seq))
+        await bus.tick(20)
+        checks.check("suspend: wakeup while awake: no K", not bus.get(u.tx_valid) and len(bus.tx_packets) == n)
+
+        # SE0 while suspended = reset
+        await bus.tick(S + 50)
+        checks.check("suspend: suspended for the reset test", bus.get(dev.suspended) == 1)
+        ctx.set(u.line_state, SE0)
+        chirp = False
+        for _ in range(SCALE["FS_RESET_CYCLES"] + 60):
+            await bus.tick()
+            chirp |= bool(bus.get(u.op_mode) == 2 and bus.get(u.tx_valid))
+        checks.check("suspend: SE0 while suspended -> reset, chirp", chirp and bus.get(dev.reset_seen) == 1)
+        checks.check("suspend: reset leaves suspend", bus.get(dev.suspended) == 0)
+    build(body)
+
+
+def section_suspend_hs(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        u = dev.utmi
+        await reset_to(bus, hs=True)
+        checks.check("suspend_hs: HS up", bus.get(u.xcvr_select) == 0 and bus.get(u.term_select) == 0)
+        ctx.set(u.line_state, SE0)              # HS idle
+        await bus.tick(SCALE["HS_RESET_CYCLES"] // 2)
+        await bus.send(sof_token(9))
+        ctx.set(u.line_state, SE0)
+        await bus.tick(SCALE["HS_RESET_CYCLES"] - 100)
+        checks.check("suspend_hs: a SOF restarts the HS idle count", bus.get(dev.suspended) == 0
+                     and bus.get(u.term_select) == 0)
+        for _ in range(300):
+            await bus.tick()
+            if bus.get(u.term_select) == 1:
+                break
+        checks.check("suspend_hs: 3 ms idle -> FS terminations to look at the line",
+                     bus.get(u.term_select) == 1 and bus.get(u.xcvr_select) == 1)
+        ctx.set(u.line_state, J)                # pull-up wins: not a reset
+        await bus.tick(SCALE["PROBE_CYCLES"] + 20)
+        checks.check("suspend_hs: J after the probe -> suspended", bus.get(dev.suspended) == 1
+                     and bus.get(dev.events) & EV_SUSPEND)
+        ctx.set(u.line_state, K)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 30)
+        ctx.set(u.line_state, SE0)
+        await bus.tick(SCALE["DEBOUNCE_CYCLES"] + 8)
+        checks.check("suspend_hs: resume returns to HS", bus.get(dev.suspended) == 0
+                     and bus.get(u.xcvr_select) == 0 and bus.get(u.term_select) == 0)
+        # SE0 that outlasts the probe is a reset, not a suspend
+        await clear_events(bus)
+        ctx.set(u.line_state, SE0)
+        chirp = False
+        for _ in range(SCALE["HS_RESET_CYCLES"] + SCALE["PROBE_CYCLES"] + 200):
+            await bus.tick()
+            chirp |= bool(bus.get(u.op_mode) == 2 and bus.get(u.tx_valid))
+        checks.check("suspend_hs: SE0 still there after the probe -> reset, chirp", chirp and bus.get(dev.suspended) == 0)
+        checks.check("suspend_hs: ... and no suspend event on the way", not bus.get(dev.events) & EV_SUSPEND)
+    build(body)
+
+
+def section_vbus(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        u = dev.utmi
+        checks.check("vbus: attached after power-up", bus.get(dev.attached) == 1 and bus.get(u.term_select) == 1)
+        set_addr = bytes([0x00, 5, 5, 0, 0, 0, 0, 0])
+        await setup(bus, 0, set_addr)
+        await bus.cpu(CMD_STATUS, bus.get(dev.seq), addr=5)
+        await bus.transact(token(PID.IN, 0, 0))
+        await bus.send(bytes([PID.ACK.byte()]))
+        await bus.tick(4)
+        checks.check("vbus: address 5 applied", bus.get(dev.address) == 5)
+        ctx.set(dev.vbus, 0)
+        await bus.tick(4)
+        checks.check("vbus: session lost -> detached, no pull-up, not driving",
+                     bus.get(dev.attached) == 0 and bus.get(u.term_select) == 0 and bus.get(u.op_mode) == 1)
+        checks.check("vbus: address and stage cleared, event", bus.get(dev.address) == 0
+                     and bus.get(dev.stage) == Stage.IDLE and bus.get(dev.events) & EV_VBUS)
+        n = len(bus.tx_packets)
+        await bus.send(token(PID.SETUP, 0, 0))
+        await bus.tick(RESPONSE_CLOCKS)
+        checks.check("vbus: detached device answers nothing", len(bus.tx_packets) == n)
+        await clear_events(bus)
+        ctx.set(dev.vbus, 1)
+        await bus.tick(4)
+        checks.check("vbus: back -> attached, pull-up on, event",
+                     bus.get(dev.attached) == 1 and bus.get(u.term_select) == 1 and bus.get(u.op_mode) == 0
+                     and bus.get(dev.events) & EV_VBUS)
+        r = await setup(bus, 0, GET_DESC_DEV)
+        checks.check("vbus: answers at address 0 again", r == handshake(PID.ACK), f"{r}")
+        await clear_events(bus)
+        ctx.set(dev.connect, 0)
+        await bus.tick(4)
+        checks.check("vbus: connect=0 (soft disconnect) detaches too", bus.get(dev.attached) == 0
+                     and bus.get(u.term_select) == 0)
+        ctx.set(dev.connect, 1)
+        await bus.tick(4)
+        checks.check("vbus: connect=1 re-attaches", bus.get(dev.attached) == 1 and bus.get(u.term_select) == 1)
+    build(body)
+
+
+def section_events(checks):
+    async def body(ctx, dev):
+        bus = Bus(ctx, dev)
+        await bus.tick(4)
+        checks.check("events: none after power-up, irq low", bus.get(dev.events) == 0 and bus.get(dev.irq) == 0)
+        await setup(bus, 0, GET_DESC_DEV)
+        checks.check("events: SETUP received sets EV_SETUP", bus.get(dev.events) & EV_SETUP)
+        checks.check("events: irq stays low while masked", bus.get(dev.irq) == 0)
+        ctx.set(dev.ev_mask, EV_SETUP)
+        await bus.tick(2)
+        checks.check("events: unmasked -> irq", bus.get(dev.irq) == 1)
+        await clear_events(bus, EV_SETUP)
+        checks.check("events: ev_clr drops the event and the irq", bus.get(dev.irq) == 0
+                     and not bus.get(dev.events) & EV_SETUP)
+        await bus.send(sof_token(3))
+        await bus.tick(4)
+        checks.check("events: SOF tick", bus.get(dev.events) & EV_SOF)
+        await bus.cpu(CMD_EP_ENABLE, bus.get(dev.seq), ep=ep_code(1, False), arg=64)
+        await clear_events(bus)
+        r = await bus.transact(token(PID.OUT, 0, 1), data_packet(PID.DATA0, b"abc"))
+        checks.check("events: OUT packet committed sets EV_FIFO", r == handshake(PID.ACK)
+                     and bus.get(dev.events) & EV_FIFO, f"{r}")
+        await clear_events(bus)
+        ctx.set(dev.utmi.line_state, SE0)
+        await bus.tick(SCALE["FS_RESET_CYCLES"] + 10)
+        ctx.set(dev.utmi.line_state, J)
+        await bus.tick(4)
+        checks.check("events: bus reset sets EV_RESET", bus.get(dev.events) & EV_RESET)
+    build(body)
+
+
+SECTIONS = {"events": section_events, "speed": section_speed, "control": section_control, "address": section_address,
+            "outdata": section_outdata, "stale": section_stale, "sof": section_sof,
+            "suspend": section_suspend, "suspend_hs": section_suspend_hs, "vbus": section_vbus}
 
 
 def main(argv):

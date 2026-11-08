@@ -24,6 +24,7 @@ Bench = shim + UlpiRegisters + PHY model + device behind a `WireFault` wire (usb
 """
 
 import argparse
+import os
 import asyncio
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from usb_host.model import (  # noqa: E402
 from usb_host.target_device import TargetDevice  # noqa: E402
 from usb_host.aoa_phone import AoaPhone, PID_AOA, PID_AOA_ADB  # noqa: E402
 from usb_host.own_device import OwnDevice  # noqa: E402
+from usbcore.device import Ep0Device  # noqa: E402
 import usb_own_device as own  # noqa: E402
 from peripherals.usb_host import (  # noqa: E402
     REG_CTRL, REG_ADDR, REG_EP, REG_EVENTS, REG_LINK, REG_RESP, REG_RXLEN_LO, REG_RXLEN_HI,
@@ -380,11 +382,20 @@ GROUPS = {
     "own_ctrl_string": ("model", ("ctrl_string",), False),
     "own_ctrl_std": ("model", ("ctrl_std",), False),
     "own_address": ("model", ("address",), False),
+    # Increment 4: bulk EP1-4 behind the engine (echo, interrupt counter, pattern source, throttled echo).
+    "own_bulk": ("model", ("bulk",), False),
+    "own_bulk_x": ("model", ("own_bulk_x",), False),
     # Increment 2: the same cases with every SETUP relayed over a modelled AUX control channel to a stub.
     "own_relay_std": ("model", ("ctrl_std",), False),
     "own_relay_address": ("model", ("address",), False),
 }
 
+OWN_NOT_APPLICABLE = {      # LUNA-model behaviour the case pins; own_bulk_x covers our behaviour instead
+    "bulk_zlp_out": "the model drops a ZLP OUT; our echo returns it as a ZLP IN (own_zlp_echo)",
+}
+OWN_KNOWN = {               # expected to fail on our engine until the issue is fixed (XFAIL)
+    "bulk_wrong_endpoint": "OUT to a nonexistent endpoint right after a 512 B echo never raises EV_DONE (#572)",
+}
 RELAY_LINK_CYCLES = 100     # one way, usb cycles: stands for one AUX bulk transfer (~100 us at HS polling)
 
 
@@ -400,6 +411,7 @@ SABOTAGE = False        # --sabotage: the own firmware serves a wrong byte; the 
 def make_bench(prof, own_device=False):
     fault = WireFault()
     if own_device:
+        Ep0Device.SUSPEND_CYCLES = int(os.environ.get("OWN_SUSPEND_CYCLES", Ep0Device.SUSPEND_CYCLES))
         dev = OwnDevice()
     elif prof.name == "aoa_phone":
         dev = AoaPhone(detach_cycles=1500)
@@ -421,6 +433,12 @@ def run_group(name, args):
     if name == "fuzz":
         cases = tc.fuzz_cases(args.seed, args.fuzz, prof)
     cases = tc.select(cases, prof, args.only, case_groups)
+    if own_device:
+        for c in [c for c in cases if c.name in OWN_NOT_APPLICABLE]:
+            emit(f"  NOT APPLICABLE  {name}: {c.name}: {OWN_NOT_APPLICABLE[c.name]}")
+        cases = [c for c in cases if c.name not in OWN_NOT_APPLICABLE]
+        for c in cases:
+            c.known = OWN_KNOWN.get(c.name, c.known)
     started_group = time.monotonic()
     bench, fault, dev = make_bench(prof, own_device)
     firmware = make_firmware(name, dev) if own_device else None
@@ -458,7 +476,8 @@ def run_group(name, args):
                 ctx.set(dev.present, 1) if prof.name != "aoa_phone" else None
                 backend.invalidate()
 
-    extra = (watch_phy,) + ((firmware.run,) if firmware else ())
+    extra = (watch_phy,) + ((firmware.run,) if firmware else ()) \
+        + ((firmware.data_run,) if firmware and hasattr(firmware, 'data_run') else ())
     shim.run(bench, testbench, extra=extra, platform=shim.BoardPlatform())
     if firmware:
         emit(f"  {name}: own engine answered {len(getattr(firmware, 'log', None) or firmware.messages) } SETUPs/messages")

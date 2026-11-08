@@ -64,19 +64,39 @@ def synth(name, top_cls, **kw):
     return counts
 
 
+CONFIGS = (          # (name, Ep0Device kwargs): endpoints = EP1..n, both directions
+    ("ep1_slots1", dict(endpoints=1, fifo_slots=1)),
+    ("ep1_slots2", dict(endpoints=1, fifo_slots=2)),
+    ("ep4_slots1", dict(endpoints=4, fifo_slots=1)),
+    ("ep4_slots2", dict(endpoints=4, fifo_slots=2)),
+    ("ep4_slots4", dict(endpoints=4, fifo_slots=4)),
+    ("ep4_slots2_fs", dict(endpoints=4, fifo_slots=2, slot_bytes=64)),
+)
+
+
 def main():
+    from usbcore.bulk import PacketFifo
     from usbcore.data import DataGenerator, DataReceiver
     from usbcore.device import Ep0Device
     from usbcore.handshake import HandshakeDetector, HandshakeGenerator
     from usbcore.token import TokenDetector
     emit("usb device engine, yosys synth_ecp5 cell counts")
-    rows = []
+
+    def row(name, counts):
+        emit("  " + f"{name:16}" + " ".join(f"{c}={counts.get(c, 0):<5}" for c in CELLS))
+
     for name, cls in (("token_detector", TokenDetector), ("data_receiver", DataReceiver),
                       ("data_generator", DataGenerator), ("hs_detector", HandshakeDetector),
-                      ("hs_generator", HandshakeGenerator), ("ep0_device", Ep0Device)):
-        counts = synth(name, cls)
-        rows.append((name, counts))
-        emit("  " + f"{name:16}" + " ".join(f"{c}={counts.get(c, 0):<5}" for c in CELLS))
+                      ("hs_generator", HandshakeGenerator)):
+        row(name, synth(name, cls))
+    emit("FIFO pieces (one FIFO = slots x 512 B, one direction of one endpoint)")
+    for slots in (1, 2, 4):
+        row(f"fifo_{slots}x512", synth(f"fifo_{slots}x512", PacketFifo, slots=slots, slot_bytes=512))
+    row("fifo_2x64", synth("fifo_2x64", PacketFifo, slots=2, slot_bytes=64))
+
+    emit("whole engine (EP0 + link + SOF/suspend + endpoints, FIFOs and adapters included)")
+    for name, kw in CONFIGS:
+        row(name, synth(name, Ep0Device, **kw))
     return 0
 
 

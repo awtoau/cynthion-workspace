@@ -577,7 +577,39 @@ def table():
         [S("aoa_full", E(info={"accessory": True}))],
         needs=ADDRESSED, after=CONFIGURED, profiles=aoa,
         about="51, 52 x6 (DJI strings), 53, resets until 18d1:2d00/2d01, configure, bulk echo")
+    # ---- our own device engine only (group own_bulk_x; the AUX-side stand-ins are usb_own_device.BulkModel) ----
+    own = ("model",)
+    halt = lambda ep: S("ctrl", E(), bm=0x02, req=3, val=0, idx=ep, len=0)       # noqa: E731  SET_FEATURE(HALT)
+    unhalt = lambda ep: S("ctrl", E(), bm=0x02, req=1, val=0, idx=ep, len=0)     # noqa: E731  CLEAR_FEATURE(HALT)
+    add("own_zlp_echo", "own_bulk_x",
+        [S("bulk_out", E(), ep=1, data=b""), S("bulk_in", E(length=0), ep=1, n=64)],
+        profiles=own, about="a ZLP OUT reaches the AUX side as a ZLP and comes back as a ZLP IN")
+    add("own_short_packets_echo", "own_bulk_x",
+        [step for n in (1, 2, 3, 100) for step in
+         (S("bulk_out", E(), ep=1, data=bytes(range(n))), S("bulk_in", E(length=n, data=bytes(range(n))), ep=1, n=128))],
+        profiles=own, about="short packets keep their boundaries; toggles alternate across them")
+    add("own_halt_out_in", "own_bulk_x",
+        [halt(0x01), S("bulk_out", E("stall"), ep=1, data=b"\x01"),
+         halt(0x81), S("bulk_in", E("stall"), ep=1, n=8),
+         unhalt(0x01), unhalt(0x81),
+         S("bulk_out", E(), ep=1, data=b"\x07\x08"), S("bulk_in", E(length=2, data=b"\x07\x08"), ep=1, n=8)],
+        profiles=own, about="halt STALLs both legs, clear restarts the toggles and traffic resumes")
+    add("own_in_pattern_3_packets", "own_bulk_x",
+        [S("bulk_in", E(length=512, data=_pattern(0, 512)), ep=3, n=512),
+         S("bulk_in", E(length=512, data=_pattern(512, 512)), ep=3, n=512),
+         S("bulk_in", E(length=37, data=_pattern(1024, 37)), ep=3, n=512),
+         S("bulk_in", E(length=512, data=_pattern(0, 512)), ep=3, n=512)],
+        profiles=own, about="2*512+37 byte transfer from the AUX side: split at 512, next transfer starts clean")
+    add("own_out_backpressure_echo", "own_bulk_x",
+        [S("bulk_out", E(), ep=4, data=bytes((i * 3 + k) & 255 for i in range(100))) for k in range(4)]
+        + [S("bulk_in", E(length=100, data=bytes((i * 3 + k) & 255 for i in range(100))), ep=4, n=128)
+           for k in range(4)],
+        profiles=own, about="throttled AUX consumer, 4 packets (capacity before the host reads: 2 OUT + 1 held + 2 IN FIFO buffers): NAK / NYET, retries, order and data hold")
     return cases
+
+
+def _pattern(start, n):
+    return bytes(((start + i) * 5 + 1) & 255 for i in range(n))
 
 
 # --------------------------------------------------------------------------- fuzz

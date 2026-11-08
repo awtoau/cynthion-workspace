@@ -155,7 +155,7 @@ Smallest first; each has a sim and a board check.
 | 1 | TARGET enumerates as a fixed device from firmware alone (our stack, descriptors in firmware) | own device engine vs GUH host engine, closed loop; luna as oracle | `lsusb -v` on a host cabled to TARGET; [`target-test-harness.md`](target-test-harness.md) control rows |
 | 2 | SETUP relayed over AUX control channel to a PC userspace stub (libusb) that answers from a fixed table | GUH host on TARGET + sim AUX host; stale-`seq` and new-SETUP-aborts cases | enumeration through the stub; relay round trip logged per stage |
 | 3 | Linux UDC driver skeleton, out-of-tree module, registers a gadget; configfs ACM enumerates | same configfs gadget on dummy_hcd as the reference | remote `lsusb -v` matches dummy_hcd's descriptors; tty opens |
-| 4 | bulk data path: EPn FIFOs, AUX pipes, `queue`/`dequeue`/`halt` | packet boundaries, ZLP, NAK backpressure both legs, halt + toggle | ACM loopback with data check; ZLP on 512-multiple writes |
+| 4 | bulk data path: EPn FIFOs, AUX pipes, `queue`/`dequeue`/`halt` (gateware done: [status](#increment-4-bulk-endpoints-events-link-states)) | packet boundaries, ZLP, NAK backpressure both legs, halt + toggle | ACM loopback with data check; ZLP on 512-multiple writes |
 | 5 | NCM Ethernet | — (no new gateware) | `iperf3` both directions against the throughput table |
 | 6 | FS fallback | FS chirp-less reset, 64-byte bulk | remote host forced to FS (FS hub); gadget re-enumerates with FS descriptors |
 
@@ -189,22 +189,137 @@ Device engine: [`gateware/usbcore/device.py`](../gateware/usbcore/device.py) (`E
 
 - Engine: bus-reset detect, device chirp K, three host K-J pairs -> HS else FS; EP0 SETUP/IN/OUT/status with 64 B in/out buffers; STALL; SET_ADDRESS applied after the status ACK. Other endpoints get no response.
 - CPU port: `seq` bumps on every SETUP token and bus reset; every command carries `cmd_seq`, a stale one is dropped and counted (`stale`). Increment 1 = firmware answers from a table; increment 2 = firmware relays the SETUP and answers with what the PC stub returns.
-- Directed sim, [`scripts/soc/usb_device_ep0_sim.py`](../scripts/soc/usb_device_ep0_sim.py): speed negotiation, handshakes, toggles, retransmit, STALL, address, OUT data, stale seq, new SETUP aborts the armed transfer; `--negative` proves the stale checks can fail.
+- Directed sims: [`usb_device_ep0_sim.py`](../scripts/soc/usb_device_ep0_sim.py) (EP0, speed, SOF, suspend / resume / wakeup, VBUS, events; `--negative` proves the stale checks can fail) and [`usb_device_bulk_sim.py`](../scripts/soc/usb_device_bulk_sim.py) (bulk EP1-4, FS and HS).
 - Closed loop, [`scripts/soc/usb_target_sim.py`](../scripts/soc/usb_target_sim.py) `own_*` groups: GUH host engine + shim + PHY model against `OwnDevice` ([`own_device.py`](../gateware/probes/usb_host/own_device.py)) with the firmware stand-in [`usb_own_device.py`](../scripts/soc/usb_own_device.py). `own_relay_*` adds a modelled AUX control channel and a stub (delay in clock cycles only; framing not modelled). `--sabotage` serves a wrong descriptor byte and must FAIL.
-- Not built: CSR wrapper and firmware, PING, SOF/suspend, EP1-4 bulk FIFOs, the AUX device side. The sim cannot say anything about milliseconds.
+- Not built: CSR wrapper, the AUX device side, ISO. The sim cannot say anything about milliseconds.
 
-Cells ([`scripts/soc/usb_device_area.py`](../scripts/soc/usb_device_area.py), yosys `synth_ecp5`, engine alone, no place and route):
+Cells ([`scripts/soc/usb_device_area.py`](../scripts/soc/usb_device_area.py), yosys `synth_ecp5`, no place and route; measured with the engine at commit of increment 4, 2026-11-07):
 
 | block | LUT4 | CCU2C | FF | DPR16X4 | DP16KD |
 |---|---|---|---|---|---|
-| `Ep0Device` (whole, incl. the codecs below) | 598 | 73 | 322 | 16 | 0 |
 | token detector | 50 | 0 | 46 | 0 | 0 |
 | data receiver | 49 | 0 | 45 | 0 | 0 |
 | data generator | 119 | 0 | 33 | 0 | 0 |
 | handshake detector + generator | 23 | 0 | 16 | 0 | 0 |
+| `PacketFifo` 1 x 512 B (one FIFO) | 32 | 0 | 38 | 0 | 1 |
+| `PacketFifo` 2 x 512 B | 45 | 0 | 52 | 0 | 1 |
+| `PacketFifo` 4 x 512 B | 75 | 0 | 76 | 0 | 1 |
+| `PacketFifo` 2 x 64 B (FS only) | 75 | 0 | 26 | 16 | 0 |
 
-- The two 64 B buffers are distributed RAM (16 x DPR16X4), no block RAM. One DP16KD for both buffers is the alternative; the SoC has 2 spare ([`soc-size-review.md`](soc-size-review.md)).
-- Not counted: CSR wrapper, `usb`/`sync` crossing, EPn FIFOs. Against 24288 LUT4 the engine is about 2.5 % (LUT4 + 2 x CCU2C); the SoC is routing-bound at 92 % ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)), so whether it fits depends on the host engine leaving a device-mode build (open question 6).
+- The two EP0 64 B buffers are distributed RAM (16 x DPR16X4), no block RAM.
+- Whole engine rows are in [Increment 4](#increment-4-bulk-endpoints-events-link-states) below. The previous EP0-only engine was 598 LUT4 / 73 CCU2C / 322 FF.
+- Not counted: CSR wrapper, `usb`/`sync` crossing, AUX-side stream adapters. Against 24288 LUT4 the engine is LUT4 + 2 x CCU2C of that; the SoC is routing-bound at 92 % ([#619](https://github.com/awtoau/cynthion-workspace/issues/619)).
+
+### Increment 4: bulk endpoints, events, link states
+
+Engine: [`device.py`](../gateware/usbcore/device.py) (`Ep0Device`), FIFOs: [`bulk.py`](../gateware/usbcore/bulk.py). Everything below runs in the `usb` domain with no CPU timing: every NAK / ACK / NYET / STALL / ZLP / toggle / PING decision is made from FIFO state inside the inter-packet window. A CSR master (PC over AUX, or firmware) only configures and moves data.
+
+**Bulk behaviour (EP1-4, each direction its own FIFO)**
+
+- OUT: data is written into the FIFO while it arrives and committed on good CRC16 + `<= maxp` + DATA0/1.
+  - Right toggle and room: commit, toggle flips, ACK; HS and no room left for another packet: NYET.
+  - Right toggle, FIFO full: NAK, toggle unchanged, nothing stored.
+  - Duplicate toggle: ACK, dropped (`n_dup`).
+  - Oversize, wrong PID, bad CRC: no response.
+  - Halted: STALL after the data.
+  - PING (HS only, ignored in FS): ACK with room, NAK when full, STALL when halted.
+- IN: token with a committed packet sends it with the endpoint toggle; the packet is freed and the toggle flips only on the host ACK. No ACK within `ACK_WAIT_CYCLES` or a repeated IN: same packet, same toggle again. Empty: NAK (toggle unchanged). Halted: STALL, queued data kept.
+- Producer side splits a stream at `maxp`; a ZLP is one `zlp` beat; `auto-ZLP` (bit 10 of `cmd_arg` at ENABLE) appends a ZLP when a transfer (`last`) ends exactly on `maxp` (512 HS / 64 FS multiples).
+- Unconfigured endpoints do not answer. Bus reset, detach and DISABLE flush and disable; ENABLE and CLEAR reset the toggle to DATA0.
+
+**Command port** (all commands carry `cmd_seq`; a stale one is dropped and counted in `stale`, endpoint commands included; the CSR-master model is `Port` in [`usb_own_device.py`](../scripts/soc/usb_own_device.py) and `Bus.cpu` in the directed sim):
+
+| `cmd` | name | operands | effect |
+|---|---|---|---|
+| 1 | `CMD_IN` | `cmd_len`, `cmd_last` | arm one EP0 IN packet from `i_buf` |
+| 2 | `CMD_STATUS` | `cmd_addr`, `cmd_addr_valid` | release EP0 status ZLP; address applied after its ACK |
+| 3 | `CMD_STALL` | | STALL EP0 until the next SETUP |
+| 4 | `CMD_OACK` | | free the EP0 OUT buffer |
+| 5 | `CMD_EP_ENABLE` | `cmd_ep`, `cmd_arg` = maxp[9:0] + auto-ZLP[10] | enable, unhalt, toggle 0, flush |
+| 6 | `CMD_EP_DISABLE` | `cmd_ep` | disable + flush |
+| 7 | `CMD_EP_HALT` | `cmd_ep` | STALL the endpoint |
+| 8 | `CMD_EP_CLEAR` | `cmd_ep` | unhalt, toggle 0 |
+| 9 | `CMD_EP_FLUSH` | `cmd_ep` | drop queued packets (toggle kept) |
+| 10 | `CMD_WAKEUP` | | drive resume K `RESUME_K_CYCLES` if suspended |
+
+`cmd_ep` = `ep_code(n, is_in)`: bit 3 = IN, [2:0] = n (1-4).
+
+**Status registers (read side)**
+
+| signal | width | meaning |
+|---|---|---|
+| `speed` | 2 | 0 HS, 1 FS |
+| `address` | 7 | device address (applied after SET_ADDRESS status ACK) |
+| `seq`, `stale` | 8, 8 | SETUP / reset counter; dropped stale commands |
+| `stage`, `setup_valid`, `setup_data`, `in_busy`, `o_valid`, `o_len` | | EP0 as before |
+| `ep_sel` -> `ep_enabled`, `ep_halted`, `ep_toggle`, `ep_level`, `ep_maxp` | 4 -> 1,1,1,4,10 | per endpoint (`ep_level` = committed packets in the FIFO) |
+| `n_nak`, `n_nyet`, `n_dup`, `n_crc` | 8 each, saturating | bulk NAKs sent, NYETs, duplicate OUTs dropped, CRC errors |
+| `frame`, `uframe`, `sof_count` | 11, 3, 8 | last SOF frame number, microframe (0-7, counts repeats of the frame number), SOF count |
+| `suspended`, `attached` | 1 | |
+| `reset_seen` / `reset_ack` | | bus reset latch (as before) |
+
+**Events** (sticky bits in `events`, cleared by writing the bit to `ev_clr`; `irq` = `events & ev_mask != 0`; `ev_mask` resets to 0):
+
+| bit | name | set when |
+|---|---|---|
+| 0 | `EV_SUSPEND` | 3 ms idle |
+| 1 | `EV_RESUME` | host K seen (debounced), or `CMD_WAKEUP` started |
+| 2 | `EV_VBUS` | `vbus & connect` changed |
+| 3 | `EV_SETUP` | SETUP data ACKed (read `seq`, `setup_data`) |
+| 4 | `EV_RESET` | bus reset detected (read `speed`) |
+| 5 | `EV_SOF` | any SOF (tick) |
+| 6 | `EV_FIFO` | an OUT packet was committed or an IN packet freed (threshold = one packet; read `ep_level`) |
+
+**Data ports** (`ep_in1..4` = producer -> host, `ep_out1..4` = host -> consumer): `bulk.PacketStream`: `data`, `valid`, `last`, `zlp`, `ready`. `ready` is the credit: FIFO space on IN, consumer readiness on OUT; the bus NAKs when it is missing. Another storage can implement the `PacketFifo` ports (`w_idx/w_data/w_en/w_commit/w_len/w_free`, `r_have/r_len/r_idx/r_data/r_pop`, `flush`) behind the same adapters ([HyperRAM-backed option](#fifo-options)).
+
+**Link states**: FS idle J / HS idle SE0 for `SUSPEND_CYCLES` (3 ms): suspend. HS first goes to FS terminations for `PROBE_CYCLES` (100 us): SE0 = reset (chirp), J = suspend. K for `DEBOUNCE_CYCLES` (2.5 us) = resume; end of K -> prior speed. `vbus` or `connect` low: detached (no pull-up, `op_mode` non-driving), address and endpoints cleared. All constants are class attributes divided down in the sims.
+
+**Sim results** (2026-11-07, box load 30-60, so wall times are upper bounds):
+
+- `usb_device_ep0_sim.py`: 111 checks (56 before this increment), 4 s. Sections added: sof, suspend, suspend_hs, vbus, events.
+- `usb_device_bulk_sim.py`: 168 checks, 146 s (the `large` section dominates; its throttled consumer lives 400k cycles). Sections: out, in, in_zlp, backpressure, ping, halt, control, large, rate; FS and HS except ping and rate.
+- Closed loop (GUH host engine -> engine, stand-ins in [`usb_own_device.py`](../scripts/soc/usb_own_device.py) `BulkModel`: EP1 echo, EP2 interrupt counter, EP3 2*512+37 pattern source, EP4 throttled echo): `own_ctrl_*`, `own_address`, `own_relay_*` unchanged and green (14, 19, 5, 19, 5); `own_bulk` runs the LUNA-model `bulk` group (18 of 19 cases, `bulk_zlp_out` not applicable: the model drops a ZLP OUT, ours echoes it); `own_bulk_x` adds ZLP echo, short packets, halt both legs, a 3-packet 2*512+37 IN transfer, and a throttled-consumer echo (5 cases).
+- Mutation proof: [`usb_device_mutants.py`](../scripts/soc/usb_device_mutants.py) breaks one line of the gateware per mutant (26 mutants: toggles, NYET, PING, halt, flush, auto-ZLP, split, ACK window, SOF, suspend, wakeup, resume speed, probe, VBUS, events); the named sections must FAIL. 26 of 26 killed, 2026-11-07, 8 workers, wall time ~25 min at load ~60.
+- GUH host has no PING ([`guh/sie.py`](../gateware/probes/usb_host/guh/sie.py) TODO, tracked in [#572](https://github.com/awtoau/cynthion-workspace/issues/572); NYET is reported as ACK): PING and NYET are covered by the directed sim only. The closed-loop groups reset the device only at bring-up (a reset costs ~12 s of sim), so reset / suspend cases are directed-sim only.
+
+Whole engine, including FIFOs and the codecs (yosys `synth_ecp5`, `usb_device_area.py`):
+
+| config (EP1..n, both directions) | LUT4 | CCU2C | FF | DPR16X4 | DP16KD |
+|---|---|---|---|---|---|
+| 1 EP, 1 x 512 B per FIFO | 1129 | 171 | 592 | 16 | 2 |
+| 1 EP, 2 x 512 B | 1158 | 171 | 620 | 16 | 2 |
+| 4 EP, 1 x 512 B | 2136 | 219 | 978 | 16 | 8 |
+| 4 EP, 2 x 512 B | 2261 | 219 | 1090 | 16 | 8 |
+| 4 EP, 4 x 512 B | 2568 | 219 | 1282 | 16 | 8 |
+| 4 EP, 2 x 64 B (FS only) | 2555 | 207 | 858 | 144 | 0 |
+
+#### FIFO options
+
+Rates: `usb_device_bulk_sim.py rate`, 2026-11-07, AUX side at 1 byte / cycle, 12 packets, wire = 512 B + token + handshake + lead-in = ~530 cycles in the sim's model (no inter-packet gaps; protocol maximum is in [Throughput](#throughput)).
+
+One DP16KD is 2 KiB; one FIFO needs one block whatever its depth up to 4 x 512 B, so depth up to 2 KiB per FIFO costs LUTs and FFs, not block RAM. 4 endpoints x 2 directions = 8 FIFOs.
+
+| option | per FIFO | DP16KD (8 FIFOs) | engine LUT4 + 2 x CCU2C | HS bulk, sim cycles per 512 B packet (OUT / IN) | notes |
+|---|---|---|---|---|---|
+| A: 1 x 512 B | 512 B | 8 | 2574 | 1049 / 1002 | one packet in flight: every OUT ends in NYET, host PINGs until the consumer has drained 512 B |
+| B: 2 x 512 B | 1 KiB | 8 | 2699 | 530 / 535 | double buffering: wire rate while the AUX side runs at 1 byte / cycle |
+| C: 4 x 512 B | 2 KiB | 8 | 3006 | 530 / 535 | same rate as B at full speed; buys 3 packets of AUX-side latency slack |
+| D: 2 x 64 B, FS only | 128 B | 0 (144 LUTRAM) | 2969 | n/a | FS-only build, no block RAM |
+| E: HyperRAM-backed deep buffer | MiBs | 0-2 (staging) | estimate +300..500 | bounded by HyperRAM | not built, see below |
+
+- Recommendation: B (2 x 512 B). It reaches the wire rate in the sim at the same 8 blocks as A and costs 125 LUT4 more; C adds 307 LUT4 for no throughput. Dan decides depth; B is the smallest that does not stall the HS pipeline.
+- Packing several FIFOs into one block would save block RAM (2 FIFOs of 1 KiB per DP16KD -> 4 blocks) but the AUX-side port of a shared block serialises two endpoints; not built.
+- E (open question 4): the `PacketFifo` ports stay; a HyperRAM variant keeps one staging slot per active FIFO in block RAM (or a shared pair) and moves whole packets to and from a ring in HyperRAM. Arithmetic, not built: one 426 Mbps stream is 53 MB/s; a FIFO leg writes and reads it once (106 MB/s); both directions at line rate ~212 MB/s against the 311 MB/s measured read rate at CK 165 ([`sequential-baseline.md`](chips/hyperram/sequential-baseline.md)), shared with the SoC, so HyperRAM suits a few deep endpoints (mass storage), not all four at line rate.
+
+**What the CSR master / AUX side must provide**
+
+- On `EV_RESET`: read `speed`; after enumeration SET_CONFIGURATION / SET_INTERFACE: `CMD_EP_ENABLE` per endpoint with the descriptor's wMaxPacketSize (<= 512 HS, <= 64 FS) and the current `seq`.
+- On `EV_SETUP`: read `seq`, `setup_data`, relay; answer EP0 with `CMD_IN` / `CMD_STATUS` / `CMD_STALL` tagged with that `seq`; endpoint halt / clear / flush per SET_FEATURE / CLEAR_FEATURE / dequeue.
+- Local answers (GET_STATUS halt bits, remote-wakeup enable) and `CMD_WAKEUP` policy stay with the master; the engine drives K whenever told and suspended.
+- Streams: consume `ep_out` with `ready`, produce `ep_in` with `last` / `zlp`; same 60 MHz `usb` domain or a CDC FIFO in front.
+- `vbus` input from the PHY's VbusValid; `connect` = soft pull-up.
+
+**Needs the real ULPI PHY / board** (sim has none of it): chirp, reset and suspend timing against real hosts; FS terminations switch (`xcvr_select`/`term_select` via ULPI function control) latency inside the 100 us probe; resume K drive with `op_mode` 2 in FS; `line_state` from RXCMD for K / J / SE0 and VbusValid; PING / NYET turnaround against a real HS host; the 3 ms idle with a real SOF-less bus; stream CDC to the AUX PHY domain.
 
 ## Device-mode bitstream
 

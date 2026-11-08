@@ -93,6 +93,7 @@ SIMS = [
     "usb_host_shim_sim",
     "usb_target_sim",
     "usb_device_ep0_sim",
+    "usb_device_bulk_sim",
     "usb_device_csr_sim",
     "aux_csr_bridge_sim",
     "usbcore_equiv_sim",
