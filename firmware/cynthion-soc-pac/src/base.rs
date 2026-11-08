@@ -156,4 +156,4 @@ pub const CPU_CACHE_WAYS: u32 = 1;
 
 /// First 32 bits of SHA-256 over the SVD plus everything above:
 /// the map this firmware was built against. Host-compared (#307).
-pub const MAP_DIGEST: u32 = 0xdb791a4f;
+pub const MAP_DIGEST: u32 = 0x9dfba7a1;

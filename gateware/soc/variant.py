@@ -64,6 +64,8 @@ CK_DEFAULT_MHZ = "180"
 VARIANT_ENV = (
     ("CYNTHION_HYPERRAM_CK_MHZ",    CK_DEFAULT_MHZ, "ck",        TEXT),
     ("CYNTHION_SYNC_MHZ",           "60",  "sync",      TEXT),
+    # Config flash SCK, MHz: 190 (#590 decision, #593); others for diagnosis.
+    ("CYNTHION_FLASH_SCK_MHZ",      "190", "fsck",      TEXT),
     # Debug: 1024-entry ULPI trace in the usb_host shim. Off = shipping image.
     ("CYNTHION_USB_TRACE",          "0",    "utrace",   FLAG),
 )

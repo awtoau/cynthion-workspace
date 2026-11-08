@@ -34,21 +34,21 @@ pub const OP_RESET: u8 = 9;
 const STATUS_BUSY: u16 = 1 << 0;
 
 /// Gateware codes, STATUS[11:8].
-pub const CODE_NAMES: [&str; 14] = [
+pub const CODE_NAMES: [&str; 13] = [
     "ok", "busy", "arg", "not-ready", "uncalibrated", "protect", "wel", "watchdog",
-    "handshake", "not-started", "cal-none", "abort", "cal-data", "cal-verify",
+    "not-started", "cal-none", "abort", "cal-data", "cal-verify",
 ];
 
 /// Firmware poll bounds, `sync` ticks, 1.25x each (datasheet maxima, rev G 9.6, plus the
 /// gateware's own 1.25x watchdog margin and 64 us of handshake/transaction slack):
-/// tBE2 2 s, tSE 400 ms, tPP 3 ms; READ 4 KiB = 43 us at SCK 190; CALIBRATE 2 x 512
-/// probes ~1.4 ms; RESET tRST 30 us.
+/// tBE2 2 s, tSE 400 ms, tPP 3 ms; READ 4 KiB = 43 us at SCK 190; CALIBRATE 2 x 1024
+/// probes, each a 1 us PHASESTEP settle + crossing + transaction, ~4 ms; RESET tRST 30 us.
 fn ticks(op: u8) -> u32 {
     let us: u32 = match op {
         OP_ERASE_64K => 5 * (5 * 2_000_000 / 4 + 64) / 4,
         OP_ERASE_4K => 5 * (5 * 400_000 / 4 + 64) / 4,
         OP_PROGRAM => 5 * (5 * 3_000 / 4 + 64) / 4,
-        OP_CALIBRATE => 5 * (1_400 + 64) / 4,
+        OP_CALIBRATE => 5 * (4_000 + 64) / 4,
         _ => 5 * (43 + 64) / 4,
     };
     us.saturating_mul(target::TIME_HZ / 1_000_000)
@@ -240,7 +240,7 @@ impl Flash {
         self.command(OP_RESET).map(|_| ())
     }
 
-    /// Erase the 4 KiB sector (or 64 KiB block) at `addr`; BUSY flash cycles.
+    /// Erase the 4 KiB sector (or 64 KiB block) at `addr`; BUSY in `sync` cycles.
     pub fn erase(&self, addr: u32, block: bool) -> Result<u32, Error> {
         let size = if block { BLOCK } else { SECTOR };
         let base = addr & !(size - 1);
@@ -252,7 +252,7 @@ impl Flash {
         Ok(self.r32(cynthion_soc_pac::flash::offset::BUSY_CYCLES))
     }
 
-    /// Program `data` (<= 256 B, one page) at `addr`; BUSY flash cycles.
+    /// Program `data` (<= 256 B, one page) at `addr`; BUSY in `sync` cycles.
     pub fn program(&self, addr: u32, data: &[u8]) -> Result<u32, Error> {
         let n = data.len() as u32;
         if n == 0 || n > PAGE || addr % PAGE + n > PAGE || addr < TEST_LO || addr + n > TEST_HI {
@@ -278,7 +278,7 @@ impl Flash {
     }
 }
 
-/// Microseconds from flash-clock cycles (SCK 190 MHz).
-pub fn sck_us(cycles: u32) -> u32 {
-    cycles / 190
+/// Microseconds from `sync` cycles (BUSY_CYCLES counts them).
+pub fn sync_us(cycles: u32) -> u32 {
+    cycles / (target::TIME_HZ / 1_000_000)
 }

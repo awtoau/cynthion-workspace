@@ -371,18 +371,18 @@
         </register>
         <register>
           <name>ERRORS</name>
-          <description>FLASH.ERRORS, 11 bits at +0x10</description>
+          <description>FLASH.ERRORS, 10 bits at +0x10</description>
           <addressOffset>0x10</addressOffset>
           <size>16</size>
           <access>read-write</access>
           <resetValue>0x0</resetValue>
-          <resetMask>0x7FF</resetMask>
+          <resetMask>0x3FF</resetMask>
           <fields>
             <field>
               <name>V</name>
-              <description>v [10:0]</description>
+              <description>v [9:0]</description>
               <bitOffset>0</bitOffset>
-              <bitWidth>11</bitWidth>
+              <bitWidth>10</bitWidth>
               <access>read-write</access>
             </field>
           </fields>

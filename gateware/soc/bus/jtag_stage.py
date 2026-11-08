@@ -181,6 +181,7 @@ class JTAGStager(Elaboratable):
         self._depth = depth
 
         self.tck   = Signal()
+        self.dbg   = Signal(32)
         self.tdi   = Signal()
         self.ce    = Signal()
         self.shift = Signal()
@@ -285,7 +286,9 @@ class JTAGStager(Elaboratable):
         m.submodules.busy_cdc = FFSynchronizer(busy, busy_jtck, o_domain="jtck")
 
         frames = Signal(5)
-        status = Cat(Const(SIGNATURE, 16), staged, overflow, busy_jtck, cpu_hold,
+        dbg_j = Signal(32)
+        m.submodules.dbg_cdc = FFSynchronizer(self.dbg, dbg_j, o_domain="jtck")
+        status = Cat(Const(SIGNATURE, 16), dbg_j, overflow, busy_jtck, cpu_hold,
                      command, frames)
         tdo_sr = Signal(64)
         m.d.comb += self.tdo.eq(tdo_sr[0])

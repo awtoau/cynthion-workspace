@@ -261,7 +261,7 @@ fn erase(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
     };
     match spi.erase(addr, rest == b"64k") {
         Ok(busy) => {
-            let _ = writeln!(uart, "flash erase {:06x} ok, busy {} us", addr, flash::sck_us(busy));
+            let _ = writeln!(uart, "flash erase {:06x} ok, busy {} us", addr, flash::sync_us(busy));
         }
         Err(why) => {
             let _ = writeln!(uart, "flash erase {:06x} failed: {}", addr, why);
@@ -281,7 +281,7 @@ fn program(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
     fill(&mut page, at, seed);
     match spi.program(at, &page) {
         Ok(busy) => {
-            let _ = writeln!(uart, "flash program {:06x} ok, busy {} us", at, flash::sck_us(busy));
+            let _ = writeln!(uart, "flash program {:06x} ok, busy {} us", at, flash::sync_us(busy));
         }
         Err(why) => {
             let _ = writeln!(uart, "flash program {:06x} failed: {}", at, why);
@@ -374,9 +374,9 @@ fn test(uart: &mut Uart, spi: &Flash, arg: &[u8]) {
             xip_bad += (((w >> (8 * k)) as u8) != pattern(addr + i + k, seed)) as u32;
         }
     }
-    let _ = writeln!(uart, "  erase 64K {} us; blank errors {}", flash::sck_us(erase), show(blank));
+    let _ = writeln!(uart, "  erase 64K {} us; blank errors {}", flash::sync_us(erase), show(blank));
     let _ = writeln!(uart, "  program 256 pages: avg {} us, max {} us",
-                     flash::sck_us(busy_sum / 256), flash::sck_us(busy_max));
+                     flash::sync_us(busy_sum / 256), flash::sync_us(busy_max));
     let _ = writeln!(uart, "  verify (EBh command READ): {} of {} bytes wrong", show(good), n);
     let _ = writeln!(uart, "  verify (XIP): {} of {} bytes wrong (evict {:08x})", xip_bad, n,
                      evict);

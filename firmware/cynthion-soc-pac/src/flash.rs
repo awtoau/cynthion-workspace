@@ -60,7 +60,7 @@ impl RegisterBlock {
     pub const fn irq_en(&self) -> &IrqEn {
         &self.irq_en
     }
-    #[doc = "0x10 - FLASH.ERRORS, 11 bits at +0x10"]
+    #[doc = "0x10 - FLASH.ERRORS, 10 bits at +0x10"]
     #[inline(always)]
     pub const fn errors(&self) -> &Errors {
         &self.errors
@@ -166,10 +166,10 @@ pub mod events;
 pub type IrqEn = crate::Reg<irq_en::IrqEnSpec>;
 #[doc = "FLASH.IRQ_EN, 2 bits at +0x0f"]
 pub mod irq_en;
-#[doc = "ERRORS (rw) register accessor: FLASH.ERRORS, 11 bits at +0x10\n\nYou can [`read`](crate::Reg::read) this register and get [`errors::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`errors::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@errors`] module"]
+#[doc = "ERRORS (rw) register accessor: FLASH.ERRORS, 10 bits at +0x10\n\nYou can [`read`](crate::Reg::read) this register and get [`errors::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`errors::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@errors`] module"]
 #[doc(alias = "ERRORS")]
 pub type Errors = crate::Reg<errors::ErrorsSpec>;
-#[doc = "FLASH.ERRORS, 11 bits at +0x10"]
+#[doc = "FLASH.ERRORS, 10 bits at +0x10"]
 pub mod errors;
 #[doc = "ADDR (rw) register accessor: FLASH.ADDR, 22 bits at +0x14\n\nYou can [`read`](crate::Reg::read) this register and get [`addr::R`]. You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`addr::W`]. You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [`mod@addr`] module"]
 #[doc(alias = "ADDR")]

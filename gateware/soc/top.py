@@ -493,6 +493,9 @@ FLASH_SIZE = 4 * 1024 * 1024
 # PLL A's VCO with the HyperRAM CK (`clocks.py`), so it must divide that VCO.
 SYNC_MHZ = float(variant.value("CYNTHION_SYNC_MHZ"))
 
+# Config flash SCK, MHz: 190 (#590). PLL B (`peripherals/flash.py`).
+FLASH_SCK_MHZ = float(variant.value("CYNTHION_FLASH_SCK_MHZ"))
+
 # HyperRAM CK, MHz: 180, clean in the #581 sweep (#588). PLL A, beside `sync`.
 HYPERRAM_CK_MHZ = float(variant.value("CYNTHION_HYPERRAM_CK_MHZ"))
 
@@ -500,7 +503,7 @@ HYPERRAM_CK_MHZ = float(variant.value("CYNTHION_HYPERRAM_CK_MHZ"))
 # - waits for: ACK from a decoded subordinate; the slowest is an XIP beat behind a line
 #   fill (`flash.xip_wait_bound`, already x1.25); CSR peripherals answer in 5
 # - expiry: ERR to the CPU (an access fault the trap handler names) and the red LED
-BUS_TIMEOUT_CYCLES = max(xip_wait_bound(SYNC_MHZ), -(-5 * 5 // 4))
+BUS_TIMEOUT_CYCLES = max(xip_wait_bound(SYNC_MHZ, FLASH_SCK_MHZ), -(-5 * 5 // 4))
 
 # Geometry of each L1 cache: 64 sets x 1 way x 64 B line = 4 KiB each.
 # - Reference is upstream VexRiscv (4 KiB I / 2 KiB D, one way), docs/chips/vexiiriscv-cpu.md.
@@ -763,7 +766,7 @@ class AwtoSoc(Elaboratable):
         decoder.add(clint_bridge.wb_bus, addr=CLINT_BASE, name="clint")
 
         # Config flash (#593): XIP window, CSRs, command buffer. PLL B inside.
-        m.submodules.flash = flash = Flash(sync_mhz=car.actual_sync_mhz)
+        m.submodules.flash = flash = Flash(sync_mhz=car.actual_sync_mhz, sck_mhz=FLASH_SCK_MHZ)
         decoder.add(flash.xip, addr=FLASH_BASE, name="spiflash")
         flash_bridge = WishboneCSRBridge(flash.bus, data_width=32)
         m.submodules.flash_bridge = flash_bridge
@@ -797,6 +800,7 @@ class AwtoSoc(Elaboratable):
             user_jtag.tdo1.eq(stager.tdo),
 
             cpu.ext_reset.eq(stager.cpu_reset),
+            stager.dbg.eq(flash.dbg),
         ]
 
         m.d.comb += [

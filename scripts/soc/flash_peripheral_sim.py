@@ -46,6 +46,7 @@ SYNC_MHZ, SCK_MHZ = 60.0, 190.0
 T = 1 / (SCK_MHZ * 1e6)
 TCLQV = 5e-9
 LAT_ROWS = 8                    # the sim's round trip is lat 1-3; 8 rows keep it short
+N_STEPS = 32                    # PHASESTEPs per period at SCK 190 (PLL output divider 4)
 BUSY_SCALE = 1e-3               # model BUSY is 300..3000 CLK; bounds scale with it
 CK_BITS = 8
 WRITE_LO, WRITE_HI = 0x280000, 0x380000
@@ -308,9 +309,9 @@ def run(checks, name, scenario, dev=None, sck_mhz=SCK_MHZ, **kwargs):
             if prev and not ps:
                 cap["steps"] += 1
             prev = ps
-            extra = (cap["steps"] - applied) * T / fp.N_STEPS
+            extra = (cap["steps"] - applied) * T / periph.n_steps
             applied = cap["steps"]
-            cap["phase"] = applied % fp.N_STEPS
+            cap["phase"] = applied % periph.n_steps
             await ctx.delay(T / 2 + extra)
 
     result = {}
@@ -344,7 +345,7 @@ def run(checks, name, scenario, dev=None, sck_mhz=SCK_MHZ, **kwargs):
 
 
 # ---------------------------------------------------------------- scenarios
-BOOT_BOUND = 30000          # status polls (4 sync cycles each): reset + 2 x 512 probes
+BOOT_BOUND = 80000          # status polls (2-3 sync cycles each): reset + 2 x 512 probes, 1 us per step
 
 
 async def wait_ready(b, bound=BOOT_BOUND):
@@ -368,7 +369,7 @@ def runs(maps):
         bits = []
         for lat in range(LAT_ROWS):
             row = maps[(x, lat)]
-            bits += [(row >> p) & 1 for p in range(fp.N_STEPS)]
+            bits += [(row >> p) & 1 for p in range(N_STEPS)]
         start, n = 0, 0
         for i, bit in enumerate(bits):
             if bit:
@@ -400,21 +401,21 @@ async def s_main(checks, b, dev, ctx, periph):
     checks.check("boot sends 66h+99h (SPI) once", dev.resets == 1, f"resets {dev.resets}")
     cal = await b.read("cal")
     centre, width, xfer, valid = cal & 0x1FF, (cal >> 16) & 0xFF, (cal >> 24) & 1, cal >> 31
-    maps = await read_maps(b, fp.MAP_EBH_OFF)
+    maps = await read_maps(b, fp.map_offsets(N_STEPS)[1])
     n, start, x = runs(maps)
     checks.check("cal: EBh placement = centre of the widest clean run in its own map",
                  valid and (width, centre, xfer) == (min(n, 255), start + n // 2, x),
                  f"cal {cal:#010x}; map run {n} @{start} xfer {x}",
                  measurement=f"EBh eye {width} points, centre lat {centre >> 5} "
                              f"phase {centre & 31} xfer {xfer}")
-    jmaps = await read_maps(b, fp.MAP_JEDEC_OFF)
+    jmaps = await read_maps(b, fp.map_offsets(N_STEPS)[0])
     jn, js, jx = runs(jmaps)
     checks.check("cal: the 9Fh map has a clean run", jn > 0, f"run {jn} @{js}",
                  measurement=f"9Fh eye {jn} points @{js} xfer {jx}")
     dirty = [maps[k] for k in maps]
     checks.check("cal: the map has dirty points (an eye, not a constant)",
                  any(r != 0 for r in dirty) and any(r != (1 << 32) - 1 for r in dirty))
-    ref = await b.buf_read(fp.REF_OFF, fp.CAL_LEN)
+    ref = await b.buf_read(fp.map_offsets(N_STEPS)[2], fp.CAL_LEN)
     checks.check("cal: reference = 0Bh read of CAL_ADDR", ref == [dev.read(i) for i in range(64)])
 
     await b.write("irq_en", 3)
@@ -479,10 +480,11 @@ async def s_main(checks, b, dev, ctx, periph):
     dev.program(a, [0x00] * 64)
     st = await b.cmd(fp.OP_ERASE_4K, addr=a + 0x123)
     busy = await b.read("busy_cycles")
+    busy = busy * SCK_MHZ / SYNC_MHZ          # BUSY_CYCLES counts sync cycles
     checks.check("ERASE_4K: done, BUSY polled to the model's time",
                  st["code"] == 0 and abs(busy - 1500) < 80 and all(
                      dev.read(a + i) == 0xFF for i in range(4096)),
-                 f"{st} busy {busy}", measurement=f"busy {busy} CLK (model 1500)")
+                 f"{st} busy {busy}", measurement=f"busy {busy:.0f} CLK (model 1500)")
     st = await b.cmd(fp.OP_READ, addr=a, buf_addr=0x200, len=256)
     got = await b.buf_read(0x200, 256)
     checks.check("READ after erase: blank", st["code"] == 0 and got == [0xFF] * 256, str(st))
@@ -505,6 +507,7 @@ async def s_main(checks, b, dev, ctx, periph):
         dev.read(a + 0x107 + i) for i in range(9)] == page[:9], str(st))
     st = await b.cmd(fp.OP_ERASE_64K, addr=0x290000)
     busy = await b.read("busy_cycles")
+    busy = busy * SCK_MHZ / SYNC_MHZ
     checks.check("ERASE_64K: done", st["code"] == 0 and abs(busy - 3000) < 80, f"{st} {busy}")
 
     # refusals
@@ -610,7 +613,7 @@ async def s_blank_ref(checks, b, dev, ctx, periph):
 
 async def s_band(checks, b, dev, ctx, periph):
     await boot(checks, b, "band")
-    maps = await read_maps(b, fp.MAP_EBH_OFF)
+    maps = await read_maps(b, fp.map_offsets(N_STEPS)[1])
     bad = [(x, lat) for (x, lat), row in maps.items() if any(row >> p & 1 for p in range(12, 16))]
     checks.check("neg: points read in a corrupting phase band are dirty in the map", not bad,
                  f"rows clean in 12..15: {bad}")
