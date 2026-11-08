@@ -32,13 +32,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LOG = ROOT / "tmp" / "logs" / "merge-gate.log"
 
-# Cold worst case measured 2026-11-02: sims 114 s (capture_codec_sim dominates),
-# pytest 24 s, links and paths a few seconds. TOTAL_S is 3x their sum.
+# House rule: 60 s stall guard per step; total = 3x the measured worst-case gate (#640).
 STALL_S = 60
-# soc_sims.py prints nothing while its slowest sim runs: capture_codec_sim is
-# silent for ~114 s measured 2026-11-02, so that step gets 1.25x of it.
-STALL_BY_STEP = {"sims": 150}
-TOTAL_S = 3 * 150
+# soc_sims.py prints a liveness line every 30 s (#640), so no step needs a longer stall.
+STALL_BY_STEP: dict[str, int] = {}
+TOTAL_S = 3 * 480
 
 # pytest: two known psycopg failures in test_build_metrics_dialect.py are
 # allowed, any other failure or collection error is not.
