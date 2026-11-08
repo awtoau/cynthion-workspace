@@ -96,9 +96,14 @@ def test_the_directory_and_the_cache_key_separate_the_same_things():
         assert soc_run.variant_settings.__module__  # imported, not shadowed
     # Every entry in the table appears in the slug and in the settings list.
     for name, _default, tag, kind in variant.VARIANT_ENV:
-        if kind != variant.FLAG:    # a flag at its default adds no tag
+        if kind == variant.TEXT:
             assert tag in variant.slug(), name
+        else:   # a flag or option at its default adds no tag; set, it does
+            assert not any(p.startswith(tag) for p in variant.slug().split("-")), name
+            assert tag in variant.slug({name: "1" if kind == variant.FLAG else "x"}), name
         assert any(s.startswith(f"{name}=") for s in variant.settings()), name
+    # The default build's directory name is the shipping one: new flags/options add nothing.
+    assert variant.slug({}) == f"ck{variant.CK_DEFAULT_MHZ}-sync60"
     assert soc_run.VARIANT_ENV is variant.VARIANT_ENV
 
 
