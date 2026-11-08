@@ -52,6 +52,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -122,6 +123,9 @@ TIERS = {"once": SIMS, "soak": SIMS}
 # Accepted spellings of the two tiers: `fast` is `once` (one cycle of every
 # simulation), `all` is `soak` (every simulation, with its repetition).
 TIER_ALIASES = {"fast": "once", "all": "soak"}
+
+# Liveness line period: the merge gate's sims stall limit is 150 s; 30 s leaves 5 chances.
+HEARTBEAT_S = 30
 
 RESET, BOLD, GREEN, RED, CYAN = (
     "\033[0m", "\033[1m", "\033[92m", "\033[91m", "\033[96m",
@@ -215,15 +219,33 @@ def main():
     emit(f"\n{BOLD}SoC simulations{RESET}  ({len(chosen)} of {len(SIMS)}, "
          f"tier {tier})\n")
 
+    running, lock, finished = set(), threading.Lock(), threading.Event()
+
     def run_and_note(name):
         # One line per finished sim: callers' stall guards need output before the summary.
+        with lock:
+            running.add(name)
         result = run_one(name, args.python, soak)
+        with lock:
+            running.discard(name)
         emit(f"  done {name:<20} {result[4]:5.1f}s  {'ok' if result[1] else 'FAILED'}")
         return result
 
+    def heartbeat():
+        # A sim can run longer than a caller's stall limit (merge gate: 150 s) with no
+        # line of its own; this proves liveness, not progress (#640).
+        while not finished.wait(HEARTBEAT_S):
+            with lock:
+                names = ", ".join(sorted(running))
+            emit(f"  running {time.monotonic() - started:5.0f}s: {names}")
+
     started = time.monotonic()
+    beat = threading.Thread(target=heartbeat, daemon=True)
+    beat.start()
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         results = list(pool.map(run_and_note, chosen))
+    finished.set()
+    beat.join()
 
     # Back into the declared order, so two runs are comparable line by line.
     order = {name: index for index, name in enumerate(SIMS)}
