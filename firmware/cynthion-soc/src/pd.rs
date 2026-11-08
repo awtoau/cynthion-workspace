@@ -281,20 +281,20 @@ impl Pd {
     }
 
     pub fn status(&self, uart: &mut Uart) {
-        let (sent, received, errors, resets) = self.lib.counters();
+        let s = self.snapshot();
         let _ = writeln!(
             uart,
             "pd target_c  {}  cc{}  session {}  ready {}  tx {} rx {} senderr {} hardreset {}",
-            if self.armed { "armed" } else { "off" },
-            self.cc,
-            if self.lib.running() { "running" } else { "stopped" },
-            self.lib.ready() as u8,
-            sent,
-            received,
-            errors,
-            resets
+            if s.armed { "armed" } else { "off" },
+            s.cc,
+            if s.running { "running" } else { "stopped" },
+            s.ready as u8,
+            s.sent,
+            s.received,
+            s.errors,
+            s.hardresets
         );
-        match self.lib.contract() {
+        match s.contract {
             Some((position, ma)) => {
                 let _ = writeln!(uart, "  contract  pos{} {} mA at 5000 mV", position, ma);
             }
@@ -305,7 +305,7 @@ impl Pd {
         if !self.lib.ended.is_empty() {
             let _ = writeln!(uart, "  last session ended: {}", self.lib.ended);
         }
-        let _ = writeln!(uart, "  engine future {} B", self.session_bytes);
+        let _ = writeln!(uart, "  engine future {} B", s.session_bytes);
     }
 
     /// The numbers behind `status`, for the op protocol.
